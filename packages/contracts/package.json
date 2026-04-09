@@ -1,0 +1,9 @@
+{
+  "name": "@paykit/contracts",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "echo 'contracts build requires forge'",
+    "test": "echo 'contracts test requires forge'"
+  }
+}

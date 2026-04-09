@@ -1,0 +1,9 @@
+{
+  "name": "@paykit/docs",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "echo 'Docs not yet implemented'",
+    "build": "echo 'Docs not yet implemented'"
+  }
+}
