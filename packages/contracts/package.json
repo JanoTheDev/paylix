@@ -2,8 +2,15 @@
   "name": "@paykit/contracts",
   "private": true,
   "version": "0.0.0",
+  "exports": {
+    "./abi/PaymentVault": "./abi/PaymentVault.json",
+    "./abi/SubscriptionManager": "./abi/SubscriptionManager.json",
+    "./abi/MockUSDC": "./abi/MockUSDC.json"
+  },
   "scripts": {
-    "build": "echo 'contracts build requires forge'",
-    "test": "echo 'contracts test requires forge'"
+    "build": "echo 'Run via WSL: wsl bash -lc \"cd $(pwd) && ~/.foundry/bin/forge build\"'",
+    "test": "echo 'Run via WSL: wsl bash -lc \"cd $(pwd) && ~/.foundry/bin/forge test\"'",
+    "deploy:testnet": "echo 'Run via WSL with forge script'",
+    "deploy:mainnet": "echo 'Run via WSL with forge script'"
   }
 }
