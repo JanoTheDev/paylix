@@ -1,0 +1,33 @@
+{
+  "name": "@paykit/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --turbopack --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@paykit/db": "workspace:*",
+    "better-auth": "^1",
+    "drizzle-orm": "^0.38",
+    "lucide-react": "^0.460",
+    "next": "^15",
+    "postgres": "^3.4",
+    "react": "^19",
+    "react-dom": "^19",
+    "zod": "^3.23"
+  },
+  "devDependencies": {
+    "@paykit/config": "workspace:*",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "25.5.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "postcss": "^8",
+    "tailwindcss": "^4",
+    "typescript": "^5.5"
+  }
+}
