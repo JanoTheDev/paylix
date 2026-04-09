@@ -5,7 +5,7 @@ export const apiKeyTypeEnum = pgEnum("api_key_type", ["publishable", "secret"]);
 
 export const apiKeys = pgTable("api_keys", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   keyHash: text("key_hash").notNull(),
   prefix: text("prefix").notNull(),

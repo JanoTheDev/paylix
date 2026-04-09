@@ -8,7 +8,7 @@ export const paymentStatusEnum = pgEnum("payment_status", ["pending", "confirmed
 export const payments = pgTable("payments", {
   id: uuid("id").primaryKey().defaultRandom(),
   productId: uuid("product_id").notNull().references(() => products.id),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   customerId: uuid("customer_id").notNull().references(() => customers.id),
   amount: integer("amount").notNull(),
   fee: integer("fee").notNull().default(0),

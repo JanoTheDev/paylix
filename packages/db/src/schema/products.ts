@@ -6,7 +6,7 @@ export const intervalEnum = pgEnum("interval", ["monthly", "yearly"]);
 
 export const products = pgTable("products", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
   type: productTypeEnum("type").notNull(),

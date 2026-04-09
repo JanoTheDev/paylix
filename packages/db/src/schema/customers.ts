@@ -3,7 +3,7 @@ import { users } from "./users";
 
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   customerId: text("customer_id").notNull(),
   email: text("email"),
   firstName: text("first_name"),
