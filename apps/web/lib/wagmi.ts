@@ -1,10 +1,23 @@
-import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { base, baseSepolia } from "wagmi/chains";
-import type { Config } from "wagmi";
+// No 'use client' directive — this file is imported by server components
+import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
+import { base, baseSepolia } from "@reown/appkit/networks";
+import type { AppKitNetwork } from "@reown/appkit/networks";
 
-export const wagmiConfig: Config = getDefaultConfig({
-  appName: "Paylix Checkout",
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
-  chains: [base, baseSepolia],
-  ssr: false,
+export const projectId =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
+  "b56e18d47c72ab683b10814fe9495694"; // public fallback for localhost testing
+
+export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [base, baseSepolia];
+
+export const wagmiAdapter = new WagmiAdapter({
+  networks,
+  projectId,
+  ssr: true,
 });
+
+export const metadata = {
+  name: "Paylix Checkout",
+  description: "Accept USDC payments on Base",
+  url: process.env.BETTER_AUTH_URL || "http://localhost:3000",
+  icons: ["http://localhost:3000/favicon.ico"],
+};

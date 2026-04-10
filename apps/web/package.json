@@ -13,7 +13,10 @@
   "dependencies": {
     "@paylix/db": "workspace:*",
     "@rainbow-me/rainbowkit": "^2.2.10",
+    "@reown/appkit": "^1.8.19",
+    "@reown/appkit-adapter-wagmi": "^1.8.19",
     "@tanstack/react-query": "^5.97.0",
+    "@walletconnect/ethereum-provider": "^2.23.9",
     "better-auth": "^1",
     "drizzle-orm": "^0.38",
     "lucide-react": "^0.460",

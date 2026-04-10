@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount } from "wagmi";
+import { useAppKit, useAppKitAccount } from "@reown/appkit/react";
 
 type CheckoutStatus = "active" | "viewed" | "abandoned" | "completed" | "expired";
 
@@ -44,7 +43,8 @@ function truncateAddress(address: string): string {
 }
 
 export function CheckoutClient({ session }: CheckoutClientProps) {
-  const { isConnected } = useAccount();
+  const { open } = useAppKit();
+  const { isConnected, address } = useAppKitAccount();
   const [status, setStatus] = useState<CheckoutStatus>(session.status);
   const [copied, setCopied] = useState(false);
   const [customerFields, setCustomerFields] = useState({
@@ -336,23 +336,25 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
 
       {/* Connect Wallet */}
       {!isConnected ? (
-        <div className="flex flex-col items-center">
-          <div
-            className={indexerOnline ? "" : "pointer-events-none opacity-50"}
-            aria-disabled={!indexerOnline}
-          >
-            <ConnectButton label="Connect Wallet &amp; Pay" />
-          </div>
-        </div>
+        <button
+          onClick={() => open()}
+          disabled={!indexerOnline}
+          className="h-10 w-full rounded-[8px] bg-[#06d6a0] px-[18px] text-[14px] font-medium text-[#07070a] transition-[background,box-shadow] duration-150 hover:bg-[#05bf8e] active:bg-[#04a87b] focus:outline-none focus:ring-[3px] focus:ring-[#06d6a060] focus:ring-offset-2 focus:ring-offset-[#18181e] disabled:cursor-not-allowed disabled:bg-[#1f1f26] disabled:text-[#64748b] disabled:hover:bg-[#1f1f26]"
+        >
+          Connect Wallet
+        </button>
       ) : (
-        <div className="flex flex-col items-center">
-          <div className="mb-4 w-full">
-            <div
-              className={indexerOnline ? "" : "pointer-events-none opacity-50"}
-              aria-disabled={!indexerOnline}
+        <>
+          <div className="mb-4 rounded-[8px] border border-[rgba(148,163,184,0.12)] bg-[#07070a] px-3.5 py-2.5 flex items-center justify-between">
+            <span className="text-[13px] text-[#94a3b8]" style={{ fontFamily: '"Geist Mono", monospace' }}>
+              {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ""}
+            </span>
+            <button
+              onClick={() => open()}
+              className="text-[12px] text-[#94a3b8] hover:text-[#f0f0f3]"
             >
-              <ConnectButton showBalance={false} />
-            </div>
+              Disconnect
+            </button>
           </div>
           <button
             onClick={handleShowPaymentDetails}
@@ -361,7 +363,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
           >
             Pay ${displayAmount} {session.currency}
           </button>
-        </div>
+        </>
       )}
 
       {/* Info note */}

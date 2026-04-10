@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { checkoutSessions, products } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
-import { CheckoutWrapper } from "./checkout-wrapper";
+import { CheckoutClient } from "./checkout-client";
+import { CheckoutProviders } from "@/components/providers";
 
 interface CheckoutPageProps {
   params: Promise<{ sessionId: string }>;
@@ -72,5 +73,9 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
     );
   }
 
-  return <CheckoutWrapper session={session} />;
+  return (
+    <CheckoutProviders>
+      <CheckoutClient session={session} />
+    </CheckoutProviders>
+  );
 }
