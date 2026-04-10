@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@paylix/db": "workspace:*",
+    "@rainbow-me/rainbowkit": "^2.2.10",
+    "@tanstack/react-query": "^5.97.0",
     "better-auth": "^1",
     "drizzle-orm": "^0.38",
     "lucide-react": "^0.460",
@@ -19,6 +21,7 @@
     "postgres": "^3.4",
     "react": "^19",
     "react-dom": "^19",
+    "wagmi": "^3.6.1",
     "zod": "^3.23"
   },
   "devDependencies": {
