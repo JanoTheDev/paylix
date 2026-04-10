@@ -1,16 +1,36 @@
 services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer:
+    build:
+      context: .
+      dockerfile: packages/indexer/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: paylix
-      POSTGRES_USER: paylix
+      POSTGRES_DB: ${DB_NAME:-paylix}
+      POSTGRES_USER: ${DB_USER:-paylix}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-paylix_dev}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U paylix"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-paylix}"]
       interval: 5s
       timeout: 5s
       retries: 5
