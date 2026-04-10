@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppKit, useAppKitAccount } from "@reown/appkit/react";
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain } from "wagmi";
 import { keccak256, stringToBytes } from "viem";
 import { CONTRACTS, ERC20_ABI, PAYMENT_VAULT_ABI } from "@/lib/contracts";
 
@@ -177,6 +177,8 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   const [payError, setPayError] = useState<string | null>(null);
 
   const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
@@ -194,6 +196,12 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     setPayError(null);
 
     try {
+      // Switch to Base Sepolia if not already on it
+      if (chainId !== 84532) {
+        setPayStep("approving");
+        await switchChainAsync({ chainId: 84532 });
+      }
+
       // Convert USDC amount (cents → 6 decimals)
       // session.amount is in cents (100 = $1.00)
       // USDC has 6 decimals, so $1.00 = 1,000,000 units
