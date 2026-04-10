@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "dotenv -e ../../.env -- tsx watch src/index.ts",
+    "start": "dotenv -e ../../.env -- tsx src/index.ts",
     "test": "vitest run"
   },
   "dependencies": {
