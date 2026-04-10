@@ -1,5 +1,5 @@
 {
-  "name": "@paykit/sdk",
+  "name": "@paylix/sdk",
   "version": "0.0.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,7 +20,7 @@
     "viem": "^2"
   },
   "devDependencies": {
-    "@paykit/config": "workspace:*",
+    "@paylix/config": "workspace:*",
     "tsup": "^8",
     "typescript": "^5.5"
   }

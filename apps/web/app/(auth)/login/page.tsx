@@ -36,7 +36,7 @@ export default function LoginPage() {
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-[#f0f0f3]">Sign in</h1>
         <p className="mt-1 text-sm text-[#94a3b8]">
-          Welcome back to PayKit
+          Welcome back to Paylix
         </p>
       </div>
 

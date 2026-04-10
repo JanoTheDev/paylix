@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { subscriptions } from "@paykit/db/schema";
+import { subscriptions } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 
 export async function POST(

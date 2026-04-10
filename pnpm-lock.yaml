@@ -19,7 +19,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@paykit/db':
+      '@paylix/db':
         specifier: workspace:*
         version: link:../../packages/db
       better-auth:
@@ -47,7 +47,7 @@ importers:
         specifier: ^3.23
         version: 3.25.76
     devDependencies:
-      '@paykit/config':
+      '@paylix/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@tailwindcss/postcss':
@@ -88,7 +88,7 @@ importers:
         specifier: ^3.4
         version: 3.4.9
     devDependencies:
-      '@paykit/config':
+      '@paylix/config':
         specifier: workspace:*
         version: link:../config
       drizzle-kit:
@@ -100,7 +100,7 @@ importers:
 
   packages/indexer:
     dependencies:
-      '@paykit/db':
+      '@paylix/db':
         specifier: workspace:*
         version: link:../db
       drizzle-orm:
@@ -113,7 +113,7 @@ importers:
         specifier: ^2
         version: 2.47.11(typescript@5.9.3)(zod@4.3.6)
     devDependencies:
-      '@paykit/config':
+      '@paylix/config':
         specifier: workspace:*
         version: link:../config
       tsx:
@@ -129,7 +129,7 @@ importers:
         specifier: ^2
         version: 2.47.11(typescript@5.9.3)(zod@4.3.6)
     devDependencies:
-      '@paykit/config':
+      '@paylix/config':
         specifier: workspace:*
         version: link:../config
       tsup:

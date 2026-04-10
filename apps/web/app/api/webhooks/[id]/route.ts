@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { webhooks } from "@paykit/db/schema";
+import { webhooks } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 

@@ -1,5 +1,5 @@
 {
-  "name": "paykit",
+  "name": "paylix",
   "private": true,
   "scripts": {
     "dev": "turbo dev",

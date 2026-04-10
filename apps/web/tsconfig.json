@@ -1,5 +1,5 @@
 {
-  "extends": "@paykit/config/tsconfig.nextjs.json",
+  "extends": "@paylix/config/tsconfig.nextjs.json",
   "compilerOptions": {
     "paths": {
       "@/*": ["./*"]

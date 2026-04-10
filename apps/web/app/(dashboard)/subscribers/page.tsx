@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { subscriptions, products, customers } from "@paykit/db/schema";
+import { subscriptions, products, customers } from "@paylix/db/schema";
 import { eq, desc } from "drizzle-orm";
 import CancelButton from "./cancel-button";
 

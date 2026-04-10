@@ -38,7 +38,7 @@ export function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-[rgba(148,163,184,0.08)] bg-[#0c0c10]">
       <div className="flex h-14 items-center px-4">
-        <span className="text-base font-semibold text-[#f0f0f3]">PayKit</span>
+        <span className="text-base font-semibold text-[#f0f0f3]">Paylix</span>
       </div>
 
       <nav className="flex-1 space-y-0.5 px-2 py-2">

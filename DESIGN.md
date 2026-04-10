@@ -1,8 +1,8 @@
-# Design System for PayKit
+# Design System for Paylix
 
 ## 1. Visual Theme & Atmosphere
 
-PayKit's interface is built on controlled darkness — a near-black canvas (`#07070a`) that sits between pure void and warm charcoal, creating a stage where financial data and payment states command attention without strain. This is the darkness of a well-designed trading terminal or a Stripe dashboard in dark mode: purposeful, engineered, and easy on the eyes during long sessions. Every pixel serves the mission of making money movement feel safe, clear, and inevitable.
+Paylix's interface is built on controlled darkness — a near-black canvas (`#07070a`) that sits between pure void and warm charcoal, creating a stage where financial data and payment states command attention without strain. This is the darkness of a well-designed trading terminal or a Stripe dashboard in dark mode: purposeful, engineered, and easy on the eyes during long sessions. Every pixel serves the mission of making money movement feel safe, clear, and inevitable.
 
 The color story is anchored by a single, electric teal accent (`#06d6a0`) — a color that sits at the intersection of "financial confidence" and "technical precision." Unlike the blues that dominate fintech (Stripe, PayPal, Coinbase), teal carves out a distinct identity while still reading as trustworthy. It glows against the dark canvas with the calm authority of a status LED on high-end hardware — present, reassuring, never shouting. This accent is used surgically: interactive elements, primary CTAs, and active states only. Everything else lives in the neutral gray spectrum.
 
@@ -300,7 +300,7 @@ The border system uses a cool-tinted gray (`rgba(148, 163, 184, 0.12)`) — not 
 - Background: `#0c0c10`
 - Width: 240px, fixed position
 - Border right: 1px solid `rgba(148, 163, 184, 0.08)`
-- Logo area: 56px height, 20px horizontal padding. Logo + "PayKit" wordmark in 16px weight 600
+- Logo area: 56px height, 20px horizontal padding. Logo + "Paylix" wordmark in 16px weight 600
 - Section labels: Label Uppercase style (`#64748b`, 11px, weight 600, 0.8px tracking, uppercase), 20px horizontal padding, 28px top margin
 - Nav items: height 36px, padding 8px 12px, margin 2px 8px, radius 8px
 - Nav item icon: 18px, `#64748b`
@@ -313,7 +313,7 @@ The border system uses a cool-tinted gray (`rgba(148, 163, 184, 0.12)`) — not 
 - Height: 56px
 - Background: `#07070a`
 - Border bottom: 1px solid `rgba(148, 163, 184, 0.08)`
-- Content: centered PayKit logo or merchant name
+- Content: centered Paylix logo or merchant name
 - Use: Checkout page header, mobile dashboard nav
 
 ### Tables
@@ -343,7 +343,7 @@ The border system uses a cool-tinted gray (`rgba(148, 163, 184, 0.12)`) — not 
 - Middle: Customer info fields (if enabled) — stacked inputs with 12px gap
 - Divider: same as above
 - Bottom: Payment section — "Connect Wallet & Pay" primary button (full-width) → OR divider → QR code block (centered, 200x200px, white QR on dark)
-- Footer: "Powered by PayKit" caption text, centered, `#64748b`
+- Footer: "Powered by Paylix" caption text, centered, `#64748b`
 
 **Payment State Transitions**
 - Waiting: pulsing teal dot + "Waiting for payment..." in Body style, `#94a3b8`
@@ -431,7 +431,7 @@ Base unit: `4px`. Every spacing value is a multiple of 4.
 
 ### Don't
 
-- Don't use gradients, glows, neon effects, or animated backgrounds. These are crypto-aesthetic tropes that destroy professional credibility. PayKit is a payment tool, not a DeFi dashboard.
+- Don't use gradients, glows, neon effects, or animated backgrounds. These are crypto-aesthetic tropes that destroy professional credibility. Paylix is a payment tool, not a DeFi dashboard.
 - Don't use font weight above 600. The maximum is 600 for page titles and badge text. Weight 700+ feels aggressive and cheap in a financial UI.
 - Don't apply teal (`#06d6a0`) to large background areas, body text, or decorative elements. It is for small interactive targets only — buttons, links, focus rings, active indicators.
 - Don't use pure black (`#000000`) as the canvas. Use `#07070a` which has enough cold warmth to avoid the "floating in absolute void" effect.
@@ -473,7 +473,7 @@ Base unit: `4px`. Every spacing value is a multiple of 4.
 
 ### Image Behavior
 
-- PayKit logo: SVG, renders at 24px height in sidebar, 20px in mobile nav, 28px on checkout page
+- Paylix logo: SVG, renders at 24px height in sidebar, 20px in mobile nav, 28px on checkout page
 - Token icons (USDC): 16px in tables, 20px in checkout, loaded from CDN with text fallback ("USDC")
 - QR codes: 200px on desktop, 160px on mobile, always centered, white code on dark background
 - No decorative illustrations — the UI is data-driven
@@ -519,5 +519,5 @@ Base unit: `4px`. Every spacing value is a multiple of 4.
 4. Borders (`rgba(148, 163, 184, 0.12)`) are the primary depth mechanism. Shadows appear only on floating elements (L2+).
 5. The 4px grid is law. If a spacing value isn't divisible by 4, round to the nearest multiple.
 6. Status colors are immutable: green=confirmed/active, amber=past_due, red=failed/cancelled, blue=pending.
-7. The checkout page is a single centered card (480px max). No sidebar, no nav, no footer — just the payment flow and "Powered by PayKit."
+7. The checkout page is a single centered card (480px max). No sidebar, no nav, no footer — just the payment flow and "Powered by Paylix."
 8. More whitespace is almost always the right call. A payment platform should feel spacious, controlled, and calm — never cramped.

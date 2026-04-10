@@ -1,1 +1,1 @@
-console.log("PayKit Indexer — not yet implemented");
+console.log("Paylix Indexer — not yet implemented");

@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { customers, payments } from "@paykit/db/schema";
+import { customers, payments } from "@paylix/db/schema";
 import { eq, and, sql, desc, count, sum, max } from "drizzle-orm";
 import Link from "next/link";
 

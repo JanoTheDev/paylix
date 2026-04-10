@@ -37,7 +37,7 @@ export default function RegisterPage() {
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-[#f0f0f3]">Create account</h1>
         <p className="mt-1 text-sm text-[#94a3b8]">
-          Get started with PayKit
+          Get started with Paylix
         </p>
       </div>
 

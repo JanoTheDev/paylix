@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { webhooks, webhookDeliveries } from "@paykit/db/schema";
+import { webhooks, webhookDeliveries } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createHmac } from "crypto";
 
@@ -54,8 +54,8 @@ export async function POST(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-PayKit-Signature": `t=${timestamp},v1=${signature}`,
-        "X-PayKit-Event": "payment.confirmed",
+        "X-Paylix-Signature": `t=${timestamp},v1=${signature}`,
+        "X-Paylix-Event": "payment.confirmed",
       },
       body: payloadStr,
       signal: AbortSignal.timeout(10000),

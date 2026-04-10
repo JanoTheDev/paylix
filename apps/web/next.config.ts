@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@paykit/db"],
+  transpilePackages: ["@paylix/db"],
 };
 
 export default nextConfig;

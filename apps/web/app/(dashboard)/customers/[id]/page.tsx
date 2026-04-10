@@ -7,7 +7,7 @@ import {
   payments,
   products,
   subscriptions,
-} from "@paykit/db/schema";
+} from "@paylix/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import Link from "next/link";
 import CopyButton from "./copy-button";

@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { payments, products, customers } from "@paykit/db/schema";
+import { payments, products, customers } from "@paylix/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 
 function formatAmount(cents: number): string {

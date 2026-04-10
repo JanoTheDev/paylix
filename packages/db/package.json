@@ -1,5 +1,5 @@
 {
-  "name": "@paykit/db",
+  "name": "@paylix/db",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -19,7 +19,7 @@
     "postgres": "^3.4"
   },
   "devDependencies": {
-    "@paykit/config": "workspace:*",
+    "@paylix/config": "workspace:*",
     "drizzle-kit": "^0.30",
     "typescript": "^5.5"
   }

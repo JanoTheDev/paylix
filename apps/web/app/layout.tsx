@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PayKit — Crypto Payment Dashboard",
+  title: "Paylix — Crypto Payment Dashboard",
   description: "Accept USDC payments and subscriptions. Open source.",
 };
 

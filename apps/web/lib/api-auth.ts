@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { apiKeys, users } from "@paykit/db/schema";
+import { apiKeys, users } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hashApiKey } from "./api-key-utils";
 

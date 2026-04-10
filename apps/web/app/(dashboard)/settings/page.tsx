@@ -100,7 +100,7 @@ export default function SettingsPage() {
       }
 
       // Load checkout defaults from localStorage
-      const saved = localStorage.getItem("paykit_checkout_defaults");
+      const saved = localStorage.getItem("paylix_checkout_defaults");
       if (saved) {
         try {
           setCheckoutDefaults(JSON.parse(saved));
@@ -163,7 +163,7 @@ export default function SettingsPage() {
   function saveCheckoutDefaults() {
     setDefaultsSaving(true);
     localStorage.setItem(
-      "paykit_checkout_defaults",
+      "paylix_checkout_defaults",
       JSON.stringify(checkoutDefaults)
     );
     setDefaultsSuccess(true);

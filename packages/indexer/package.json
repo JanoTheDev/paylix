@@ -1,5 +1,5 @@
 {
-  "name": "@paykit/indexer",
+  "name": "@paylix/indexer",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,13 +8,13 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@paykit/db": "workspace:*",
+    "@paylix/db": "workspace:*",
     "viem": "^2",
     "drizzle-orm": "^0.38",
     "postgres": "^3.4"
   },
   "devDependencies": {
-    "@paykit/config": "workspace:*",
+    "@paylix/config": "workspace:*",
     "tsx": "^4",
     "typescript": "^5.5"
   }
