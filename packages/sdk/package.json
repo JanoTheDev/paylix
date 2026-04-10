@@ -14,14 +14,17 @@
   },
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "test": "vitest run"
   },
   "dependencies": {
     "viem": "^2"
   },
   "devDependencies": {
     "@paylix/config": "workspace:*",
+    "@types/node": "25.5.2",
     "tsup": "^8",
-    "typescript": "^5.5"
+    "typescript": "^5.5",
+    "vitest": "^4.1.4"
   }
 }
