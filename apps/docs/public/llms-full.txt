@@ -1,0 +1,550 @@
+# Paylix SDK — Complete Reference
+# Version: 0.1.0
+# Last updated: 2026-04-09
+#
+# Paylix is an open-source, self-hostable crypto payment platform.
+# Accept USDC payments and subscriptions on Base with TypeScript.
+# Funds go directly to your wallet — no custodial intermediary.
+
+## Installation
+
+```bash
+npm install @paylix/sdk
+# or
+pnpm add @paylix/sdk
+# or
+yarn add @paylix/sdk
+```
+
+## Initialization
+
+```typescript
+import { Paylix, webhooks, NETWORKS } from "@paylix/sdk";
+
+const paylix = new Paylix({
+  apiKey: "sk_live_...",           // Secret API key from dashboard
+  network: "base",                 // "base" (mainnet) or "base-sepolia" (testnet)
+  merchantWallet: "0x1234...abcd", // Your wallet that receives payments
+  backendUrl: "https://paylix.example.com", // Your Paylix backend URL
+});
+```
+
+## SDK Methods
+
+### paylix.createCheckout(params)
+
+Creates a one-time payment checkout session.
+
+```typescript
+const { checkoutUrl, checkoutId } = await paylix.createCheckout({
+  productId: "prod_abc123",              // required — product ID from dashboard
+  customerId: "cust_xyz",                // optional — your customer identifier
+  successUrl: "https://example.com/ok",  // optional — redirect after payment
+  cancelUrl: "https://example.com/cancel", // optional — redirect on cancel
+  metadata: { orderId: "42" },           // optional — arbitrary key-value pairs
+});
+// Returns: { checkoutUrl: string; checkoutId: string }
+// Redirect user to checkoutUrl to complete payment.
+```
+
+### paylix.createSubscription(params)
+
+Creates a recurring subscription checkout session.
+
+```typescript
+const { checkoutUrl, subscriptionId } = await paylix.createSubscription({
+  productId: "prod_monthly_pro",         // required — subscription product ID
+  customerId: "cust_xyz",                // optional
+  successUrl: "https://example.com/welcome", // optional
+  cancelUrl: "https://example.com/pricing",  // optional
+  metadata: { plan: "pro" },             // optional
+});
+// Returns: { checkoutUrl: string; subscriptionId: string }
+```
+
+### paylix.cancelSubscription(params)
+
+Cancels an active subscription.
+
+```typescript
+await paylix.cancelSubscription({
+  subscriptionId: "sub_abc123", // required
+});
+// Returns: void
+```
+
+### paylix.updateSubscriptionWallet(params)
+
+Prompts the subscriber to update the wallet used for recurring charges.
+
+```typescript
+await paylix.updateSubscriptionWallet({
+  subscriptionId: "sub_abc123", // required
+});
+// Returns: void
+```
+
+### paylix.verifyPayment(params)
+
+Verifies a payment's on-chain status. Always verify server-side before fulfilling.
+
+```typescript
+const result = await paylix.verifyPayment({
+  paymentId: "pay_abc123", // required
+});
+// Returns:
+// {
+//   verified: boolean;    — true if confirmed on-chain
+//   amount: number;       — amount in USDC cents (1000 = $10.00)
+//   fee: number;          — platform fee in USDC cents
+//   txHash: string;       — on-chain transaction hash
+//   chain: string;        — "base" or "base-sepolia"
+//   customerId: string;
+//   productId: string;
+//   status: "confirmed" | "pending" | "failed";
+// }
+```
+
+### paylix.getCustomerPortal(params)
+
+Returns a customer's payment history and subscriptions.
+
+```typescript
+const portal = await paylix.getCustomerPortal({
+  customerId: "cust_xyz", // required
+});
+// Returns:
+// {
+//   customer: Customer;
+//   payments: Payment[];
+//   subscriptions: Subscription[];
+// }
+```
+
+### webhooks.verify(params)
+
+Verifies a webhook signature. Returns true if the signature is valid.
+
+```typescript
+import { webhooks } from "@paylix/sdk";
+
+const isValid = webhooks.verify({
+  payload: rawBody,                              // required — raw request body as string
+  signature: req.headers["x-paylix-signature"],  // required — signature header
+  secret: "whsec_...",                           // required — webhook secret from dashboard
+});
+// Returns: boolean
+```
+
+## Webhook Events
+
+All webhooks are POST requests with JSON body and an `x-paylix-signature` header.
+
+### payment.confirmed
+
+Sent when a one-time payment is confirmed on-chain.
+
+```json
+{
+  "type": "payment.confirmed",
+  "data": {
+    "paymentId": "pay_abc123",
+    "checkoutId": "chk_xyz789",
+    "productId": "prod_abc123",
+    "customerId": "cust_xyz",
+    "amount": 1000,
+    "fee": 30,
+    "currency": "USDC",
+    "chain": "base",
+    "txHash": "0xabc...def",
+    "merchantWallet": "0x1234...abcd",
+    "metadata": { "orderId": "42" },
+    "confirmedAt": "2026-01-15T10:30:00Z"
+  }
+}
+```
+
+### subscription.created
+
+Sent when a subscription is created and first payment confirmed.
+
+```json
+{
+  "type": "subscription.created",
+  "data": {
+    "subscriptionId": "sub_abc123",
+    "productId": "prod_monthly_pro",
+    "customerId": "cust_xyz",
+    "amount": 2000,
+    "currency": "USDC",
+    "chain": "base",
+    "interval": "monthly",
+    "subscriberWallet": "0xabcd...1234",
+    "merchantWallet": "0x1234...abcd",
+    "metadata": {},
+    "createdAt": "2026-01-15T10:30:00Z",
+    "nextChargeAt": "2026-02-15T10:30:00Z"
+  }
+}
+```
+
+### subscription.charged
+
+Sent when a recurring charge is processed.
+
+```json
+{
+  "type": "subscription.charged",
+  "data": {
+    "subscriptionId": "sub_abc123",
+    "paymentId": "pay_def456",
+    "productId": "prod_monthly_pro",
+    "customerId": "cust_xyz",
+    "amount": 2000,
+    "fee": 60,
+    "currency": "USDC",
+    "chain": "base",
+    "txHash": "0xdef...789",
+    "chargedAt": "2026-02-15T10:30:00Z",
+    "nextChargeAt": "2026-03-15T10:30:00Z"
+  }
+}
+```
+
+### subscription.past_due
+
+Sent when a recurring charge fails.
+
+```json
+{
+  "type": "subscription.past_due",
+  "data": {
+    "subscriptionId": "sub_abc123",
+    "productId": "prod_monthly_pro",
+    "customerId": "cust_xyz",
+    "reason": "insufficient_balance",
+    "failedAt": "2026-02-15T10:30:00Z",
+    "retryAt": "2026-02-16T10:30:00Z"
+  }
+}
+```
+
+### subscription.cancelled
+
+Sent when a subscription is cancelled.
+
+```json
+{
+  "type": "subscription.cancelled",
+  "data": {
+    "subscriptionId": "sub_abc123",
+    "productId": "prod_monthly_pro",
+    "customerId": "cust_xyz",
+    "cancelledBy": "merchant",
+    "cancelledAt": "2026-03-01T12:00:00Z"
+  }
+}
+```
+
+## Webhook Handler Examples
+
+### Next.js App Router
+
+```typescript
+// app/api/webhooks/paylix/route.ts
+import { webhooks } from "@paylix/sdk";
+import { NextRequest, NextResponse } from "next/server";
+
+export async function POST(req: NextRequest) {
+  const payload = await req.text();
+  const signature = req.headers.get("x-paylix-signature")!;
+
+  const isValid = webhooks.verify({
+    payload,
+    signature,
+    secret: process.env.PAYLIX_WEBHOOK_SECRET!,
+  });
+
+  if (!isValid) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
+  const event = JSON.parse(payload);
+
+  switch (event.type) {
+    case "payment.confirmed":
+      await fulfillOrder(event.data.productId, event.data.customerId);
+      break;
+    case "subscription.created":
+      await activateSubscription(event.data.subscriptionId);
+      break;
+    case "subscription.charged":
+      await recordCharge(event.data.subscriptionId, event.data.amount);
+      break;
+    case "subscription.past_due":
+      await handlePastDue(event.data.subscriptionId);
+      break;
+    case "subscription.cancelled":
+      await revokeAccess(event.data.subscriptionId);
+      break;
+  }
+
+  return NextResponse.json({ received: true });
+}
+```
+
+### Express
+
+```typescript
+import express from "express";
+import { webhooks } from "@paylix/sdk";
+
+const app = express();
+
+app.post(
+  "/api/webhooks/paylix",
+  express.raw({ type: "application/json" }),
+  (req, res) => {
+    const payload = req.body.toString();
+    const signature = req.headers["x-paylix-signature"] as string;
+
+    const isValid = webhooks.verify({
+      payload,
+      signature,
+      secret: process.env.PAYLIX_WEBHOOK_SECRET!,
+    });
+
+    if (!isValid) {
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+
+    const event = JSON.parse(payload);
+    // Handle event...
+    res.json({ received: true });
+  }
+);
+```
+
+## Common Patterns
+
+### Create Checkout and Redirect (Next.js Server Action)
+
+```typescript
+"use server";
+import { Paylix } from "@paylix/sdk";
+import { redirect } from "next/navigation";
+
+const paylix = new Paylix({
+  apiKey: process.env.PAYLIX_SECRET_KEY!,
+  network: "base",
+  merchantWallet: process.env.MERCHANT_WALLET!,
+  backendUrl: process.env.PAYLIX_BACKEND_URL!,
+});
+
+export async function buyProduct(productId: string, customerId: string) {
+  const { checkoutUrl } = await paylix.createCheckout({
+    productId,
+    customerId,
+    successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/success`,
+    cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
+  });
+  redirect(checkoutUrl);
+}
+```
+
+### Create Subscription
+
+```typescript
+export async function subscribe(productId: string, customerId: string) {
+  const { checkoutUrl, subscriptionId } = await paylix.createSubscription({
+    productId,
+    customerId,
+    successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/welcome`,
+    cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
+  });
+  // Store subscriptionId in your database
+  await db.update(users).set({ subscriptionId }).where(eq(users.id, customerId));
+  redirect(checkoutUrl);
+}
+```
+
+### Verify Payment Server-Side
+
+```typescript
+// app/api/verify/route.ts
+import { Paylix } from "@paylix/sdk";
+import { NextRequest, NextResponse } from "next/server";
+
+const paylix = new Paylix({ /* config */ });
+
+export async function GET(req: NextRequest) {
+  const paymentId = req.nextUrl.searchParams.get("paymentId");
+  if (!paymentId) {
+    return NextResponse.json({ error: "Missing paymentId" }, { status: 400 });
+  }
+
+  const result = await paylix.verifyPayment({ paymentId });
+
+  if (result.verified) {
+    // Mark order as fulfilled in your database
+    return NextResponse.json({ status: "confirmed", txHash: result.txHash });
+  }
+
+  return NextResponse.json({ status: result.status });
+}
+```
+
+### Gate Content Behind Payment
+
+```typescript
+// middleware.ts or server component
+import { Paylix } from "@paylix/sdk";
+
+const paylix = new Paylix({ /* config */ });
+
+export async function hasActiveSubscription(customerId: string): Promise<boolean> {
+  const portal = await paylix.getCustomerPortal({ customerId });
+  return portal.subscriptions.some((sub) => sub.status === "active");
+}
+
+// In your page:
+export default async function PremiumPage() {
+  const user = await getCurrentUser();
+  const hasAccess = await hasActiveSubscription(user.id);
+
+  if (!hasAccess) {
+    redirect("/pricing");
+  }
+
+  return <div>Premium content here</div>;
+}
+```
+
+## Network Configurations
+
+```typescript
+import { NETWORKS } from "@paylix/sdk";
+
+// Base Mainnet
+NETWORKS["base"] = {
+  chainId: 8453,
+  name: "Base",
+  rpcUrl: "https://mainnet.base.org",
+  usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  explorerUrl: "https://basescan.org",
+};
+
+// Base Sepolia (Testnet)
+NETWORKS["base-sepolia"] = {
+  chainId: 84532,
+  name: "Base Sepolia",
+  rpcUrl: "https://sepolia.base.org",
+  usdcAddress: "0x...",  // MockUSDC contract
+  explorerUrl: "https://sepolia.basescan.org",
+};
+```
+
+## TypeScript Types
+
+```typescript
+// Configuration
+interface PaylixConfig {
+  apiKey: string;
+  network: "base" | "base-sepolia";
+  merchantWallet: string;
+  backendUrl: string;
+}
+
+// Checkout
+interface CreateCheckoutParams {
+  productId: string;
+  customerId?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+  metadata?: Record<string, string>;
+}
+
+interface CreateCheckoutResult {
+  checkoutUrl: string;
+  checkoutId: string;
+}
+
+// Subscription
+interface CreateSubscriptionParams {
+  productId: string;
+  customerId?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+  metadata?: Record<string, string>;
+}
+
+interface CreateSubscriptionResult {
+  checkoutUrl: string;
+  subscriptionId: string;
+}
+
+// Payment Verification
+interface VerifyPaymentParams {
+  paymentId: string;
+}
+
+interface VerifyPaymentResult {
+  verified: boolean;
+  amount: number;       // USDC cents (1000 = $10.00)
+  fee: number;          // USDC cents
+  txHash: string;
+  chain: string;
+  customerId: string;
+  productId: string;
+  status: "confirmed" | "pending" | "failed";
+}
+
+// Customer Portal
+interface CustomerPortalParams {
+  customerId: string;
+}
+
+interface CustomerPortal {
+  customer: Customer;
+  payments: Payment[];
+  subscriptions: Subscription[];
+}
+
+// Webhook Verification
+interface WebhookVerifyParams {
+  payload: string;
+  signature: string;
+  secret: string;
+}
+
+// Network
+interface NetworkConfig {
+  chainId: number;
+  name: string;
+  rpcUrl: string;
+  usdcAddress: string;
+  explorerUrl: string;
+}
+
+// Webhook Event
+type WebhookEventType =
+  | "payment.confirmed"
+  | "subscription.created"
+  | "subscription.charged"
+  | "subscription.past_due"
+  | "subscription.cancelled";
+
+interface WebhookEvent {
+  type: WebhookEventType;
+  data: Record<string, unknown>;
+}
+```
+
+## Key Concepts
+
+- **Amounts**: All amounts are in USDC cents (integer). 1000 = $10.00 USDC.
+- **API Keys**: `pk_` prefix for publishable (client-side), `sk_` prefix for secret (server-side).
+- **Networks**: `"base"` for mainnet, `"base-sepolia"` for testnet.
+- **Non-custodial**: Payments go directly to your `merchantWallet`. Paylix never holds funds.
+- **Webhook secrets**: `whsec_` prefix. Always verify signatures server-side.
+- **Subscriptions**: Use ERC-20 `approve` + on-chain keeper pattern. No off-chain card storage.

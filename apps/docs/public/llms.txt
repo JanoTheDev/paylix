@@ -1,0 +1,9 @@
+# Paylix SDK
+> Open-source crypto payment SDK for developers. USDC on Base.
+
+## Docs
+- Getting Started: /
+- SDK Reference: /sdk-reference
+- Webhooks: /webhooks
+- Self-Hosting: /self-hosting
+- Full reference for LLMs: /llms-full.txt
