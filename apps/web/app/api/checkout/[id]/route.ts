@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { checkoutSessions, products } from "@paylix/db/schema";
+import { checkoutSessions, products, payments } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -24,13 +24,16 @@ export async function GET(
       metadata: checkoutSessions.metadata,
       expiresAt: checkoutSessions.expiresAt,
       productId: checkoutSessions.productId,
+      paymentId: checkoutSessions.paymentId,
       productName: products.name,
       productDescription: products.description,
       checkoutFields: products.checkoutFields,
       billingInterval: products.billingInterval,
+      customerUuid: payments.customerId,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))
+    .leftJoin(payments, eq(checkoutSessions.paymentId, payments.id))
     .where(eq(checkoutSessions.id, id));
 
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });

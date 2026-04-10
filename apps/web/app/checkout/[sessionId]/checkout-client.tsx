@@ -61,6 +61,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   const markedViewed = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [indexerOnline, setIndexerOnline] = useState<boolean>(true);
+  const [customerUuid, setCustomerUuid] = useState<string | null>(null);
 
   // Check indexer status on mount and every 30s
   useEffect(() => {
@@ -132,15 +133,16 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
 
         if (data.status === "completed") {
           setStatus("completed");
+          if (data.customerUuid) setCustomerUuid(data.customerUuid);
           if (pollRef.current) {
             clearInterval(pollRef.current);
             pollRef.current = null;
           }
-          // Redirect after 2s
+          // Redirect after 5s (give user time to see the portal link)
           if (session.successUrl) {
             setTimeout(() => {
               window.location.href = session.successUrl!;
-            }, 2000);
+            }, 5000);
           }
         } else if (data.status === "expired") {
           setStatus("expired");
@@ -295,6 +297,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   const displayAmount = formatAmount(session.amount);
 
   if (status === "completed") {
+    const isSubscription = session.type === "subscription";
     return (
       <div
         className="w-full max-w-[480px] rounded-[16px] border border-[rgba(148,163,184,0.16)] bg-[#18181e] p-8"
@@ -307,13 +310,28 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
             </svg>
           </div>
           <h2 className="mb-2 text-[20px] font-semibold tracking-[-0.4px] text-[#f0f0f3]">
-            Payment confirmed!
+            {isSubscription ? "Subscription active!" : "Payment confirmed!"}
           </h2>
           <p className="text-[14px] leading-[1.55] text-[#94a3b8]">
-            {session.successUrl
-              ? "Redirecting you back..."
+            {isSubscription
+              ? `You'll be charged $${displayAmount} ${formatInterval(session.billingInterval)}. First charge completed.`
               : `$${displayAmount} ${session.currency} received successfully.`}
           </p>
+
+          {customerUuid && (
+            <a
+              href={`/portal/${customerUuid}`}
+              className="mt-6 inline-flex h-10 items-center justify-center rounded-[8px] border border-[rgba(148,163,184,0.12)] px-[18px] text-[14px] font-medium text-[#f0f0f3] transition-colors duration-150 hover:border-[rgba(148,163,184,0.20)] hover:bg-[#111116]"
+            >
+              {isSubscription ? "Manage subscription" : "View purchase history"}
+            </a>
+          )}
+
+          {session.successUrl && (
+            <p className="mt-4 text-[12px] text-[#64748b]">
+              Redirecting you back in a few seconds...
+            </p>
+          )}
         </div>
 
         {/* Footer */}
@@ -351,27 +369,46 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
       {/* Product Info */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[20px] font-semibold leading-[1.25] tracking-[-0.4px] text-[#f0f0f3]">
-            {session.productName}
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-[20px] font-semibold leading-[1.25] tracking-[-0.4px] text-[#f0f0f3]">
+              {session.productName}
+            </h1>
+            {session.type === "subscription" && (
+              <span className="inline-flex items-center rounded-full border border-[#06d6a033] bg-[#06d6a010] px-[10px] py-[3px] text-[11px] font-semibold uppercase tracking-[0.3px] text-[#06d6a0]">
+                Subscription
+              </span>
+            )}
+          </div>
           {session.productDescription && (
             <p className="mt-1 text-[14px] leading-[1.55] text-[#94a3b8]">
               {session.productDescription}
             </p>
           )}
+          {session.type === "subscription" && (
+            <p className="mt-2 text-[13px] text-[#94a3b8]">
+              You&apos;ll be charged <span className="font-medium text-[#f0f0f3]">${displayAmount} {session.currency}</span> {formatInterval(session.billingInterval)} until cancelled.
+            </p>
+          )}
         </div>
-        <div className="flex flex-shrink-0 items-baseline gap-2">
-          <span
-            className="text-[24px] font-semibold leading-[1.2] tracking-[-0.3px] text-[#f0f0f3]"
-            style={{ fontFamily: '"Geist Mono", ui-monospace, monospace', fontVariantNumeric: "tabular-nums" }}
-          >
-            ${displayAmount}
-          </span>
-          <span className="inline-flex items-center rounded-[6px] border border-[#2775ca33] bg-[#2775ca14] px-[10px] py-[3px] text-[11px] font-semibold tracking-[0.3px] text-[#2775ca]"
-            style={{ fontFamily: '"Geist Mono", ui-monospace, monospace' }}
-          >
-            {session.currency}
-          </span>
+        <div className="flex flex-shrink-0 flex-col items-end gap-1">
+          <div className="flex items-baseline gap-2">
+            <span
+              className="text-[24px] font-semibold leading-[1.2] tracking-[-0.3px] text-[#f0f0f3]"
+              style={{ fontFamily: '"Geist Mono", ui-monospace, monospace', fontVariantNumeric: "tabular-nums" }}
+            >
+              ${displayAmount}
+            </span>
+            <span className="inline-flex items-center rounded-[6px] border border-[#2775ca33] bg-[#2775ca14] px-[10px] py-[3px] text-[11px] font-semibold tracking-[0.3px] text-[#2775ca]"
+              style={{ fontFamily: '"Geist Mono", ui-monospace, monospace' }}
+            >
+              {session.currency}
+            </span>
+          </div>
+          {session.type === "subscription" && (
+            <span className="text-[11px] text-[#64748b]">
+              {formatInterval(session.billingInterval)}
+            </span>
+          )}
         </div>
       </div>
 

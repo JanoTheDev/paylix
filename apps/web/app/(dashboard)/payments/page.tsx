@@ -73,6 +73,7 @@ export default async function PaymentsPage() {
       txHash: payments.txHash,
       createdAt: payments.createdAt,
       productName: products.name,
+      productType: products.type,
       customerEmail: customers.email,
       customerWallet: customers.walletAddress,
     })
@@ -105,6 +106,9 @@ export default async function PaymentsPage() {
                     Product
                   </th>
                   <th className="h-10 px-4 text-left text-[13px] font-medium text-[#64748b]">
+                    Type
+                  </th>
+                  <th className="h-10 px-4 text-left text-[13px] font-medium text-[#64748b]">
                     Customer
                   </th>
                   <th className="h-10 px-4 text-right text-[13px] font-medium text-[#64748b]">
@@ -132,6 +136,31 @@ export default async function PaymentsPage() {
                     </td>
                     <td className="h-[52px] px-4 text-[13px] text-[#f0f0f3]">
                       {row.productName ?? "—"}
+                    </td>
+                    <td className="h-[52px] px-4">
+                      {row.productType === "subscription" ? (
+                        <span
+                          style={{
+                            background: "#06d6a010",
+                            color: "#06d6a0",
+                            border: "1px solid #06d6a033",
+                          }}
+                          className="inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold uppercase leading-none tracking-[0.3px]"
+                        >
+                          Subscription
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            background: "#94a3b810",
+                            color: "#94a3b8",
+                            border: "1px solid #94a3b833",
+                          }}
+                          className="inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold uppercase leading-none tracking-[0.3px]"
+                        >
+                          One-time
+                        </span>
+                      )}
                     </td>
                     <td className="h-[52px] px-4 text-[13px] text-[#f0f0f3]">
                       {row.customerEmail ??
