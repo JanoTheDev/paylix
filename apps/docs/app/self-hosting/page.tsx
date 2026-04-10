@@ -176,6 +176,131 @@ http://localhost:3000`}</CodeBlock>
   reverse_proxy localhost:3000
 }`}</CodeBlock>
 
+      <SectionHeading>Gas Sponsorship (Gasless Payments)</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Paylix buyers don&apos;t need to hold ETH. When a customer pays, they
+        sign an EIP-2612 permit off-chain (no transaction, no gas) and your
+        backend submits the payment via a whitelisted{" "}
+        <strong className="text-foreground">relayer wallet</strong> that pays
+        gas on their behalf. USDC still flows directly from buyer to merchant
+        — the relayer just signs the carrier transaction.
+      </p>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        You need to generate a dedicated relayer wallet and fund it with a
+        small amount of ETH on your target chain.
+      </p>
+
+      <SubsectionHeading>1. Generate the relayer wallet</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Use Foundry&apos;s <code>cast wallet new</code> to create a fresh EOA.
+        Do <strong className="text-foreground">not</strong> reuse your
+        deployer key — keeping them separate lets you rotate the relayer
+        without redeploying contracts.
+      </p>
+      <CodeBlock language="bash">{`cast wallet new`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Copy both the Address and the Private Key from the output.
+      </p>
+
+      <SubsectionHeading>2. Configure the .env</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Add the relayer private key to your{" "}
+        <code>paykit/.env</code>. <code>RELAYER_ADDRESS</code> is derived
+        automatically by the deploy script — leave it blank.
+      </p>
+      <CodeBlock language="bash">{`RELAYER_PRIVATE_KEY=0xYourRelayerPrivateKey
+RELAYER_ADDRESS=`}</CodeBlock>
+
+      <SubsectionHeading>3. Deploy and fund</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Run the deploy script (or redeploy if contracts are already live). It
+        will derive the relayer address from your private key and call{" "}
+        <code>setRelayer()</code> on both the PaymentVault and
+        SubscriptionManager contracts.
+      </p>
+      <CodeBlock language="bash">{`./deploy-contracts.sh`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Then fund the relayer wallet with ETH on the target chain. A small
+        balance goes a long way — ~0.005 ETH on Base Sepolia covers around
+        1,000 relayed transactions.
+      </p>
+
+      <SubsectionHeading>4. Monitor balance</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The dashboard sidebar shows a live relayer balance indicator. You can
+        also hit the status endpoint directly:
+      </p>
+      <CodeBlock language="bash">{`curl http://localhost:3000/api/system/relayer-status`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Returns <code>{`{ configured, address, balanceWei, balanceEth, low }`}</code>.
+        The sidebar will switch from green to amber and show &quot;(low)&quot;
+        when the balance drops below 0.001 ETH.
+      </p>
+
+      <SubsectionHeading>5. Rotating the relayer key</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        If the relayer private key leaks or you want to rotate it defensively,
+        you can swap it without redeploying contracts. Downtime is about 10
+        seconds — just long enough to run a <code>setRelayer</code> call and
+        restart the web server.
+      </p>
+      <CodeBlock language="bash">{`# 1. Generate a new wallet
+cast wallet new
+
+# 2. Copy the new address; call setRelayer on both contracts
+cast send <PAYMENT_VAULT_ADDRESS> 'setRelayer(address)' <NEW_ADDRESS> \\
+  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send <SUBSCRIPTION_MANAGER_ADDRESS> 'setRelayer(address)' <NEW_ADDRESS> \\
+  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# 3. Update paykit/.env with the new private key
+# RELAYER_PRIVATE_KEY=0xNEW_PRIVATE_KEY
+
+# 4. Fund the new relayer wallet with ETH
+cast send <NEW_ADDRESS> --value 0.01ether \\
+  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# 5. Restart the web server so it picks up the new key
+pnpm --filter @paylix/web dev`}</CodeBlock>
+
+      <SubsectionHeading>6. Emergency pause</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        If gasless payments start misbehaving in production — a bug in the
+        relay path, an exploit attempt, or a runaway cost — you can freeze
+        them without affecting direct wallet payments (buyers who hold ETH
+        and pay gas themselves can still check out).
+      </p>
+      <CodeBlock language="bash">{`# Pause gasless on both contracts
+cast send <PAYMENT_VAULT_ADDRESS> 'setGaslessPaused(bool)' true \\
+  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+cast send <SUBSCRIPTION_MANAGER_ADDRESS> 'setGaslessPaused(bool)' true \\
+  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# To unpause, pass false instead of true.`}</CodeBlock>
+
+      <Callout variant="warning" title="Pause doesn't cancel existing subscriptions">
+        Paused gasless means no new payments and no new subscriptions can go
+        through the relayer. Existing subscriptions that were already created
+        continue charging normally via the keeper (which doesn&apos;t go
+        through the relayer path). Cancellation via the relayer is also
+        blocked while paused — document this for your operators so they know
+        the direct <code>cancelSubscription</code> from their own wallet is
+        the escape hatch.
+      </Callout>
+
+      <SubsectionHeading>7. Mainnet readiness check</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Before your first mainnet deploy, run the Foundry mainnet fork test
+        against real Circle USDC to verify that the gasless permit flow works
+        with the real token&apos;s EIP-712 domain. This catches issues with
+        domain version, nonces, or signature recovery that MockUSDC wouldn&apos;t.
+      </p>
+      <CodeBlock language="bash">{`FORK_RPC_URL=https://mainnet.base.org \\
+  ~/.foundry/bin/forge test --match-path "test/mainnet-fork/*" \\
+  --fork-url $FORK_RPC_URL -vvv`}</CodeBlock>
+
       <SectionHeading>Updating</SectionHeading>
       <CodeBlock language="bash">{`git pull origin main
 docker compose down

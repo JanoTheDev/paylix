@@ -247,6 +247,43 @@ app.post(
   }
 }`}</CodeBlock>
 
+      <SubsectionHeading>system.relayer_balance_low</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Sent when the gasless payments relayer wallet&apos;s ETH balance drops
+        below 0.001 ETH. Fires once per threshold crossing (debounced), so you
+        get alerted when the balance first goes low — not repeatedly. Subscribe
+        to this event if you&apos;re running gasless payments and want to know
+        before the relayer runs out of gas for user transactions.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.relayer_balance_low",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "data": {
+    "address": "0xC7beA00CfCFb3f93AE8555d1a9E1Ec3018F281F9",
+    "balanceWei": "800000000000000",
+    "balanceEth": "0.0008",
+    "thresholdWei": "1000000000000000"
+  }
+}`}</CodeBlock>
+
+      <SubsectionHeading>system.keeper_balance_low</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Sent when the subscription keeper wallet&apos;s ETH balance drops
+        below 0.001 ETH. Same debouncing as the relayer alert. Subscribe if
+        you have subscriptions running — the keeper wallet pays gas for
+        every recurring charge.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.keeper_balance_low",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "data": {
+    "address": "0x950d809e392FA0f080318d896c80472531f01907",
+    "balanceWei": "750000000000000",
+    "balanceEth": "0.00075",
+    "thresholdWei": "1000000000000000"
+  }
+}`}</CodeBlock>
+
       <SectionHeading>Best Practices</SectionHeading>
       <ul className="mt-4 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-disc">
         <li>

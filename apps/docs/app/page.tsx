@@ -35,7 +35,7 @@ export default function GettingStarted() {
     <>
       <PageHeading
         title="Getting Started"
-        description="Paylix lets you accept USDC payments and subscriptions on Base with a few lines of TypeScript. No custodial wallets, no payment processors — funds move directly from customer wallets to yours."
+        description="Paylix lets you accept USDC payments and subscriptions on Base with a few lines of TypeScript. No custodial wallets, no payment processors — funds move directly from customer wallets to yours. Buyers don't need to hold ETH — the platform relayer pays gas on their behalf while USDC still flows directly from buyer to merchant."
       />
 
       <p className="text-sm leading-relaxed text-foreground-muted">
