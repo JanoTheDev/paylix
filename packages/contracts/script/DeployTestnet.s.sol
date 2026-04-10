@@ -10,6 +10,7 @@ contract DeployTestnet is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address platformWallet = vm.envAddress("PLATFORM_WALLET");
+        address relayer = vm.envAddress("RELAYER_ADDRESS");
         uint256 platformFee = 50;
 
         vm.startBroadcast(deployerKey);
@@ -21,10 +22,14 @@ contract DeployTestnet is Script {
         vault.setAcceptedToken(address(usdc), true);
         subs.setAcceptedToken(address(usdc), true);
 
+        vault.setRelayer(relayer);
+        subs.setRelayer(relayer);
+
         vm.stopBroadcast();
 
         console.log("MockUSDC:", address(usdc));
         console.log("PaymentVault:", address(vault));
         console.log("SubscriptionManager:", address(subs));
+        console.log("Relayer set to:", relayer);
     }
 }

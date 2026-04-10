@@ -11,6 +11,7 @@ contract DeployMainnet is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address platformWallet = vm.envAddress("PLATFORM_WALLET");
+        address relayer = vm.envAddress("RELAYER_ADDRESS");
         uint256 platformFee = 50;
 
         vm.startBroadcast(deployerKey);
@@ -21,9 +22,13 @@ contract DeployMainnet is Script {
         vault.setAcceptedToken(BASE_USDC, true);
         subs.setAcceptedToken(BASE_USDC, true);
 
+        vault.setRelayer(relayer);
+        subs.setRelayer(relayer);
+
         vm.stopBroadcast();
 
         console.log("PaymentVault:", address(vault));
         console.log("SubscriptionManager:", address(subs));
+        console.log("Relayer set to:", relayer);
     }
 }

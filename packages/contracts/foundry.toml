@@ -16,3 +16,8 @@ runs = 256
 [rpc_endpoints]
 base_sepolia = "${RPC_URL}"
 base = "${BASE_MAINNET_RPC_URL}"
+
+[profile.fork]
+# Run fork tests only on demand. These hit a live RPC and are slow.
+# Usage: FORK_RPC_URL=https://mainnet.base.org forge test --profile fork -vvv
+test = "test/mainnet-fork"
