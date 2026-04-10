@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, pgEnum, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, pgEnum, integer, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { products } from "./products";
 import { customers } from "./customers";
@@ -24,6 +24,7 @@ export const subscriptions = pgTable(
     lastPaymentId: uuid("last_payment_id").references(() => payments.id),
     onChainId: text("on_chain_id"),
     intervalSeconds: integer("interval_seconds"),
+    metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },

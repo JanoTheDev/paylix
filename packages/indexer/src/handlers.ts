@@ -340,6 +340,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       lastPaymentId: payment.id,
       onChainId,
       intervalSeconds,
+      metadata: session.metadata ?? {},
     })
     .returning();
 
@@ -371,6 +372,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     subscriberAddress: args.subscriber,
     merchantAddress: args.merchant,
     txHash: log.transactionHash,
+    metadata: subscription.metadata ?? {},
   });
 }
 
@@ -503,6 +505,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     fee: feeCents,
     txHash: log.transactionHash,
     nextChargeDate: nextCharge.toISOString(),
+    metadata: subscription.metadata ?? {},
   });
 }
 
@@ -528,6 +531,7 @@ export async function handleSubscriptionPastDue(log: Log, args: {
       subscriptionId: updated.id,
       onChainId,
       status: "past_due",
+      metadata: updated.metadata ?? {},
     });
   }
 }
@@ -554,6 +558,7 @@ export async function handleSubscriptionCancelled(log: Log, args: {
       subscriptionId: updated.id,
       onChainId,
       status: "cancelled",
+      metadata: updated.metadata ?? {},
     });
   }
 }
