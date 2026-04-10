@@ -33,12 +33,16 @@ export async function validateWebhookUrl(url: string): Promise<string | null> {
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "localhost") return "localhost not allowed";
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (hostname === "localhost") {
+    return isProd ? "localhost not allowed" : null;
+  }
 
   try {
     const { address } = await lookup(hostname);
     if (isBlockedIp(address)) {
-      return "Private/internal IPs not allowed";
+      return isProd ? "Private/internal IPs not allowed" : null;
     }
   } catch {
     return "Could not resolve hostname";
