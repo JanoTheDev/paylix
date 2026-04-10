@@ -2,6 +2,9 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppKit, useAppKitAccount } from "@reown/appkit/react";
+import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { keccak256, stringToBytes } from "viem";
+import { CONTRACTS, ERC20_ABI, PAYMENT_VAULT_ABI } from "@/lib/contracts";
 
 type CheckoutStatus = "active" | "viewed" | "abandoned" | "completed" | "expired";
 
@@ -169,8 +172,75 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     }
   };
 
-  const handleShowPaymentDetails = () => {
-    startPolling();
+  // Payment flow state
+  const [payStep, setPayStep] = useState<"idle" | "approving" | "paying" | "confirming">("idle");
+  const [payError, setPayError] = useState<string | null>(null);
+
+  const { writeContractAsync } = useWriteContract();
+  const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
+  const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash ?? undefined,
+  });
+
+  // Start polling when tx confirmed
+  useEffect(() => {
+    if (txConfirmed) {
+      startPolling();
+    }
+  }, [txConfirmed, startPolling]);
+
+  const handlePay = async () => {
+    if (payStep !== "idle") return; // prevent double clicks
+    setPayError(null);
+
+    try {
+      // Convert USDC amount (cents → 6 decimals)
+      // session.amount is in cents (100 = $1.00)
+      // USDC has 6 decimals, so $1.00 = 1,000,000 units
+      const usdcAmount = BigInt(session.amount) * BigInt(10_000); // cents * 10^4 = 10^6 units per dollar
+
+      // Convert IDs to bytes32
+      const productIdBytes = keccak256(stringToBytes(session.productId));
+      const customerIdBytes = keccak256(
+        stringToBytes(session.customerId || "anonymous")
+      );
+
+      // Step 1: Approve USDC spending to PaymentVault
+      setPayStep("approving");
+      const approveHash = await writeContractAsync({
+        address: CONTRACTS.usdc,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [CONTRACTS.paymentVault, usdcAmount],
+      });
+      console.log("Approve tx:", approveHash);
+
+      // Wait a moment for approval to propagate
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // Step 2: Call createPayment
+      setPayStep("paying");
+      const payHash = await writeContractAsync({
+        address: CONTRACTS.paymentVault,
+        abi: PAYMENT_VAULT_ABI,
+        functionName: "createPayment",
+        args: [
+          CONTRACTS.usdc,
+          session.merchantWallet as `0x${string}`,
+          usdcAmount,
+          productIdBytes,
+          customerIdBytes,
+        ],
+      });
+      console.log("Payment tx:", payHash);
+      setTxHash(payHash);
+      setPayStep("confirming");
+    } catch (err) {
+      console.error("Payment failed:", err);
+      const msg = err instanceof Error ? err.message : "Payment failed";
+      setPayError(msg.slice(0, 200));
+      setPayStep("idle");
+    }
   };
 
   const displayAmount = formatAmount(session.amount);
@@ -357,12 +427,20 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
             </button>
           </div>
           <button
-            onClick={handleShowPaymentDetails}
-            disabled={!indexerOnline}
+            onClick={handlePay}
+            disabled={!indexerOnline || payStep !== "idle"}
             className="h-10 w-full rounded-[8px] bg-[#06d6a0] px-[18px] text-[14px] font-medium text-[#07070a] transition-[background,box-shadow] duration-150 hover:bg-[#05bf8e] active:bg-[#04a87b] focus:outline-none focus:ring-[3px] focus:ring-[#06d6a060] focus:ring-offset-2 focus:ring-offset-[#18181e] disabled:cursor-not-allowed disabled:bg-[#1f1f26] disabled:text-[#64748b] disabled:hover:bg-[#1f1f26]"
           >
-            Pay ${displayAmount} {session.currency}
+            {payStep === "idle" && `Pay $${displayAmount} ${session.currency}`}
+            {payStep === "approving" && "Approving USDC..."}
+            {payStep === "paying" && "Confirm payment..."}
+            {payStep === "confirming" && "Processing..."}
           </button>
+          {payError && (
+            <div className="mt-3 rounded-lg border border-[#f8717130] bg-[#f8717112] p-3 text-[12px] text-[#f87171]">
+              {payError}
+            </div>
+          )}
         </>
       )}
 
