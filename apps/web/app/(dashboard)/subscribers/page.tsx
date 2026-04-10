@@ -61,6 +61,7 @@ export default async function SubscribersPage() {
       status: subscriptions.status,
       createdAt: subscriptions.createdAt,
       nextChargeDate: subscriptions.nextChargeDate,
+      onChainId: subscriptions.onChainId,
       productName: products.name,
       customerEmail: customers.email,
       customerWallet: customers.walletAddress,
@@ -138,7 +139,11 @@ export default async function SubscribersPage() {
                     </td>
                     <td className="h-[52px] px-4 text-right">
                       {row.status === "active" || row.status === "past_due" ? (
-                        <CancelButton subscriptionId={row.id} />
+                        <CancelButton
+                          subscriptionId={row.id}
+                          onChainId={row.onChainId ?? null}
+                          productName={row.productName ?? null}
+                        />
                       ) : null}
                     </td>
                   </tr>

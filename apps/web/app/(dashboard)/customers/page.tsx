@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { customers, payments } from "@paylix/db/schema";
 import { eq, and, sql, desc, count, sum, max } from "drizzle-orm";
 import Link from "next/link";
+import PortalLinkButton from "./portal-link-button";
 
 function truncateAddress(addr: string): string {
   if (addr.length <= 10) return addr;
@@ -82,6 +83,9 @@ export default async function CustomersPage() {
                   <th className="h-10 px-4 text-left text-[13px] font-medium text-[#64748b]">
                     Last Payment
                   </th>
+                  <th className="h-10 px-4 text-right text-[13px] font-medium text-[#64748b]">
+                    Portal
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -93,12 +97,12 @@ export default async function CustomersPage() {
 
                   return (
                     <tr key={row.id}>
-                      <td colSpan={6} className="p-0">
-                        <Link
-                          href={`/customers/${row.id}`}
-                          className="flex border-b border-[rgba(148,163,184,0.06)] transition-colors hover:bg-[#0c0c10]"
-                        >
-                          <span className="flex h-[52px] w-full items-center">
+                      <td colSpan={7} className="p-0">
+                        <div className="relative flex border-b border-[rgba(148,163,184,0.06)] transition-colors hover:bg-[#0c0c10]">
+                          <Link
+                            href={`/customers/${row.id}`}
+                            className="flex h-[52px] flex-1 items-center"
+                          >
                             <span className="w-0 flex-1 truncate px-4 text-[13px] text-[#f0f0f3]">
                               {name}
                             </span>
@@ -123,8 +127,11 @@ export default async function CustomersPage() {
                                   : null
                               )}
                             </span>
-                          </span>
-                        </Link>
+                          </Link>
+                          <div className="flex h-[52px] w-0 flex-1 items-center justify-end px-4">
+                            <PortalLinkButton customerUuid={row.id} />
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   );

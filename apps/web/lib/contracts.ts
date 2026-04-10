@@ -60,7 +60,7 @@ export const PAYMENT_VAULT_ABI = [
   },
 ] as const;
 
-// SubscriptionManager.createSubscription ABI
+// SubscriptionManager ABI (createSubscription + cancelSubscription)
 export const SUBSCRIPTION_MANAGER_ABI = [
   {
     name: "createSubscription",
@@ -75,5 +75,12 @@ export const SUBSCRIPTION_MANAGER_ABI = [
       { name: "customerId", type: "bytes32" },
     ],
     outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "cancelSubscription",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "subscriptionId", type: "uint256" }],
+    outputs: [],
   },
 ] as const;

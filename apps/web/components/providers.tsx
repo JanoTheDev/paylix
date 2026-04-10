@@ -21,7 +21,7 @@ createAppKit({
   },
 });
 
-export function CheckoutProviders({ children }: { children: React.ReactNode }) {
+export function Web3Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={wagmiAdapter.wagmiConfig as Config}>
       <QueryClientProvider client={queryClient}>
@@ -30,3 +30,6 @@ export function CheckoutProviders({ children }: { children: React.ReactNode }) {
     </WagmiProvider>
   );
 }
+
+// Backwards-compatible alias
+export const CheckoutProviders = Web3Providers;
