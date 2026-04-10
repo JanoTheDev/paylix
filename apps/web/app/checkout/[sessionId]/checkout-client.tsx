@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppKit, useAppKitAccount } from "@reown/appkit/react";
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain } from "wagmi";
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient } from "wagmi";
 import { keccak256, stringToBytes } from "viem";
 import { CONTRACTS, ERC20_ABI, PAYMENT_VAULT_ABI, SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
 import { intervalToSeconds, formatInterval } from "@/lib/billing-intervals";
@@ -60,8 +60,10 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   });
   const markedViewed = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
   const [indexerOnline, setIndexerOnline] = useState<boolean>(true);
   const [customerUuid, setCustomerUuid] = useState<string | null>(null);
+  const [portalToken, setPortalToken] = useState<string | null>(null);
 
   // Check indexer status on mount and every 30s
   useEffect(() => {
@@ -103,27 +105,18 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     }).catch(() => {});
   }, [session.id]);
 
-  // Abandonment tracking
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (status !== "completed") {
-        navigator.sendBeacon(
-          `/api/checkout/${session.id}`,
-          new Blob(
-            [JSON.stringify({ status: "abandoned" })],
-            { type: "application/json" }
-          )
-        );
-      }
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [session.id, status]);
-
   // Poll for status changes
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setIsPolling(false);
+  }, []);
+
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
+    setIsPolling(true);
 
     pollRef.current = setInterval(async () => {
       try {
@@ -134,10 +127,8 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
         if (data.status === "completed") {
           setStatus("completed");
           if (data.customerUuid) setCustomerUuid(data.customerUuid);
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          if (data.portalToken) setPortalToken(data.portalToken);
+          stopPolling();
           // Redirect after 5s (give user time to see the portal link)
           if (session.successUrl) {
             setTimeout(() => {
@@ -146,16 +137,13 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
           }
         } else if (data.status === "expired") {
           setStatus("expired");
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          stopPolling();
         }
       } catch {
         // ignore polling errors
       }
     }, 3000);
-  }, [session.id, session.successUrl]);
+  }, [session.id, session.successUrl, stopPolling]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -183,9 +171,15 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   const { writeContractAsync } = useWriteContract();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
+  const publicClient = usePublicClient({ chainId: 84532 });
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
-  const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({
+  const {
+    isSuccess: txConfirmed,
+    isError: txFailed,
+    error: txError,
+  } = useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
+    chainId: 84532,
   });
 
   // Start polling when tx confirmed
@@ -195,9 +189,58 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     }
   }, [txConfirmed, startPolling]);
 
+  // Handle on-chain transaction failures (reverts, dropped, etc.)
+  useEffect(() => {
+    if (txFailed && txHash) {
+      setPayError(txError?.message?.slice(0, 200) || "Transaction failed on-chain");
+      setPayStep("idle");
+      setTxHash(null);
+    }
+  }, [txFailed, txError, txHash]);
+
+  // Abandonment tracking — only mark abandoned if NO payment has been initiated
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Skip if payment was initiated OR already completed/expired
+      if (status !== "active" && status !== "viewed") return;
+      if (txHash || payStep !== "idle") return;
+
+      navigator.sendBeacon(
+        `/api/checkout/${session.id}`,
+        new Blob(
+          [JSON.stringify({ status: "abandoned" })],
+          { type: "application/json" }
+        )
+      );
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [session.id, status, txHash, payStep]);
+
   const handlePay = async () => {
     if (payStep !== "idle") return; // prevent double clicks
     setPayError(null);
+
+    // Pre-flight: guard against double-payment by checking session status
+    try {
+      const res = await fetch(`/api/checkout/${session.id}`, { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === "completed") {
+          setStatus("completed");
+          if (data.customerUuid) setCustomerUuid(data.customerUuid);
+          if (data.portalToken) setPortalToken(data.portalToken);
+          return;
+        }
+        if (data.status === "expired") {
+          setStatus("expired");
+          return;
+        }
+      }
+    } catch {
+      // continue on network error
+    }
 
     try {
       // Switch to Base Sepolia if not already on it
@@ -242,8 +285,12 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
       });
       console.log("Approve tx:", approveHash);
 
-      // Wait a moment for approval to propagate
-      await new Promise((r) => setTimeout(r, 2000));
+      // Wait for the approval tx to be mined on-chain before calling the
+      // payment contract. Avoids a race where the payment call sees stale
+      // allowance and reverts.
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      }
 
       // Step 2: Call createPayment or createSubscription
       setPayStep("paying");
@@ -321,9 +368,9 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
               : `$${displayAmount} ${session.currency} received successfully.`}
           </p>
 
-          {customerUuid && (
+          {customerUuid && portalToken && (
             <a
-              href={`/portal/${customerUuid}`}
+              href={`/portal/${customerUuid}?token=${portalToken}`}
               className="mt-6 inline-flex h-10 items-center justify-center rounded-[8px] border border-[rgba(148,163,184,0.12)] px-[18px] text-[14px] font-medium text-[#f0f0f3] transition-colors duration-150 hover:border-[rgba(148,163,184,0.20)] hover:bg-[#111116]"
             >
               {isSubscription ? "Manage subscription" : "View purchase history"}
@@ -542,7 +589,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
       </p>
 
       {/* Polling Status */}
-      {pollRef.current !== null || status === "viewed" ? (
+      {isPolling || status === "viewed" ? (
         <div className="mt-6 flex items-center justify-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#06d6a0] opacity-75" />

@@ -18,6 +18,6 @@ export const wagmiAdapter = new WagmiAdapter({
 export const metadata = {
   name: "Paylix Checkout",
   description: "Accept USDC payments on Base",
-  url: process.env.BETTER_AUTH_URL || "http://localhost:3000",
-  icons: ["http://localhost:3000/favicon.ico"],
+  url: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  icons: [(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000") + "/favicon.ico"],
 };

@@ -26,9 +26,17 @@ export interface CreateSubscriptionParams {
   metadata?: Record<string, string>;
 }
 
+/**
+ * Result returned from `createSubscription`.
+ *
+ * Note: `checkoutId` is the ID of the Paylix checkout session, not the
+ * on-chain subscription ID. The actual subscription ID is assigned on-chain
+ * when the customer completes the payment flow, and is delivered
+ * asynchronously via the `subscription.created` webhook.
+ */
 export interface CreateSubscriptionResult {
   checkoutUrl: string;
-  subscriptionId: string;
+  checkoutId: string;
 }
 
 export interface CancelSubscriptionParams {
@@ -37,6 +45,7 @@ export interface CancelSubscriptionParams {
 
 export interface UpdateSubscriptionWalletParams {
   subscriptionId: string;
+  newWallet: string;
 }
 
 export interface VerifyPaymentParams {

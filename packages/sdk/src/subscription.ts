@@ -61,7 +61,11 @@ export async function updateSubscriptionWallet(
     `${config.backendUrl}/api/subscriptions/${params.subscriptionId}/update-wallet`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({ newWallet: params.newWallet }),
     }
   );
 
