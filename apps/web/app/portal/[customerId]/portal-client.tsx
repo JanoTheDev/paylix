@@ -11,9 +11,9 @@ import {
   EmptyState,
   StatusBadge,
   Amount,
+  ConfirmDialog,
   col,
 } from "@/components/paykit";
-import CancelSubscriptionModal from "@/components/cancel-subscription-modal";
 
 export interface PortalSubscription {
   id: string;
@@ -39,6 +39,8 @@ export interface PortalPayment {
 
 interface PortalClientProps {
   customerLabel: string;
+  customerId: string;
+  portalToken: string;
   subscriptions: PortalSubscription[];
   payments: PortalPayment[];
 }
@@ -71,6 +73,8 @@ function formatDate(iso: string | null): string {
 
 export function PortalClient({
   customerLabel,
+  customerId,
+  portalToken,
   subscriptions,
   payments,
 }: PortalClientProps) {
@@ -181,13 +185,34 @@ export function PortalClient({
         />
       </Section>
 
-      <CancelSubscriptionModal
+      <ConfirmDialog
         open={cancelTarget !== null}
-        onClose={() => setCancelTarget(null)}
-        onChainId={cancelTarget?.onChainId ?? null}
-        productName={cancelTarget?.productName ?? null}
-        onConfirmed={handleConfirmed}
-        context="subscriber"
+        onOpenChange={(v) => !v && setCancelTarget(null)}
+        title="Cancel subscription?"
+        description={
+          cancelTarget
+            ? `Cancel "${cancelTarget.productName}"? You will not be charged further.`
+            : "Cancel this subscription?"
+        }
+        confirmLabel="Cancel subscription"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!cancelTarget) return;
+          const res = await fetch("/api/portal/cancel-subscription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subscriptionId: cancelTarget.id,
+              customerId,
+              token: portalToken,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || "Cancel failed");
+          }
+          handleConfirmed();
+        }}
       />
     </PageShell>
   );

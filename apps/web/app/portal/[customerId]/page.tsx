@@ -122,6 +122,8 @@ export default async function PortalPage({
     <Web3Providers>
       <PortalClient
         customerLabel={customerLabel}
+        customerId={customerId}
+        portalToken={token}
         subscriptions={portalSubs}
         payments={portalPayments}
       />

@@ -1,67 +1,68 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Web3Providers } from "@/components/providers";
-import CancelSubscriptionModal from "@/components/cancel-subscription-modal";
-import { Button } from "@/components/ui/button";
+import { ConfirmDialog, ActionMenu } from "@/components/paykit";
+import type { ActionItem } from "@/components/paykit";
+import { Trash2 } from "lucide-react";
 
 interface CancelButtonProps {
   subscriptionId: string;
-  onChainId: string | null;
-  productName: string | null;
+  /**
+   * Kept for API compatibility with the previous signature. No longer used
+   * since cancellation is now backend-relayed.
+   */
+  onChainId?: string | null;
+  productName?: string | null;
 }
 
-function CancelButtonInner({
+export default function CancelButton({
   subscriptionId,
-  onChainId,
   productName,
 }: CancelButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [, startTransition] = useTransition();
 
-  async function handleForceCancel() {
-    const res = await fetch(`/api/subscriptions/${subscriptionId}/cancel`, {
-      method: "POST",
-    });
-    if (res.ok) {
-      setOpen(false);
-      router.refresh();
+  const items: ActionItem[] = [
+    {
+      label: "Cancel subscription",
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      variant: "destructive",
+      onSelect: () => setOpen(true),
+    },
+  ];
+
+  async function handleConfirm() {
+    const res = await fetch(
+      `/api/subscriptions/${subscriptionId}/cancel-gasless`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Cancel failed");
     }
-  }
-
-  function handleConfirmed() {
-    // Indexer will update the DB once the SubscriptionCancelled event
-    // is processed. Refresh the page after a short delay so the merchant
-    // sees the updated status.
-    setTimeout(() => router.refresh(), 2500);
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   return (
     <>
-      <Button
-        variant="destructive"
-        size="sm"
-        onClick={() => setOpen(true)}
-      >
-        Cancel
-      </Button>
-      <CancelSubscriptionModal
+      <ActionMenu items={items} />
+      <ConfirmDialog
         open={open}
-        onClose={() => setOpen(false)}
-        onChainId={onChainId}
-        productName={productName}
-        onForceCancel={handleForceCancel}
-        onConfirmed={handleConfirmed}
+        onOpenChange={setOpen}
+        title="Cancel subscription?"
+        description={
+          productName
+            ? `Stop charging "${productName}"? The subscription will be cancelled immediately and no further charges will be attempted.`
+            : "Stop charging this subscription? It will be cancelled immediately and no further charges will be attempted."
+        }
+        confirmLabel="Cancel subscription"
+        variant="destructive"
+        onConfirm={handleConfirm}
       />
     </>
-  );
-}
-
-export default function CancelButton(props: CancelButtonProps) {
-  return (
-    <Web3Providers>
-      <CancelButtonInner {...props} />
-    </Web3Providers>
   );
 }
