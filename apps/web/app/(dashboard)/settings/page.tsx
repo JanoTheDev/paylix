@@ -21,6 +21,15 @@ interface UserSettings {
   walletAddress: string | null;
 }
 
+interface NetworkConfigUI {
+  networkKey: string;
+  chainName: string;
+  displayLabel: string;
+  enabled: boolean;
+  usesDefault: boolean;
+  overrideAddress: string | null;
+}
+
 interface CheckoutDefaults {
   firstName: boolean;
   lastName: boolean;
@@ -57,6 +66,10 @@ export default function SettingsPage() {
   const [defaultsSaving, setDefaultsSaving] = useState(false);
   const [defaultsSuccess, setDefaultsSuccess] = useState(false);
 
+  const [networks, setNetworks] = useState<NetworkConfigUI[]>([]);
+  const [networksSaving, setNetworksSaving] = useState(false);
+  const [networksSuccess, setNetworksSuccess] = useState(false);
+
   const network = process.env.NEXT_PUBLIC_NETWORK || "base-sepolia";
   const isMainnet = network === "base";
 
@@ -64,14 +77,15 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/settings");
       if (res.ok) {
-        const data: UserSettings & {
-          checkoutFieldDefaults?: CheckoutDefaults;
-        } = await res.json();
+        const data = await res.json();
         setUser(data);
         setWalletAddress(data.walletAddress || "");
         setName(data.name);
         if (data.checkoutFieldDefaults) {
           setCheckoutDefaults(data.checkoutFieldDefaults);
+        }
+        if (Array.isArray(data.networks)) {
+          setNetworks(data.networks);
         }
       }
     } catch {
@@ -148,6 +162,61 @@ export default function SettingsPage() {
       // ignore
     } finally {
       setDefaultsSaving(false);
+    }
+  }
+
+  function toggleNetwork(key: string) {
+    setNetworks((prev) =>
+      prev.map((n) =>
+        n.networkKey === key ? { ...n, enabled: !n.enabled } : n,
+      ),
+    );
+  }
+
+  function setNetworkMode(key: string, mode: "default" | "override") {
+    setNetworks((prev) =>
+      prev.map((n) =>
+        n.networkKey === key
+          ? {
+              ...n,
+              usesDefault: mode === "default",
+              overrideAddress:
+                mode === "default" ? null : n.overrideAddress ?? "",
+            }
+          : n,
+      ),
+    );
+  }
+
+  function updateOverride(key: string, addr: string) {
+    setNetworks((prev) =>
+      prev.map((n) =>
+        n.networkKey === key ? { ...n, overrideAddress: addr } : n,
+      ),
+    );
+  }
+
+  async function saveNetworks() {
+    setNetworksSaving(true);
+    setNetworksSuccess(false);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          networks: networks.map((n) => ({
+            networkKey: n.networkKey,
+            enabled: n.enabled,
+            overrideAddress: n.usesDefault ? null : n.overrideAddress,
+          })),
+        }),
+      });
+      if (res.ok) {
+        setNetworksSuccess(true);
+        setTimeout(() => setNetworksSuccess(false), 2000);
+      }
+    } finally {
+      setNetworksSaving(false);
     }
   }
 
@@ -257,6 +326,81 @@ export default function SettingsPage() {
           )}
           <Button onClick={saveCheckoutDefaults} disabled={defaultsSaving}>
             {defaultsSaving ? "Saving…" : "Save"}
+          </Button>
+        </FormActions>
+      </FormSection>
+
+      <FormSection
+        title="Networks"
+        description="Choose which networks your account can accept payments on. Disabled networks cannot be selected when creating products."
+      >
+        <div className="flex flex-col gap-3">
+          {networks.map((n) => (
+            <div
+              key={n.networkKey}
+              className="rounded-lg border border-border bg-surface-1 p-4"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">{n.displayLabel}</div>
+                  <div className="text-xs text-foreground-muted">{n.chainName}</div>
+                </div>
+                <Switch
+                  checked={n.enabled}
+                  onCheckedChange={() => toggleNetwork(n.networkKey)}
+                />
+              </div>
+
+              {n.enabled && (
+                <div className="mt-3 flex flex-col gap-2">
+                  <div className="flex gap-4 text-xs">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        checked={n.usesDefault}
+                        onChange={() => setNetworkMode(n.networkKey, "default")}
+                      />
+                      Use default wallet
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        checked={!n.usesDefault}
+                        onChange={() => setNetworkMode(n.networkKey, "override")}
+                      />
+                      Override
+                    </label>
+                  </div>
+                  {!n.usesDefault && (
+                    <Input
+                      type="text"
+                      placeholder="0x..."
+                      value={n.overrideAddress ?? ""}
+                      onChange={(e) =>
+                        updateOverride(n.networkKey, e.target.value)
+                      }
+                      className="font-mono text-xs"
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {networks.every((n) => !n.enabled) && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                No networks enabled. Enable at least one to create products.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+        <FormActions>
+          {networksSuccess && (
+            <span className="text-sm font-medium text-success">Saved</span>
+          )}
+          <Button onClick={saveNetworks} disabled={networksSaving}>
+            {networksSaving ? "Saving…" : "Save"}
           </Button>
         </FormActions>
       </FormSection>

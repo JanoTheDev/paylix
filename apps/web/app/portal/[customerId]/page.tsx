@@ -66,8 +66,7 @@ export default async function PortalPage({
       onChainId: subscriptions.onChainId,
       createdAt: subscriptions.createdAt,
       productName: products.name,
-      productPrice: products.price,
-      productCurrency: products.currency,
+      tokenSymbol: subscriptions.tokenSymbol,
       billingInterval: products.billingInterval,
     })
     .from(subscriptions)
@@ -97,8 +96,7 @@ export default async function PortalPage({
     nextChargeDate: r.nextChargeDate ? r.nextChargeDate.toISOString() : null,
     onChainId: r.onChainId,
     productName: r.productName,
-    productPrice: r.productPrice,
-    productCurrency: r.productCurrency,
+    tokenSymbol: r.tokenSymbol,
     billingInterval: r.billingInterval,
     createdAt: r.createdAt.toISOString(),
   }));

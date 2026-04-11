@@ -10,7 +10,6 @@ import {
   DataTable,
   EmptyState,
   StatusBadge,
-  Amount,
   ConfirmDialog,
   col,
 } from "@/components/paykit";
@@ -21,8 +20,7 @@ export interface PortalSubscription {
   nextChargeDate: string | null;
   onChainId: string | null;
   productName: string;
-  productPrice: number;
-  productCurrency: string;
+  tokenSymbol: string;
   billingInterval: string | null;
   createdAt: string;
 }
@@ -160,7 +158,7 @@ export function PortalClient({
                   </div>
 
                   <div className="flex items-center gap-4 sm:flex-col sm:items-end">
-                    <Amount cents={sub.productPrice} withBadge />
+                    <span className="text-xs font-mono text-foreground-muted">{sub.tokenSymbol}</span>
                     {canCancel && (
                       <Button
                         variant="destructive"

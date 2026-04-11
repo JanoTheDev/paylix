@@ -24,14 +24,14 @@ import { Separator } from "@/components/ui/separator";
 import { MonoText } from "@/components/mono-text";
 import { UsdcBadge } from "@/components/usdc-badge";
 
-type CheckoutStatus = "active" | "viewed" | "abandoned" | "completed" | "expired";
+type CheckoutStatus = "active" | "viewed" | "abandoned" | "completed" | "expired" | "awaiting_currency";
 
 interface CheckoutSession {
   id: string;
   status: CheckoutStatus;
-  amount: number;
-  currency: string;
-  chain: string;
+  amount: number | bigint;
+  networkKey: string | null;
+  tokenSymbol: string | null;
   type: string;
   merchantWallet: string;
   customerId: string | null;
@@ -516,7 +516,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     }
   };
 
-  const displayAmount = formatAmount(session.amount);
+  const displayAmount = formatAmount(Number(session.amount));
 
   // USDC uses 6 decimals. session.amount is in cents (1000 = $10.00), so
   // the on-chain required amount is cents × 10_000 — same math as inside
@@ -543,7 +543,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
           <p className="text-sm leading-relaxed text-muted-foreground">
             {isSubscription
               ? `You'll be charged $${displayAmount} ${formatInterval(session.billingInterval)}. First charge completed.`
-              : `$${displayAmount} ${session.currency} received successfully.`}
+              : `$${displayAmount} ${session.tokenSymbol ?? ""} received successfully.`}
           </p>
 
           {customerUuid && portalToken && (
@@ -609,7 +609,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
             <p className="mt-2 text-[13px] text-muted-foreground">
               You&apos;ll be charged{" "}
               <span className="font-medium text-foreground">
-                ${displayAmount} {session.currency}
+                ${displayAmount} {session.tokenSymbol ?? "USDC"}
               </span>{" "}
               {formatInterval(session.billingInterval)} until cancelled.
             </p>
@@ -620,7 +620,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
             <MonoText className="text-2xl font-semibold tracking-[-0.3px]">
               ${displayAmount}
             </MonoText>
-            <UsdcBadge symbol={session.currency} />
+            <UsdcBadge symbol={session.tokenSymbol ?? "USDC"} />
           </div>
           {session.type === "subscription" && (
             <span className="text-[11px] text-muted-foreground">
@@ -813,7 +813,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
                   )
                     .replace("per ", "/")
                     .replace("every 2 weeks", "/2 weeks")}`
-                : `Pay $${displayAmount} ${session.currency}`)}
+                : `Pay $${displayAmount} ${session.tokenSymbol ?? "USDC"}`)}
             {payStep === "approving" && "Approving USDC..."}
             {payStep === "paying" && "Confirm payment..."}
             {payStep === "confirming" && "Processing..."}
@@ -841,7 +841,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
       )}
 
       <p className="mt-4 text-center text-xs text-muted-foreground">
-        Connect a wallet with {session.currency} on Base Sepolia to pay
+        Connect a wallet with {session.tokenSymbol ?? "USDC"} on Base Sepolia to pay
         securely through our payment contract.
       </p>
 

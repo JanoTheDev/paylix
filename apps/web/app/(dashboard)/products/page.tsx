@@ -20,7 +20,6 @@ export default async function ProductsPage() {
     id: p.id,
     name: p.name,
     type: p.type,
-    price: p.price,
     billingInterval: p.billingInterval,
     state: p.isActive ? "active" : "inactive",
   }));

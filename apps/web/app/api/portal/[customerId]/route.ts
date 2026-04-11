@@ -47,8 +47,7 @@ export async function GET(
       onChainId: subscriptions.onChainId,
       createdAt: subscriptions.createdAt,
       productName: products.name,
-      productPrice: products.price,
-      productCurrency: products.currency,
+      tokenSymbol: subscriptions.tokenSymbol,
       billingInterval: products.billingInterval,
     })
     .from(subscriptions)

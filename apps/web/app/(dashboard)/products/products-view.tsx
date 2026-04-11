@@ -16,7 +16,6 @@ export type ProductRow = {
   id: string;
   name: string;
   type: string;
-  price: number;
   billingInterval: string | null;
   state: "active" | "inactive";
 };
@@ -46,7 +45,6 @@ const columns = [
     ),
   },
   col.status<ProductRow>("type", "Type", "productType"),
-  col.amount<ProductRow>("price", "Price", { withBadge: true }),
   {
     accessorKey: "billingInterval",
     header: "Interval",
