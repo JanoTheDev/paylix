@@ -12,16 +12,23 @@ contract SubscriptionManagerPermitTest is Test {
     address public owner = makeAddr("owner");
     address public platformWallet = makeAddr("platform");
     address public merchant = makeAddr("merchant");
+    address public attacker = makeAddr("attacker");
     address public relayer = makeAddr("relayer");
 
     uint256 public buyerPrivateKey = 0xB0B;
     address public buyer = vm.addr(buyerPrivateKey);
+
+    uint256 public otherPrivateKey = 0xBAD;
 
     bytes32 public productId = keccak256("prod_pro");
     bytes32 public customerId = keccak256("cust_789");
 
     uint256 public constant MONTHLY = 30 days;
     uint256 public constant AMOUNT = 10e6;
+
+    bytes32 private constant SUBSCRIPTION_INTENT_TYPEHASH = keccak256(
+        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
+    );
 
     function setUp() public {
         vm.startPrank(owner);
@@ -36,53 +43,41 @@ contract SubscriptionManagerPermitTest is Test {
 
     // ----- Happy path -----
 
-    function test_createSubscriptionWithPermit_success() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_success() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
 
         vm.prank(relayer);
-        uint256 subId = subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        uint256 subId = subs.createSubscriptionWithPermit(p, intentSig);
 
-        assertEq(subId, 0, "first subscription has id 0");
-
+        assertEq(subId, 0);
         (address subSubscriber, , , uint256 subAmount, , , , , , ,) = subs.subscriptions(subId);
-        assertEq(subSubscriber, buyer, "subscriber is buyer, not relayer");
-        assertEq(subAmount, AMOUNT, "amount stored");
+        assertEq(subSubscriber, buyer);
+        assertEq(subAmount, AMOUNT);
 
         uint256 fee = (AMOUNT * 50) / 10000;
-        assertEq(usdc.balanceOf(merchant), AMOUNT - fee, "first charge delivered to merchant");
-        assertEq(usdc.balanceOf(platformWallet), fee, "fee delivered to platform");
+        assertEq(usdc.balanceOf(merchant), AMOUNT - fee);
+        assertEq(usdc.balanceOf(platformWallet), fee);
+        assertEq(subs.getIntentNonce(buyer), 1);
     }
 
-    function test_createSubscriptionWithPermit_enables_recurring_charges() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_enables_recurring_charges() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
 
         vm.prank(relayer);
-        uint256 subId = subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        uint256 subId = subs.createSubscriptionWithPermit(p, intentSig);
 
-        // Fast-forward past the next charge date
         vm.warp(block.timestamp + MONTHLY + 1);
-
-        // Keeper can now charge (no permit needed — allowance already set by the permit)
         subs.chargeSubscription(subId);
 
         uint256 fee = (AMOUNT * 50) / 10000;
-        // Two charges total (initial + this one)
-        assertEq(usdc.balanceOf(merchant), (AMOUNT - fee) * 2, "second charge succeeded");
+        assertEq(usdc.balanceOf(merchant), (AMOUNT - fee) * 2);
     }
 
-    function test_createSubscriptionWithPermit_emits_event_with_buyer() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_emits_event_with_buyer() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
 
         vm.expectEmit(true, true, true, true);
         emit SubscriptionManager.SubscriptionCreated(
@@ -90,93 +85,231 @@ contract SubscriptionManagerPermitTest is Test {
         );
 
         vm.prank(relayer);
-        subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
     // ----- Authorization -----
 
-    function test_createSubscriptionWithPermit_reverts_when_not_relayer() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_reverts_when_not_relayer() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
 
-        vm.prank(makeAddr("attacker"));
+        vm.prank(attacker);
         vm.expectRevert("Only relayer");
-        subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
     // ----- Validation -----
 
-    function test_createSubscriptionWithPermit_reverts_on_permit_under_amount() public {
-        uint256 permitValue = AMOUNT - 1;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_reverts_on_permit_under_amount() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT - 1, block.timestamp + 1 hours);
 
         vm.prank(relayer);
         vm.expectRevert("Permit < amount");
-        subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
-    function test_createSubscriptionWithPermit_reverts_on_zero_interval() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_reverts_on_zero_interval() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, 0, AMOUNT * 1000, block.timestamp + 1 hours);
 
         vm.prank(relayer);
         vm.expectRevert("Invalid interval");
-        subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, 0,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
-    function test_createSubscriptionWithPermit_reverts_on_zero_buyer() public {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+    function test_reverts_on_zero_buyer() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        p.buyer = address(0);
 
         vm.prank(relayer);
         vm.expectRevert("Invalid buyer");
-        subs.createSubscriptionWithPermit(
-            address(usdc), address(0), merchant, AMOUNT, MONTHLY,
-            productId, customerId,
-            permitValue, block.timestamp + 1 hours, v, r, s
+        subs.createSubscriptionWithPermit(p, intentSig);
+    }
+
+    // ----- SubscriptionIntent: security tests -----
+
+    function test_reverts_if_relayer_swaps_merchant() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        // Intent was signed for `merchant` — relayer tries to route to `attacker`.
+        p.merchant = attacker;
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p, intentSig);
+
+        assertEq(usdc.balanceOf(attacker), 0);
+    }
+
+    function test_reverts_if_relayer_swaps_amount() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        // Intent was signed for AMOUNT — relayer tries to charge 100x.
+        p.amount = AMOUNT * 100;
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p, intentSig);
+    }
+
+    function test_reverts_if_relayer_swaps_interval() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        // Intent was signed for monthly — relayer tries weekly (4x more charges).
+        p.interval = 7 days;
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p, intentSig);
+    }
+
+    function test_reverts_if_relayer_inflates_permit_value() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        // Intent was signed for permitValue = AMOUNT * 1000 (~83 years of charges).
+        // Relayer tries to request max allowance so they can drain on-schedule later.
+        p.permitValue = type(uint256).max;
+        // Re-sign the permit for the new value so that leg passes — we want to
+        // isolate the intent check.
+        SubscriptionManager.CreateSubPermitParams memory resignedPermit = _signPermitOnly(
+            p, buyerPrivateKey
         );
+        p.v = resignedPermit.v;
+        p.r = resignedPermit.r;
+        p.s = resignedPermit.s;
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p, intentSig);
+    }
+
+    function test_reverts_on_signature_by_non_buyer() public {
+        SubscriptionManager.CreateSubPermitParams memory p =
+            _buildParams(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+        p = _signPermitOnly(p, buyerPrivateKey);
+        // Intent signed by wrong key
+        bytes memory intentSig = _signIntent(p, otherPrivateKey);
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p, intentSig);
+    }
+
+    function test_reverts_on_replayed_intent() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+
+        vm.prank(relayer);
+        subs.createSubscriptionWithPermit(p, intentSig);
+
+        // Rebuild the permit with a fresh token-nonce (so permit step doesn't
+        // mask the intent check), reuse the same intent signature — nonce has
+        // already been incremented so recovery fails.
+        SubscriptionManager.CreateSubPermitParams memory p2 = _signPermitOnly(p, buyerPrivateKey);
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        subs.createSubscriptionWithPermit(p2, intentSig);
+    }
+
+    function test_reverts_on_expired_deadline() public {
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) =
+            _buildCall(merchant, AMOUNT, MONTHLY, AMOUNT * 1000, block.timestamp + 1 hours);
+
+        vm.warp(p.deadline + 1);
+
+        vm.prank(relayer);
+        vm.expectRevert("Intent expired");
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
     // ----- Helpers -----
 
-    function _signPermit(uint256 value, uint256 deadline)
+    function _buildCall(
+        address merchant_,
+        uint256 amount,
+        uint256 interval,
+        uint256 permitValue,
+        uint256 deadline
+    )
         internal
         view
-        returns (uint8 v, bytes32 r, bytes32 s)
+        returns (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig)
     {
+        p = _buildParams(merchant_, amount, interval, permitValue, deadline);
+        p = _signPermitOnly(p, buyerPrivateKey);
+        intentSig = _signIntent(p, buyerPrivateKey);
+    }
+
+    function _buildParams(
+        address merchant_,
+        uint256 amount,
+        uint256 interval,
+        uint256 permitValue,
+        uint256 deadline
+    ) internal view returns (SubscriptionManager.CreateSubPermitParams memory p) {
+        p = SubscriptionManager.CreateSubPermitParams({
+            token: address(usdc),
+            buyer: buyer,
+            merchant: merchant_,
+            amount: amount,
+            interval: interval,
+            productId: productId,
+            customerId: customerId,
+            permitValue: permitValue,
+            deadline: deadline,
+            v: 0,
+            r: bytes32(0),
+            s: bytes32(0)
+        });
+    }
+
+    function _signPermitOnly(
+        SubscriptionManager.CreateSubPermitParams memory p,
+        uint256 signerKey
+    ) internal view returns (SubscriptionManager.CreateSubPermitParams memory) {
         bytes32 PERMIT_TYPEHASH = keccak256(
             "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
         );
         uint256 nonce = usdc.nonces(buyer);
         bytes32 structHash = keccak256(
-            abi.encode(
-                PERMIT_TYPEHASH,
-                buyer,
-                address(subs),
-                value,
-                nonce,
-                deadline
-            )
+            abi.encode(PERMIT_TYPEHASH, buyer, address(subs), p.permitValue, nonce, p.deadline)
         );
         bytes32 digest = keccak256(
             abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)
         );
-        (v, r, s) = vm.sign(buyerPrivateKey, digest);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        p.v = v;
+        p.r = r;
+        p.s = s;
+        return p;
+    }
+
+    function _signIntent(
+        SubscriptionManager.CreateSubPermitParams memory p,
+        uint256 signerKey
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SUBSCRIPTION_INTENT_TYPEHASH,
+                p.buyer,
+                p.token,
+                p.merchant,
+                p.amount,
+                p.interval,
+                p.productId,
+                p.customerId,
+                p.permitValue,
+                subs.getIntentNonce(buyer),
+                p.deadline
+            )
+        );
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", subs.domainSeparator(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 }

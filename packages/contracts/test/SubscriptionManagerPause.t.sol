@@ -23,6 +23,10 @@ contract SubscriptionManagerPauseTest is Test {
     uint256 public constant MONTHLY = 30 days;
     uint256 public constant AMOUNT = 10e6;
 
+    bytes32 private constant SUBSCRIPTION_INTENT_TYPEHASH = keccak256(
+        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
+    );
+
     function setUp() public {
         vm.startPrank(owner);
         subs = new SubscriptionManager(platformWallet, 50);
@@ -44,15 +48,11 @@ contract SubscriptionManagerPauseTest is Test {
         vm.prank(owner);
         subs.setGaslessPaused(true);
 
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) = _buildCall();
 
         vm.prank(relayer);
         vm.expectRevert("Gasless paused");
-        subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId, permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        subs.createSubscriptionWithPermit(p, intentSig);
     }
 
     function test_direct_createSubscription_still_works_when_paused() public {
@@ -149,38 +149,94 @@ contract SubscriptionManagerPauseTest is Test {
     // ----- Helpers -----
 
     function _createSub() internal returns (uint256) {
-        uint256 permitValue = AMOUNT * 1000;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(permitValue, block.timestamp + 1 hours);
-
+        (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig) = _buildCall();
         vm.prank(relayer);
-        return subs.createSubscriptionWithPermit(
-            address(usdc), buyer, merchant, AMOUNT, MONTHLY,
-            productId, customerId, permitValue, block.timestamp + 1 hours, v, r, s
-        );
+        return subs.createSubscriptionWithPermit(p, intentSig);
     }
 
-    function _signPermit(uint256 value, uint256 deadline)
+    function _buildCall()
         internal
         view
-        returns (uint8 v, bytes32 r, bytes32 s)
+        returns (SubscriptionManager.CreateSubPermitParams memory p, bytes memory intentSig)
+    {
+        p = _buildParams(block.timestamp + 1 hours);
+        p = _signPermit(p);
+        intentSig = _signIntent(p);
+    }
+
+    function _buildParams(uint256 deadline)
+        internal
+        view
+        returns (SubscriptionManager.CreateSubPermitParams memory)
+    {
+        return SubscriptionManager.CreateSubPermitParams({
+            token: address(usdc),
+            buyer: buyer,
+            merchant: merchant,
+            amount: AMOUNT,
+            interval: MONTHLY,
+            productId: productId,
+            customerId: customerId,
+            permitValue: AMOUNT * 1000,
+            deadline: deadline,
+            v: 0,
+            r: bytes32(0),
+            s: bytes32(0)
+        });
+    }
+
+    function _signPermit(SubscriptionManager.CreateSubPermitParams memory p)
+        internal
+        view
+        returns (SubscriptionManager.CreateSubPermitParams memory)
     {
         bytes32 PERMIT_TYPEHASH = keccak256(
             "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
         );
-        uint256 nonce = usdc.nonces(buyer);
         bytes32 structHash = keccak256(
             abi.encode(
-                PERMIT_TYPEHASH,
-                buyer,
-                address(subs),
-                value,
-                nonce,
-                deadline
+                PERMIT_TYPEHASH, buyer, address(subs), p.permitValue, usdc.nonces(buyer), p.deadline
             )
         );
         bytes32 digest = keccak256(
             abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)
         );
-        (v, r, s) = vm.sign(buyerPrivateKey, digest);
+        (p.v, p.r, p.s) = vm.sign(buyerPrivateKey, digest);
+        return p;
+    }
+
+    function _signIntent(SubscriptionManager.CreateSubPermitParams memory p)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = _intentStructHash(p);
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", subs.domainSeparator(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _intentStructHash(SubscriptionManager.CreateSubPermitParams memory p)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                SUBSCRIPTION_INTENT_TYPEHASH,
+                p.buyer,
+                p.token,
+                p.merchant,
+                p.amount,
+                p.interval,
+                p.productId,
+                p.customerId,
+                p.permitValue,
+                subs.getIntentNonce(buyer),
+                p.deadline
+            )
+        );
     }
 }

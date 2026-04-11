@@ -51,6 +51,10 @@ contract PaymentVaultMainnetForkTest is Test {
     bytes32 public productId = keccak256("prod_fork");
     bytes32 public customerId = keccak256("cust_fork");
 
+    bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+    );
+
     function setUp() public {
         // Skip unless FORK_RPC_URL is set
         try vm.envString("FORK_RPC_URL") returns (string memory url) {
@@ -81,7 +85,7 @@ contract PaymentVaultMainnetForkTest is Test {
     function _signPermit(uint256 amount, uint256 deadline)
         internal
         view
-        returns (uint8 v, bytes32 r, bytes32 s)
+        returns (PaymentVault.PermitSig memory sig)
     {
         bytes32 PERMIT_TYPEHASH = keccak256(
             "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
@@ -98,28 +102,50 @@ contract PaymentVaultMainnetForkTest is Test {
             )
         );
         bytes32 digest = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                IUSDC(USDC).DOMAIN_SEPARATOR(),
-                structHash
+            abi.encodePacked("\x19\x01", IUSDC(USDC).DOMAIN_SEPARATOR(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPrivateKey, digest);
+        sig = PaymentVault.PermitSig({deadline: deadline, v: v, r: r, s: s});
+    }
+
+    function _signIntent(uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PAYMENT_INTENT_TYPEHASH,
+                buyer,
+                USDC,
+                merchant,
+                amount,
+                productId,
+                customerId,
+                vault.getIntentNonce(buyer),
+                deadline
             )
         );
-        (v, r, s) = vm.sign(buyerPrivateKey, digest);
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", vault.domainSeparator(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     function test_fork_createPaymentWithPermit_against_real_USDC() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
 
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(amount, deadline);
+        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
+        bytes memory intentSig = _signIntent(amount, deadline);
 
         uint256 merchantBefore = IUSDC(USDC).balanceOf(merchant);
         uint256 platformBefore = IUSDC(USDC).balanceOf(platformWallet);
 
         vm.prank(relayer);
         vault.createPaymentWithPermit(
-            USDC, buyer, merchant, amount,
-            productId, customerId, deadline, v, r, s
+            USDC, buyer, merchant, amount, productId, customerId, permitSig, intentSig
         );
 
         uint256 fee = (amount * 50) / 10000;

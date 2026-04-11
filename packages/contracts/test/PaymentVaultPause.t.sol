@@ -20,6 +20,10 @@ contract PaymentVaultPauseTest is Test {
     bytes32 public productId = keccak256("prod_pause");
     bytes32 public customerId = keccak256("cust_pause");
 
+    bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+    );
+
     function setUp() public {
         vm.startPrank(owner);
         vault = new PaymentVault(platformWallet, 50);
@@ -67,14 +71,14 @@ contract PaymentVaultPauseTest is Test {
         vault.setGaslessPaused(true);
 
         uint256 amount = 100e6;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(amount, block.timestamp + 1 hours);
+        uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
+        bytes memory intentSig = _signIntent(amount, deadline);
 
         vm.prank(relayer);
         vm.expectRevert("Gasless paused");
         vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount,
-            productId, customerId,
-            block.timestamp + 1 hours, v, r, s
+            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
         );
     }
 
@@ -99,13 +103,13 @@ contract PaymentVaultPauseTest is Test {
         vm.stopPrank();
 
         uint256 amount = 100e6;
-        (uint8 v, bytes32 r, bytes32 s) = _signPermit(amount, block.timestamp + 1 hours);
+        uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
+        bytes memory intentSig = _signIntent(amount, deadline);
 
         vm.prank(relayer);
         vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount,
-            productId, customerId,
-            block.timestamp + 1 hours, v, r, s
+            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
         );
 
         uint256 fee = (amount * 50) / 10000;
@@ -115,25 +119,44 @@ contract PaymentVaultPauseTest is Test {
     function _signPermit(uint256 value, uint256 deadline)
         internal
         view
-        returns (uint8 v, bytes32 r, bytes32 s)
+        returns (PaymentVault.PermitSig memory sig)
     {
         bytes32 PERMIT_TYPEHASH = keccak256(
             "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
         );
         uint256 nonce = usdc.nonces(buyer);
         bytes32 structHash = keccak256(
-            abi.encode(
-                PERMIT_TYPEHASH,
-                buyer,
-                address(vault),
-                value,
-                nonce,
-                deadline
-            )
+            abi.encode(PERMIT_TYPEHASH, buyer, address(vault), value, nonce, deadline)
         );
         bytes32 digest = keccak256(
             abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)
         );
-        (v, r, s) = vm.sign(buyerPrivateKey, digest);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPrivateKey, digest);
+        sig = PaymentVault.PermitSig({deadline: deadline, v: v, r: r, s: s});
+    }
+
+    function _signIntent(uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PAYMENT_INTENT_TYPEHASH,
+                buyer,
+                address(usdc),
+                merchant,
+                amount,
+                productId,
+                customerId,
+                vault.getIntentNonce(buyer),
+                deadline
+            )
+        );
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", vault.domainSeparator(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 }
