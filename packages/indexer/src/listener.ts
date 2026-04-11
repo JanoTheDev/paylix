@@ -1,4 +1,10 @@
-import { createPublicClient, http, parseAbiItem, type Log } from "viem";
+import {
+  createPublicClient,
+  http,
+  parseAbiItem,
+  type Log,
+  type PublicClient,
+} from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { config } from "./config";
 import { getLastBlock, setLastBlock } from "./cursor";
@@ -9,6 +15,51 @@ import {
   handleSubscriptionPastDue,
   handleSubscriptionCancelled,
 } from "./handlers";
+
+// Indexer never reads from the unsafe head. The default model is "N
+// confirmations": process events from blocks where (latest - block.number) >=
+// INDEXER_CONFIRMATIONS. On Base, blocks come every 2s, so the default of 5
+// confirmations gives ~10s of reorg protection — long enough that a sequencer
+// hiccup can't pull the rug, short enough that merchants get near-instant
+// "payment received" UX. This is the same trade-off Stripe makes (they ack
+// card auth immediately, don't wait for settlement). Set INDEXER_CONFIRMATIONS
+// higher for more paranoia, or to 0 for instant (no reorg protection — only
+// safe on devnets).
+//
+// The block-tag mode is kept as an escape hatch for self-hosters who want
+// L1 finality semantics: set INDEXER_BLOCK_TAG=finalized (~12min lag on Base)
+// or INDEXER_BLOCK_TAG=safe (~6min lag). When set, the tag takes precedence
+// over INDEXER_CONFIRMATIONS.
+type BlockTag = "finalized" | "safe" | "latest";
+const BLOCK_TAG: BlockTag | undefined = process.env.INDEXER_BLOCK_TAG as
+  | BlockTag
+  | undefined;
+const CONFIRMATIONS = BigInt(
+  parseInt(process.env.INDEXER_CONFIRMATIONS || "5", 10)
+);
+
+async function getHeadBlock(client: PublicClient): Promise<bigint> {
+  // Explicit tag override path
+  if (BLOCK_TAG) {
+    if (BLOCK_TAG === "latest") return client.getBlockNumber();
+    try {
+      const block = await client.getBlock({ blockTag: BLOCK_TAG });
+      return block.number ?? (await client.getBlockNumber());
+    } catch {
+      return client.getBlockNumber();
+    }
+  }
+
+  // Default path: latest minus N confirmations
+  const latest = await client.getBlockNumber();
+  if (CONFIRMATIONS <= 0n) return latest;
+  return latest > CONFIRMATIONS ? latest - CONFIRMATIONS : 0n;
+}
+
+// Human-readable description for the startup log
+const HEAD_MODE = BLOCK_TAG
+  ? `block tag ${BLOCK_TAG}`
+  : `${CONFIRMATIONS} confirmations`;
 
 const paymentReceivedEvent = parseAbiItem(
   "event PaymentReceived(address indexed payer, address indexed merchant, address token, uint256 amount, uint256 fee, bytes32 productId, bytes32 customerId, uint256 timestamp)"
@@ -80,20 +131,20 @@ type ContractSpec = {
 export async function startListener() {
   const chain = getChain();
 
-  // Live-watcher poll interval — each watchContractEvent polls independently, so
-  // with N watchers the effective getLogs rate is N / pollingInterval. Keep this
-  // conservative for free RPC tiers.
+  // Polling interval for the live loop. Each tick fetches getLogs once per
+  // contract — with the finalized tag we don't need a tight loop because the
+  // finalized head only advances every ~12s on Base anyway.
   const livePollMs = parseInt(process.env.RPC_POLL_INTERVAL_MS || "12000", 10);
 
   const client = createPublicClient({
     chain,
     transport: http(config.rpcUrl),
-    pollingInterval: livePollMs,
-  });
+  }) as unknown as PublicClient;
 
   console.log(`[Listener] Watching events on ${chain.name}...`);
   console.log(`[Listener] PaymentVault: ${config.paymentVaultAddress}`);
   console.log(`[Listener] SubscriptionManager: ${config.subscriptionManagerAddress}`);
+  console.log(`[Listener] Head mode: ${HEAD_MODE}`);
 
   const contracts: ContractSpec[] = [
     {
@@ -133,8 +184,8 @@ export async function startListener() {
     },
   ];
 
-  const currentBlock = await client.getBlockNumber();
-  console.log(`[Listener] Current block: ${currentBlock}`);
+  const currentBlock = await getHeadBlock(client);
+  console.log(`[Listener] Current head (${HEAD_MODE}): ${currentBlock}`);
 
   // Chunk size for backfill — Alchemy free tier limits eth_getLogs to 10 blocks.
   // Tunable via env for paid plans.
@@ -151,9 +202,75 @@ export async function startListener() {
     10
   );
 
-  // Backfill each contract up to the current block. The five contracts
-  // are independent, so we run them concurrently — on cold restart this
-  // cuts warm-up from ~30s to ~1s at typical chunk sizes.
+  // Process a [fromBlock, toBlock] window for one contract in chunks. Used by
+  // both the cold-start backfill and the live polling loop. Returns the last
+  // block successfully processed (so the cursor lands on a confirmed point).
+  async function processWindow(
+    spec: ContractSpec,
+    fromBlock: bigint,
+    toBlock: bigint,
+    label: string
+  ): Promise<{ totalLogs: number; lastProcessed: bigint }> {
+    let totalLogs = 0;
+    let cursor = fromBlock;
+    let lastProcessed = fromBlock - 1n;
+
+    while (cursor <= toBlock) {
+      const chunkEnd =
+        cursor + BACKFILL_CHUNK - 1n > toBlock ? toBlock : cursor + BACKFILL_CHUNK - 1n;
+
+      try {
+        const logs = await withRateLimitRetry(
+          () =>
+            client.getLogs({
+              address: spec.address,
+              event: spec.event as any,
+              fromBlock: cursor,
+              toBlock: chunkEnd,
+            }),
+          `${spec.key} ${cursor}-${chunkEnd}`
+        );
+
+        totalLogs += logs.length;
+
+        for (const log of logs) {
+          try {
+            await spec.handle(log as Log, (log as any).args);
+          } catch (err) {
+            console.error(
+              `[Listener] Error handling ${label} ${spec.eventName}:`,
+              err
+            );
+          }
+        }
+
+        await setLastBlock(spec.key, chunkEnd);
+        lastProcessed = chunkEnd;
+      } catch (err) {
+        if (isRateLimitError(err)) {
+          console.error(
+            `[Listener] Chunk ${cursor}-${chunkEnd} for ${spec.key} still rate-limited after retries, stopping ${label} for this contract`
+          );
+          break;
+        }
+        console.error(
+          `[Listener] Chunk ${cursor}-${chunkEnd} failed for ${spec.key}, skipping:`,
+          err instanceof Error ? err.message : err
+        );
+        // Genuine poisoned chunk — advance so we don't get stuck on it.
+        await setLastBlock(spec.key, chunkEnd);
+        lastProcessed = chunkEnd;
+      }
+
+      cursor = chunkEnd + 1n;
+      if (BACKFILL_DELAY_MS > 0) await sleep(BACKFILL_DELAY_MS);
+    }
+
+    return { totalLogs, lastProcessed };
+  }
+
+  // Backfill each contract up to the current finalized block. The five
+  // contracts are independent, so we run them concurrently.
   await Promise.all(contracts.map(async (spec) => {
     try {
       const lastBlock = await getLastBlock(spec.key);
@@ -179,106 +296,46 @@ export async function startListener() {
         `[Listener] ${spec.key}: backfilling ${fromBlock} -> ${currentBlock} (chunk size ${BACKFILL_CHUNK})`
       );
 
-      let totalLogs = 0;
-      let cursor = fromBlock;
-
-      while (cursor <= currentBlock) {
-        const chunkEnd =
-          cursor + BACKFILL_CHUNK - 1n > currentBlock
-            ? currentBlock
-            : cursor + BACKFILL_CHUNK - 1n;
-
-        try {
-          const logs = await withRateLimitRetry(
-            () =>
-              client.getLogs({
-                address: spec.address,
-                event: spec.event as any,
-                fromBlock: cursor,
-                toBlock: chunkEnd,
-              }),
-            `${spec.key} ${cursor}-${chunkEnd}`
-          );
-
-          totalLogs += logs.length;
-
-          for (const log of logs) {
-            try {
-              await spec.handle(log as Log, (log as any).args);
-            } catch (err) {
-              console.error(
-                `[Listener] Error handling backfilled ${spec.eventName}:`,
-                err
-              );
-            }
-          }
-
-          // Advance cursor AFTER successful chunk so a failure mid-backfill
-          // doesn't lose progress on the next startup.
-          await setLastBlock(spec.key, chunkEnd);
-        } catch (err) {
-          if (isRateLimitError(err)) {
-            // Don't advance the cursor on persistent rate-limit failures — that
-            // would permanently drop events. Bail out of this contract's backfill
-            // and let the next startup retry from the same cursor.
-            console.error(
-              `[Listener] Chunk ${cursor}-${chunkEnd} for ${spec.key} still rate-limited after retries, stopping backfill for this contract`
-            );
-            break;
-          }
-          console.error(
-            `[Listener] Chunk ${cursor}-${chunkEnd} failed for ${spec.key}, skipping:`,
-            err instanceof Error ? err.message : err
-          );
-          // Genuine poisoned chunk — advance so we don't get stuck on it.
-          await setLastBlock(spec.key, chunkEnd);
-        }
-
-        cursor = chunkEnd + 1n;
-        if (BACKFILL_DELAY_MS > 0) await sleep(BACKFILL_DELAY_MS);
-      }
-
-      console.log(
-        `[Listener] ${spec.key}: backfill complete (${totalLogs} events)`
-      );
+      const { totalLogs } = await processWindow(spec, fromBlock, currentBlock, "backfill");
+      console.log(`[Listener] ${spec.key}: backfill complete (${totalLogs} events)`);
     } catch (err) {
       console.error(`[Listener] Backfill failed for ${spec.key}:`, err);
     }
   }));
 
-  // Start live watchers.
-  for (const spec of contracts) {
-    client.watchContractEvent({
-      address: spec.address,
-      abi: [spec.event],
-      eventName: spec.eventName,
-      onLogs: (logs) => {
-        (async () => {
-          for (const log of logs) {
-            try {
-              await spec.handle(log as Log, (log as any).args);
-              if ((log as Log).blockNumber) {
-                await setLastBlock(
-                  spec.key,
-                  (log as Log).blockNumber as bigint
-                );
-              }
-            } catch (err) {
-              console.error(
-                `[Listener] Error handling ${spec.eventName}:`,
-                err
-              );
-            }
-          }
-        })().catch((err) =>
-          console.error(`[Listener] onLogs dispatch error (${spec.key}):`, err)
-        );
-      },
-      onError: (err) => {
-        console.error(`[Listener] watch error (${spec.key}):`, err);
-      },
-    });
-  }
+  // Live polling loop. On each tick we re-read the finalized head and process
+  // any new finalized blocks. Because we only ever advance to a finalized
+  // block, the indexer never records an event from a reorgable tip.
+  let stopped = false;
+  const pollOnce = async () => {
+    let head: bigint;
+    try {
+      head = await getHeadBlock(client);
+    } catch (err) {
+      console.error(`[Listener] Failed to read head block:`, err);
+      return;
+    }
 
-  console.log("[Listener] All event watchers started.");
+    await Promise.all(contracts.map(async (spec) => {
+      const lastBlock = await getLastBlock(spec.key);
+      const fromBlock = lastBlock !== null ? lastBlock + 1n : head;
+      if (fromBlock > head) return;
+
+      try {
+        await processWindow(spec, fromBlock, head, "live");
+      } catch (err) {
+        console.error(`[Listener] Live poll failed for ${spec.key}:`, err);
+      }
+    }));
+  };
+
+  const poll = async () => {
+    while (!stopped) {
+      await pollOnce();
+      await sleep(livePollMs);
+    }
+  };
+  poll().catch((err) => console.error("[Listener] Live loop crashed:", err));
+
+  console.log("[Listener] Live polling loop started.");
 }
