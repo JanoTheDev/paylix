@@ -1,10 +1,11 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, count, eq, gte, sum, sql } from "drizzle-orm";
-import { payments, subscriptions } from "@paylix/db/schema";
+import { payments, subscriptions, merchantProfiles, merchantPayoutWallets } from "@paylix/db/schema";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { requireActiveOrg } from "@/lib/require-active-org";
+import { FinishSetupBanner } from "@/components/finish-setup-banner";
 import OverviewView from "./overview-view";
 
 export default async function OverviewPage() {
@@ -75,13 +76,37 @@ export default async function OverviewPage() {
   const paymentCount = paymentCountResult[0]?.count ?? 0;
   const activeSubs = activeSubsResult[0]?.count ?? 0;
 
+  const [profile] = await db
+    .select()
+    .from(merchantProfiles)
+    .where(eq(merchantProfiles.organizationId, organizationId));
+  const [wallet] = await db
+    .select()
+    .from(merchantPayoutWallets)
+    .where(eq(merchantPayoutWallets.organizationId, organizationId));
+
+  const needsProfile = !profile || !profile.legalName;
+  const needsWallet = !wallet;
+
   return (
-    <OverviewView
-      totalRevenue={totalRevenue}
-      revenue30d={revenue30d}
-      paymentCount={paymentCount}
-      activeSubs={activeSubs}
-      recentPayments={recentPayments}
-    />
+    <>
+      {(needsProfile || needsWallet) && (
+        <FinishSetupBanner
+          nextHref={needsProfile ? "/onboarding/profile" : "/onboarding/wallet"}
+          nextLabel={
+            needsProfile
+              ? "Add your company profile to enable invoicing."
+              : "Add a payout wallet to receive USDC."
+          }
+        />
+      )}
+      <OverviewView
+        totalRevenue={totalRevenue}
+        revenue30d={revenue30d}
+        paymentCount={paymentCount}
+        activeSubs={activeSubs}
+        recentPayments={recentPayments}
+      />
+    </>
   );
 }
