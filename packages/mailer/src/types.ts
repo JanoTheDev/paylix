@@ -6,13 +6,16 @@ export interface Attachment {
   contentType?: string;
 }
 
-export interface SendMailInput {
+interface BaseMailInput {
   to: string;
   from: string;
   subject: string;
-  react: ReactElement;
   attachments?: Attachment[];
 }
+
+export type SendMailInput =
+  | (BaseMailInput & { react: ReactElement; html?: never; text?: never })
+  | (BaseMailInput & { html: string; text?: string; react?: never });
 
 export interface SendMailResult {
   ok: boolean;
