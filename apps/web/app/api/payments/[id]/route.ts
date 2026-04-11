@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { payments, customers, checkoutSessions } from "@paylix/db/schema";
 import { authenticateApiKey } from "@/lib/api-auth";
 import { auth } from "@/lib/auth";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 import { z } from "zod";
 
 const patchSchema = z.object({
@@ -16,7 +17,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
+  }
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
@@ -31,7 +38,7 @@ export async function PATCH(
   const [updated] = await db
     .update(payments)
     .set({ metadata: parsed.data.metadata })
-    .where(and(eq(payments.id, id), eq(payments.userId, session.user.id)))
+    .where(and(eq(payments.id, id), eq(payments.organizationId, organizationId)))
     .returning();
 
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -43,8 +50,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authenticateApiKey(request, "secret");
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const apiAuth = await authenticateApiKey(request, "secret");
+  if (!apiAuth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
 
@@ -63,7 +70,7 @@ export async function GET(
     .from(payments)
     .innerJoin(customers, eq(payments.customerId, customers.id))
     .leftJoin(checkoutSessions, eq(checkoutSessions.paymentId, payments.id))
-    .where(and(eq(payments.id, id), eq(payments.userId, auth.user.id)));
+    .where(and(eq(payments.id, id), eq(payments.organizationId, apiAuth.organizationId)));
 
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
