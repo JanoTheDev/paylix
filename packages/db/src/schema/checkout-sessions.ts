@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, bigint, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, bigint, boolean, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { products } from "./products";
 
@@ -21,6 +21,8 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   networkKey: text("network_key"),   // nullable while awaiting_currency
   tokenSymbol: text("token_symbol"), // nullable while awaiting_currency
   type: text("type").notNull().default("one_time"),
+  collectCountry: boolean("collect_country").notNull().default(false),
+  collectTaxId: boolean("collect_tax_id").notNull().default(false),
   status: checkoutStatusEnum("status").notNull().default("active"),
   successUrl: text("success_url"),
   cancelUrl: text("cancel_url"),
