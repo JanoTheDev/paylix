@@ -63,12 +63,15 @@ type DeliveryRow = {
   createdAt: Date;
 };
 
-const ALL_EVENTS = [
-  "payment.confirmed",
-  "subscription.created",
-  "subscription.charged",
-  "subscription.past_due",
-  "subscription.cancelled",
+const ALL_EVENTS: { value: string; label: string }[] = [
+  { value: "payment.confirmed", label: "Payment confirmed" },
+  { value: "subscription.created", label: "Subscription created" },
+  { value: "subscription.charged", label: "Subscription charged" },
+  { value: "subscription.past_due", label: "Subscription past due" },
+  { value: "subscription.cancelled", label: "Subscription cancelled" },
+  { value: "invoice.issued", label: "Invoice issued" },
+  { value: "invoice.email_sent", label: "Invoice email sent" },
+  { value: "invoice.email_failed", label: "Invoice email failed" },
 ];
 
 const deliveryColumns: ColumnDef<DeliveryRow, unknown>[] = [
@@ -302,16 +305,23 @@ export default function WebhooksPage() {
                   <div className="flex flex-col gap-1">
                     {ALL_EVENTS.map((event) => (
                       <label
-                        key={event}
+                        key={event.value}
                         className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-surface-2"
                       >
                         <input
                           type="checkbox"
-                          checked={newEvents.includes(event)}
-                          onChange={() => toggleEvent(event)}
+                          checked={newEvents.includes(event.value)}
+                          onChange={() => toggleEvent(event.value)}
                           className="size-4 rounded border-border bg-surface-2 text-primary focus:ring-primary/20"
                         />
-                        <span className="font-mono text-sm">{event}</span>
+                        <span className="flex flex-col">
+                          <span className="text-sm text-foreground">
+                            {event.label}
+                          </span>
+                          <span className="font-mono text-xs text-foreground-muted">
+                            {event.value}
+                          </span>
+                        </span>
                       </label>
                     ))}
                   </div>
