@@ -7,9 +7,17 @@ import { USDC_ADDRESS } from "./chain";
 
 function requireEnv(value: string | undefined, name: string): `0x${string}` {
   if (!value || value === "0x0000000000000000000000000000000000000000") {
+    // During `next build`, Next compiles every route file and collects page
+    // data even though no real requests are happening. CI builds without a
+    // real .env, so throwing here would break builds. Fall back to the zero
+    // address during build phase — route handlers read `CONTRACTS` on each
+    // request and will naturally revert at runtime if the env wasn't set.
+    if (process.env.NEXT_PHASE === "phase-production-build") {
+      return "0x0000000000000000000000000000000000000000" as `0x${string}`;
+    }
     // Client-side: don't throw, the checkout page will render a config error
-    // banner instead. Server-side: this surfaces as a 500 from any route that
-    // reads CONTRACTS, which is the right loud failure mode.
+    // banner instead. Server-side runtime: loud 500 from any route that
+    // reads CONTRACTS — the correct failure mode for an unconfigured prod.
     if (typeof window === "undefined") {
       throw new Error(`Missing required env var: ${name}`);
     }
