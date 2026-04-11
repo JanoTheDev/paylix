@@ -13,12 +13,17 @@ import {
   FormRow,
   FormActions,
 } from "@/components/paykit";
+import {
+  BusinessProfileSection,
+  type BusinessProfile,
+} from "@/components/settings/business-profile-section";
 
 interface UserSettings {
   id: string;
   name: string;
   email: string;
   walletAddress: string | null;
+  businessProfile?: BusinessProfile;
 }
 
 interface NetworkConfigUI {
@@ -70,6 +75,8 @@ export default function SettingsPage() {
   const [networksSaving, setNetworksSaving] = useState(false);
   const [networksSuccess, setNetworksSuccess] = useState(false);
 
+  const [profile, setProfile] = useState<BusinessProfile | null>(null);
+
   const network = process.env.NEXT_PUBLIC_NETWORK || "base-sepolia";
   const isMainnet = network === "base";
 
@@ -87,6 +94,7 @@ export default function SettingsPage() {
         if (Array.isArray(data.networks)) {
           setNetworks(data.networks);
         }
+        if (data.businessProfile) setProfile(data.businessProfile);
       }
     } catch {
       // ignore
@@ -350,6 +358,8 @@ export default function SettingsPage() {
           </Button>
         </FormActions>
       </FormSection>
+
+      {profile && <BusinessProfileSection initial={profile} />}
 
       <FormSection title="Profile">
         <FormRow label="Name" htmlFor="profile-name">
