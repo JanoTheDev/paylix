@@ -7,6 +7,7 @@ import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { resolvePayoutWallet } from "@/lib/payout-wallets";
 import type { NetworkKey } from "@paylix/config/networks";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 const createCheckoutLinkSchema = z.object({
   productId: z.string().uuid(),
@@ -17,8 +18,12 @@ const createCheckoutLinkSchema = z.object({
 
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   const rows = await db
@@ -45,7 +50,7 @@ export async function GET() {
     })
     .from(checkoutSessions)
     .leftJoin(products, eq(checkoutSessions.productId, products.id))
-    .where(eq(checkoutSessions.userId, session.user.id))
+    .where(eq(checkoutSessions.organizationId, organizationId))
     .orderBy(desc(checkoutSessions.createdAt));
 
   return NextResponse.json(rows);
@@ -53,8 +58,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   const body = await request.json();
@@ -78,7 +87,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
-  if (product.userId !== session.user.id) {
+  if (product.organizationId !== organizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -109,8 +118,9 @@ export async function POST(request: Request) {
   let merchantWallet: `0x${string}`;
   try {
     merchantWallet = await resolvePayoutWallet(
-      session.user.id,
+      organizationId,
       defaultPrice.networkKey as NetworkKey,
+      session?.user.id,
     );
   } catch (err) {
     return NextResponse.json(
@@ -124,7 +134,7 @@ export async function POST(request: Request) {
   const [checkoutSession] = await db
     .insert(checkoutSessions)
     .values({
-      userId: session.user.id,
+      organizationId,
       productId: product.id,
       customerId: data.customerId ?? null,
       merchantWallet,

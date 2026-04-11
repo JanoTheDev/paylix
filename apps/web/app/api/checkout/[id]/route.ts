@@ -132,7 +132,7 @@ export async function PATCH(
     if (hasAnyValue(normalized)) {
       const [session] = await db
         .select({
-          userId: checkoutSessions.userId,
+          organizationId: checkoutSessions.organizationId,
           customerId: checkoutSessions.customerId,
         })
         .from(checkoutSessions)
@@ -157,12 +157,12 @@ export async function PATCH(
           await db
             .insert(customers)
             .values({
-              userId: session.userId,
+              organizationId: session.organizationId,
               customerId: session.customerId,
               ...setValues,
             })
             .onConflictDoUpdate({
-              target: [customers.userId, customers.customerId],
+              target: [customers.organizationId, customers.customerId],
               set: setValues,
             });
           customerUpserted = true;

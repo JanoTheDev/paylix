@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     .from(products)
     .where(eq(products.id, parsed.data.productId));
 
-  if (!product || product.userId !== auth.user.id) {
+  if (!product || product.organizationId !== auth.organizationId) {
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
   if (lockedPrice) {
     try {
       merchantWallet = await resolvePayoutWallet(
-        auth.user.id,
+        auth.organizationId,
         lockedPrice.networkKey as NetworkKey,
       );
     } catch (err) {
@@ -111,7 +111,7 @@ export async function POST(request: Request) {
   const [session] = await db
     .insert(checkoutSessions)
     .values({
-      userId: auth.user.id,
+      organizationId: auth.organizationId,
       productId: product.id,
       customerId: data.customerId ?? null,
       merchantWallet,
