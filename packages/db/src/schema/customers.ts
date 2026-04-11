@@ -1,9 +1,9 @@
 import { pgTable, uuid, text, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
   customerId: text("customer_id").notNull(),
   email: text("email"),
   firstName: text("first_name"),
@@ -17,7 +17,7 @@ export const customers = pgTable("customers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
-  uniqueIndex("customers_user_customer_idx").on(table.userId, table.customerId),
+  uniqueIndex("customers_org_customer_idx").on(table.organizationId, table.customerId),
 ]);
 
 export type Customer = typeof customers.$inferSelect;
