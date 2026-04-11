@@ -12,12 +12,17 @@ export function createResendDriver(cfg: ResendConfig): MailDriver {
   return {
     async send(input: SendMailInput): Promise<SendMailResult> {
       try {
-        const html = await render(input.react);
+        const html =
+          "html" in input && input.html !== undefined
+            ? input.html
+            : await render(input.react!);
+        const text = "text" in input ? input.text : undefined;
         const { data, error } = await client.emails.send({
           from: input.from,
           to: input.to,
           subject: input.subject,
           html,
+          text,
           attachments: input.attachments?.map((a) => ({
             filename: a.filename,
             content:
