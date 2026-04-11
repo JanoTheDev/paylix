@@ -19,3 +19,4 @@ export async function sendMail(
 }
 
 export { selectDriver };
+export { renderTemplate } from "./render";
