@@ -1,0 +1,29 @@
+{
+  "name": "@paylix/mailer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@react-email/render": "^1.0.0",
+    "nodemailer": "^6.9.16",
+    "react": "^19",
+    "react-dom": "^19",
+    "resend": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.2",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^19",
+    "typescript": "^5.5",
+    "vitest": "^4.1.4"
+  }
+}
