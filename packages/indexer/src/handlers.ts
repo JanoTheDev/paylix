@@ -164,7 +164,7 @@ export async function handlePaymentReceived(log: Log, args: {
       .from(customers)
       .where(
         and(
-          eq(customers.userId, session.userId),
+          eq(customers.organizationId, session.organizationId),
           eq(customers.customerId, customerIdentifier)
         )
       );
@@ -173,7 +173,7 @@ export async function handlePaymentReceived(log: Log, args: {
       const [created] = await tx
         .insert(customers)
         .values({
-          userId: session.userId,
+          organizationId: session.organizationId,
           customerId: customerIdentifier,
           walletAddress: args.payer,
           country: session.buyerCountry,
@@ -204,7 +204,7 @@ export async function handlePaymentReceived(log: Log, args: {
       .insert(payments)
       .values({
         productId: session.productId,
-        userId: session.userId,
+        organizationId: session.organizationId,
         customerId: customer.id,
         amount: amountCents,
         fee: Number(args.fee) / 10_000,
@@ -244,19 +244,19 @@ export async function handlePaymentReceived(log: Log, args: {
     // atomically increment invoiceSequence against.
     await tx
       .insert(merchantProfiles)
-      .values({ userId: session.userId })
-      .onConflictDoNothing({ target: merchantProfiles.userId });
+      .values({ organizationId: session.organizationId })
+      .onConflictDoNothing({ target: merchantProfiles.organizationId });
 
     const [profile] = await tx
       .select()
       .from(merchantProfiles)
-      .where(eq(merchantProfiles.userId, session.userId))
+      .where(eq(merchantProfiles.organizationId, session.organizationId))
       .limit(1);
     if (!profile) throw new Error("merchant_profiles row missing after upsert");
 
     const built = buildInvoice({
       profile: {
-        userId: profile.userId,
+        organizationId: profile.organizationId,
         legalName: profile.legalName,
         addressLine1: profile.addressLine1,
         addressLine2: profile.addressLine2,
@@ -291,7 +291,7 @@ export async function handlePaymentReceived(log: Log, args: {
     await tx
       .update(merchantProfiles)
       .set({ invoiceSequence: built.nextSequence })
-      .where(eq(merchantProfiles.userId, session.userId));
+      .where(eq(merchantProfiles.organizationId, session.organizationId));
 
     // If merchant has not filled their profile, mark the email as skipped —
     // we still create the invoice so numbering stays sequential.
@@ -322,7 +322,7 @@ export async function handlePaymentReceived(log: Log, args: {
 
   // Dispatch webhook AFTER the tx commits — webhook HTTP calls can be slow
   // and must not hold a DB transaction open.
-  await dispatchWebhooks(session.userId, "payment.confirmed", {
+  await dispatchWebhooks(session.organizationId, "payment.confirmed", {
     paymentId: result.payment.id,
     checkoutId: session.id,
     productId: session.productId,
@@ -336,7 +336,7 @@ export async function handlePaymentReceived(log: Log, args: {
     toAddress: args.merchant,
     metadata: session.metadata ?? {},
   });
-  await dispatchWebhooks(session.userId, "invoice.issued", {
+  await dispatchWebhooks(session.organizationId, "invoice.issued", {
     invoiceId: result.invoice.id,
     number: result.invoice.number,
     paymentId: result.payment.id,
@@ -348,7 +348,7 @@ export async function handlePaymentReceived(log: Log, args: {
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
-      merchantId: session.userId,
+      organizationId: session.organizationId,
     }).catch((err) => {
       console.error("[Handler] sendInvoiceEmail failed:", err);
     });
@@ -446,7 +446,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       .from(customers)
       .where(
         and(
-          eq(customers.userId, session.userId),
+          eq(customers.organizationId, session.organizationId),
           eq(customers.customerId, customerIdentifier)
         )
       );
@@ -455,7 +455,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       const [created] = await tx
         .insert(customers)
         .values({
-          userId: session.userId,
+          organizationId: session.organizationId,
           customerId: customerIdentifier,
           walletAddress: args.subscriber,
           country: session.buyerCountry,
@@ -486,7 +486,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       .insert(payments)
       .values({
         productId: session.productId,
-        userId: session.userId,
+        organizationId: session.organizationId,
         customerId: customer.id,
         amount: amountCents,
         fee: 0, // fee is tracked per-charge in PaymentReceived; creation doesn't include it here
@@ -512,19 +512,19 @@ export async function handleSubscriptionCreated(log: Log, args: {
 
     await tx
       .insert(merchantProfiles)
-      .values({ userId: session.userId })
-      .onConflictDoNothing({ target: merchantProfiles.userId });
+      .values({ organizationId: session.organizationId })
+      .onConflictDoNothing({ target: merchantProfiles.organizationId });
 
     const [subProfile] = await tx
       .select()
       .from(merchantProfiles)
-      .where(eq(merchantProfiles.userId, session.userId))
+      .where(eq(merchantProfiles.organizationId, session.organizationId))
       .limit(1);
     if (!subProfile) throw new Error("merchant_profiles row missing after upsert");
 
     const subBuilt = buildInvoice({
       profile: {
-        userId: subProfile.userId,
+        organizationId: subProfile.organizationId,
         legalName: subProfile.legalName,
         addressLine1: subProfile.addressLine1,
         addressLine2: subProfile.addressLine2,
@@ -559,7 +559,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     await tx
       .update(merchantProfiles)
       .set({ invoiceSequence: subBuilt.nextSequence })
-      .where(eq(merchantProfiles.userId, session.userId));
+      .where(eq(merchantProfiles.organizationId, session.organizationId));
 
     const subHasProfile =
       subProfile.legalName.trim().length > 0 &&
@@ -591,7 +591,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       .insert(subscriptions)
       .values({
         productId: session.productId,
-        userId: session.userId,
+        organizationId: session.organizationId,
         customerId: customer.id,
         subscriberAddress: args.subscriber,
         status: "active",
@@ -626,7 +626,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
   });
 
   // Dispatch webhook AFTER the tx commits.
-  await dispatchWebhooks(session.userId, "subscription.created", {
+  await dispatchWebhooks(session.organizationId, "subscription.created", {
     subscriptionId: result.subscription.id,
     onChainId,
     checkoutId: session.id,
@@ -641,7 +641,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     txHash: log.transactionHash,
     metadata: result.subscription.metadata ?? {},
   });
-  await dispatchWebhooks(session.userId, "invoice.issued", {
+  await dispatchWebhooks(session.organizationId, "invoice.issued", {
     invoiceId: result.invoice.id,
     number: result.invoice.number,
     paymentId: result.payment.id,
@@ -654,7 +654,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
-      merchantId: session.userId,
+      organizationId: session.organizationId,
     }).catch((err) => {
       console.error("[Handler] sendInvoiceEmail failed:", err);
     });
@@ -732,7 +732,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
       .insert(payments)
       .values({
         productId: subscription.productId,
-        userId: subscription.userId,
+        organizationId: subscription.organizationId,
         customerId: subscription.customerId,
         amount: amountCents,
         fee: feeCents,
@@ -765,19 +765,19 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
 
     await tx
       .insert(merchantProfiles)
-      .values({ userId: subscription.userId })
-      .onConflictDoNothing({ target: merchantProfiles.userId });
+      .values({ organizationId: subscription.organizationId })
+      .onConflictDoNothing({ target: merchantProfiles.organizationId });
 
     const [recurringProfile] = await tx
       .select()
       .from(merchantProfiles)
-      .where(eq(merchantProfiles.userId, subscription.userId))
+      .where(eq(merchantProfiles.organizationId, subscription.organizationId))
       .limit(1);
     if (!recurringProfile) throw new Error("merchant_profiles row missing after upsert");
 
     const recurringBuilt = buildInvoice({
       profile: {
-        userId: recurringProfile.userId,
+        organizationId: recurringProfile.organizationId,
         legalName: recurringProfile.legalName,
         addressLine1: recurringProfile.addressLine1,
         addressLine2: recurringProfile.addressLine2,
@@ -812,7 +812,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     await tx
       .update(merchantProfiles)
       .set({ invoiceSequence: recurringBuilt.nextSequence })
-      .where(eq(merchantProfiles.userId, subscription.userId));
+      .where(eq(merchantProfiles.organizationId, subscription.organizationId));
 
     const recurringHasProfile =
       recurringProfile.legalName.trim().length > 0 &&
@@ -872,7 +872,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     return { payment, nextCharge, invoice: recurringInvoice, emailable: recurringHasProfile };
   });
 
-  await dispatchWebhooks(subscription.userId, "subscription.charged", {
+  await dispatchWebhooks(subscription.organizationId, "subscription.charged", {
     subscriptionId: subscription.id,
     onChainId,
     paymentId: result.payment.id,
@@ -882,7 +882,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     nextChargeDate: result.nextCharge.toISOString(),
     metadata: subscription.metadata ?? {},
   });
-  await dispatchWebhooks(subscription.userId, "invoice.issued", {
+  await dispatchWebhooks(subscription.organizationId, "invoice.issued", {
     invoiceId: result.invoice.id,
     number: result.invoice.number,
     paymentId: result.payment.id,
@@ -895,7 +895,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
-      merchantId: subscription.userId,
+      organizationId: subscription.organizationId,
     }).catch((err) => {
       console.error("[Handler] sendInvoiceEmail failed:", err);
     });
@@ -929,7 +929,7 @@ export async function handleSubscriptionPastDue(log: Log, args: {
 
   if (updated) {
     console.log(`[Handler] Subscription ${updated.id} marked past_due`);
-    await dispatchWebhooks(updated.userId, "subscription.past_due", {
+    await dispatchWebhooks(updated.organizationId, "subscription.past_due", {
       subscriptionId: updated.id,
       onChainId,
       status: "past_due",
@@ -965,7 +965,7 @@ export async function handleSubscriptionCancelled(log: Log, args: {
 
   if (updated) {
     console.log(`[Handler] Subscription ${updated.id} cancelled`);
-    await dispatchWebhooks(updated.userId, "subscription.cancelled", {
+    await dispatchWebhooks(updated.organizationId, "subscription.cancelled", {
       subscriptionId: updated.id,
       onChainId,
       status: "cancelled",

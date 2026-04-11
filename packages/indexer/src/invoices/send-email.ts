@@ -10,7 +10,7 @@ const db = createDb(config.databaseUrl);
 
 export interface SendInvoiceEmailArgs {
   invoiceId: string;
-  merchantId: string;
+  organizationId: string;
 }
 
 export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
@@ -52,7 +52,7 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
       .update(invoices)
       .set({ emailStatus: "sent", emailSentAt: new Date(), emailError: null })
       .where(eq(invoices.id, invoice.id));
-    await dispatchWebhooks(args.merchantId, "invoice.email_sent", {
+    await dispatchWebhooks(args.organizationId, "invoice.email_sent", {
       invoiceId: invoice.id,
       number: invoice.number,
     });
@@ -61,7 +61,7 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
       .update(invoices)
       .set({ emailStatus: "failed", emailError: result.error ?? "unknown" })
       .where(eq(invoices.id, invoice.id));
-    await dispatchWebhooks(args.merchantId, "invoice.email_failed", {
+    await dispatchWebhooks(args.organizationId, "invoice.email_failed", {
       invoiceId: invoice.id,
       number: invoice.number,
       error: result.error,

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildInvoice } from "../invoices/create";
 
 const profile = {
-  userId: "user_1",
+  organizationId: "org_1",
   legalName: "Acme Ltd",
   addressLine1: "1 Main St",
   addressLine2: null,

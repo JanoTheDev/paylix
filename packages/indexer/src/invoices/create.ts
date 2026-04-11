@@ -7,7 +7,7 @@ const EU_COUNTRIES = new Set([
 ]);
 
 export interface ProfileInput {
-  userId: string;
+  organizationId: string;
   legalName: string;
   addressLine1: string;
   addressLine2: string | null;
@@ -53,7 +53,7 @@ export interface BuildInvoiceArgs {
 
 export interface BuiltInvoice {
   invoice: {
-    merchantId: string;
+    organizationId: string;
     paymentId: string;
     customerId: string;
     hostedToken: string;
@@ -135,7 +135,7 @@ export function buildInvoice(args: BuildInvoiceArgs): BuiltInvoice {
 
   return {
     invoice: {
-      merchantId: profile.userId,
+      organizationId: profile.organizationId,
       paymentId: payment.id,
       customerId: customer.id,
       hostedToken: generateHostedToken(),

@@ -8,16 +8,16 @@ import { validateWebhookUrl } from "./url-safety";
 const db = createDb(config.databaseUrl);
 
 export async function dispatchWebhooks(
-  userId: string,
+  organizationId: string,
   event: string,
   data: Record<string, unknown>
 ) {
-  if (!userId) return;
+  if (!organizationId) return;
 
   const userWebhooks = await db
     .select()
     .from(webhooks)
-    .where(and(eq(webhooks.userId, userId), eq(webhooks.isActive, true)));
+    .where(and(eq(webhooks.organizationId, organizationId), eq(webhooks.isActive, true)));
 
   const matchingWebhooks = userWebhooks.filter((wh) =>
     wh.events.includes(event)
