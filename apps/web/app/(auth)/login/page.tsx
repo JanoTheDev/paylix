@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -35,6 +35,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [error, setError] = useState("");
 
   const form = useForm<FormValues>({
@@ -49,7 +50,8 @@ export default function LoginPage() {
       if (result.error) {
         setError(result.error.message || "Invalid email or password");
       } else {
-        router.push("/overview");
+        const invite = searchParams.get("invite");
+        router.push(invite ? `/invite/${invite}` : "/overview");
       }
     } catch {
       setError("Something went wrong. Please try again.");
