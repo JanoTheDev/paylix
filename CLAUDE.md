@@ -41,3 +41,5 @@ See `DESIGN.md` for the complete visual design system. Dark-first, teal accent (
 - All prices stored as integers in cents (1000 = $10.00 USDC)
 - API keys: publishable (pk_) for client-side, secret (sk_) for server-side
 - Blockchain data (amounts, hashes, addresses) always displayed in monospace font
+- Gasless checkout requires TWO buyer signatures: an EIP-2612 permit AND a Paylix `PaymentIntent` (or `SubscriptionIntent`) bound to the merchant + amount. The intent verification is what makes a stolen relayer key non-catastrophic — the contract reverts if the intent doesn't match what the relayer is calling. Don't add a code path that bypasses `_consumePaymentIntent` / `_consumeSubscriptionIntent`.
+- Indexer never reads from the unsafe head. Default is `INDEXER_CONFIRMATIONS=5` (~10s on Base). `INDEXER_BLOCK_TAG=safe|finalized` is the opt-in escape hatch for L1 finality semantics.

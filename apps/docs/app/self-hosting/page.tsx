@@ -178,12 +178,23 @@ http://localhost:3000`}</CodeBlock>
 
       <SectionHeading>Gas Sponsorship (Gasless Payments)</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        Paylix buyers don&apos;t need to hold ETH. When a customer pays, they
-        sign an EIP-2612 permit off-chain (no transaction, no gas) and your
-        backend submits the payment via a whitelisted{" "}
+        Paylix buyers don&apos;t need to hold ETH. At checkout the customer
+        signs <strong className="text-foreground">two</strong> EIP-712
+        messages off-chain (no transactions, no gas): an EIP-2612 permit that
+        authorizes USDC spend, and a Paylix <code>PaymentIntent</code> that
+        binds the exact merchant, amount, productId, and a per-buyer nonce.
+        Your backend then submits the payment via a whitelisted{" "}
         <strong className="text-foreground">relayer wallet</strong> that pays
-        gas on their behalf. USDC still flows directly from buyer to merchant
-        — the relayer just signs the carrier transaction.
+        gas on the buyer&apos;s behalf. USDC flows directly from buyer to
+        merchant.
+      </p>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The intent binding is what makes a stolen relayer key non-catastrophic:
+        the contract verifies the buyer signed off on this exact merchant +
+        amount, so a compromised relayer cannot redirect a signed permit to
+        an attacker-controlled address. Subscriptions use the same pattern
+        with a <code>SubscriptionIntent</code> that additionally binds the
+        billing interval and the long-lived permit allowance.
       </p>
       <p className="text-sm leading-relaxed text-foreground-muted">
         You need to generate a dedicated relayer wallet and fund it with a
@@ -300,6 +311,29 @@ cast send <SUBSCRIPTION_MANAGER_ADDRESS> 'setGaslessPaused(bool)' true \\
       <CodeBlock language="bash">{`FORK_RPC_URL=https://mainnet.base.org \\
   ~/.foundry/bin/forge test --match-path "test/mainnet-fork/*" \\
   --fork-url $FORK_RPC_URL -vvv`}</CodeBlock>
+
+      <SectionHeading>Indexer Confirmations</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The indexer never marks a payment confirmed from the unsafe head. By
+        default it waits for <code>5</code> block confirmations on Base
+        (~10 seconds) before processing an event — long enough that a
+        sequencer hiccup can&apos;t reorg out a payment, short enough for
+        Stripe-like UX. Tune via env in <code>paykit/.env</code>:
+      </p>
+      <CodeBlock language="bash">{`# Default. ~10s lag on Base, effectively zero reorg risk.
+INDEXER_CONFIRMATIONS=5
+
+# Lower for snappier devnet feel (no reorg protection — devnet only).
+# INDEXER_CONFIRMATIONS=0
+
+# Or use an explicit block tag if you want L1 finality semantics.
+# INDEXER_BLOCK_TAG=safe       # ~6 minute lag
+# INDEXER_BLOCK_TAG=finalized  # ~12 minute lag (cryptographic finality)`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        When <code>INDEXER_BLOCK_TAG</code> is set it takes precedence over
+        <code> INDEXER_CONFIRMATIONS</code>. Restart the indexer after
+        changing either value.
+      </p>
 
       <SectionHeading>Updating</SectionHeading>
       <CodeBlock language="bash">{`git pull origin main

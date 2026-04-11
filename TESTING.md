@@ -148,25 +148,26 @@ Type `y` when prompted. This creates all tables.
 
 ## 8. Deploy Smart Contracts
 
-You need Foundry installed in WSL for this.
+You need Foundry installed in WSL for this. The repo includes a wrapper that
+compiles, tests, deploys, exports ABIs, and rewrites the addresses in your
+`.env` automatically:
 
 ```bash
-wsl bash -lc "cd /mnt/c/path/to/paylix/packages/contracts && \
-  DEPLOYER_PRIVATE_KEY=0xYOUR_KEY \
-  PLATFORM_WALLET=0xYOUR_ADDRESS \
-  ~/.foundry/bin/forge script script/DeployTestnet.s.sol \
-  --rpc-url https://base-sepolia.g.alchemy.com/v2/YOUR_ALCHEMY_KEY \
-  --broadcast -v"
+./deploy-contracts.sh
 ```
 
-Output will include three addresses:
-```
-MockUSDC: 0x...
-PaymentVault: 0x...
-SubscriptionManager: 0x...
-```
+It reads `DEPLOYER_PRIVATE_KEY`, `PLATFORM_WALLET`, `RELAYER_PRIVATE_KEY`,
+and `RPC_URL` from `.env`, derives `RELAYER_ADDRESS` from the relayer key,
+deploys MockUSDC + PaymentVault + SubscriptionManager, and prints the three
+addresses. Both the server-side and `NEXT_PUBLIC_*` env vars are updated in
+place — no manual copy-paste.
 
-Copy these into your `.env` under the corresponding variables (both the server and `NEXT_PUBLIC_*` versions).
+If the relayer key isn't in `.env` yet, generate one first:
+
+```bash
+wsl bash -lc "~/.foundry/bin/cast wallet new"
+# add the printed private key to .env as RELAYER_PRIVATE_KEY=0x...
+```
 
 ---
 
@@ -271,11 +272,14 @@ Two ways:
 4. Click **Connect Wallet** → choose MetaMask
 5. Approve the connection in the MetaMask popup
 6. Click **Pay $1.00 USDC**
-7. MetaMask will prompt twice:
-   - First: approve USDC spending
-   - Second: confirm the payment transaction
-8. Wait for confirmation — the page will show "Processing..."
-9. The indexer will pick up the event (~5-10 seconds)
+7. MetaMask will pop up **two signatures** in a row (no transactions, no
+   gas needed from the buyer):
+   - First: an EIP-2612 USDC permit
+   - Second: a Paylix `PaymentIntent` binding the merchant + amount
+8. The page shows "Processing..." with a "do not close this window" notice
+   while the relayer submits the on-chain transaction
+9. The indexer picks up the event after `INDEXER_CONFIRMATIONS` blocks
+   (~10s on Base with the default of 5)
 10. The page redirects to the success URL
 
 ---
