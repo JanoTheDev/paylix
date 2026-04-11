@@ -1,7 +1,9 @@
 "use client";
+import type { ColumnDef } from "@tanstack/react-table";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { DataTable, EmptyState, col } from "@/components/paykit";
 
 type Row = {
   id: string;
@@ -12,44 +14,39 @@ type Row = {
 
 export function PendingInvitesTable({ rows }: { rows: Row[] }) {
   const router = useRouter();
-  if (rows.length === 0) {
-    return <p className="text-sm text-slate-500">No pending invites.</p>;
-  }
+
+  const columns: ColumnDef<Row, unknown>[] = [
+    col.text<Row>("email", "Email"),
+    col.date<Row>("expiresAt", "Expires"),
+    {
+      id: "cancel",
+      header: () => null,
+      cell: ({ row }) => (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              await authClient.organization.cancelInvitation({
+                invitationId: row.original.id,
+              });
+              router.refresh();
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="overflow-hidden rounded-md border border-slate-800">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-900/40 text-xs uppercase text-slate-400">
-          <tr>
-            <th className="px-3 py-2 text-left">Email</th>
-            <th className="px-3 py-2 text-left">Expires</th>
-            <th className="px-3 py-2"></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800">
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td className="px-3 py-2 text-slate-100">{r.email}</td>
-              <td className="px-3 py-2 text-slate-500">
-                {new Date(r.expiresAt).toLocaleDateString()}
-              </td>
-              <td className="px-3 py-2 text-right">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    await authClient.organization.cancelInvitation({
-                      invitationId: r.id,
-                    });
-                    router.refresh();
-                  }}
-                >
-                  Cancel
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={rows}
+      emptyState={
+        <EmptyState title="No pending invites" description="All invitations have been accepted or there are none." />
+      }
+    />
   );
 }

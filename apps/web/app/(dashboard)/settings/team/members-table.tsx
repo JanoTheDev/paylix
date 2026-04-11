@@ -1,7 +1,9 @@
 "use client";
+import type { ColumnDef } from "@tanstack/react-table";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { DataTable, EmptyState, col } from "@/components/paykit";
 
 type Row = {
   memberId: string;
@@ -22,50 +24,45 @@ export function TeamMembersTable({
   canRemove: boolean;
 }) {
   const router = useRouter();
+
+  const columns: ColumnDef<Row, unknown>[] = [
+    col.text<Row>("name", "Name"),
+    col.text<Row>("email", "Email", { muted: true }),
+    col.text<Row>("role", "Role", { muted: true }),
+    col.date<Row>("joinedAt", "Joined"),
+    ...(canRemove
+      ? [
+          {
+            id: "remove",
+            header: () => null,
+            cell: ({ row }: { row: { original: Row } }) =>
+              row.original.userId !== currentUserId ? (
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      if (!confirm(`Remove ${row.original.email}?`)) return;
+                      await authClient.organization.removeMember({
+                        memberIdOrEmail: row.original.memberId,
+                      });
+                      router.refresh();
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ) : null,
+          } satisfies ColumnDef<Row, unknown>,
+        ]
+      : []),
+  ];
+
   return (
-    <div className="overflow-hidden rounded-md border border-slate-800">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-900/40 text-xs uppercase text-slate-400">
-          <tr>
-            <th className="px-3 py-2 text-left">Name</th>
-            <th className="px-3 py-2 text-left">Email</th>
-            <th className="px-3 py-2 text-left">Role</th>
-            <th className="px-3 py-2 text-left">Joined</th>
-            {canRemove && <th className="px-3 py-2"></th>}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800">
-          {rows.map((r) => (
-            <tr key={r.memberId}>
-              <td className="px-3 py-2 text-slate-100">{r.name ?? "—"}</td>
-              <td className="px-3 py-2 text-slate-300">{r.email ?? "—"}</td>
-              <td className="px-3 py-2 text-slate-300">{r.role}</td>
-              <td className="px-3 py-2 text-slate-500">
-                {new Date(r.joinedAt).toLocaleDateString()}
-              </td>
-              {canRemove && (
-                <td className="px-3 py-2 text-right">
-                  {r.userId !== currentUserId && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={async () => {
-                        if (!confirm(`Remove ${r.email}?`)) return;
-                        await authClient.organization.removeMember({
-                          memberIdOrEmail: r.memberId,
-                        });
-                        router.refresh();
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={rows}
+      emptyState={<EmptyState title="No members" description="No members in this team yet." />}
+    />
   );
 }
