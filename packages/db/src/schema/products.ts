@@ -47,6 +47,7 @@ export const products = pgTable("products", {
   reverseChargeEligible: boolean("reverse_charge_eligible")
     .notNull()
     .default(false),
+  trialDays: integer("trial_days"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
