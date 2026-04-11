@@ -1,8 +1,39 @@
 import { db } from "@/lib/db";
-import { checkoutSessions, products, payments } from "@paylix/db/schema";
-import { eq } from "drizzle-orm";
+import { checkoutSessions, customers, products, payments } from "@paylix/db/schema";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { signPortalToken } from "@/lib/portal-tokens";
+
+interface CustomerFormPayload {
+  firstName?: unknown;
+  lastName?: unknown;
+  email?: unknown;
+  phone?: unknown;
+  country?: unknown;
+  taxId?: unknown;
+}
+
+function cleanString(value: unknown, { upper = false }: { upper?: boolean } = {}) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return upper ? trimmed.toUpperCase() : trimmed;
+}
+
+function normalizeCustomerForm(raw: CustomerFormPayload) {
+  return {
+    firstName: cleanString(raw.firstName),
+    lastName: cleanString(raw.lastName),
+    email: cleanString(raw.email),
+    phone: cleanString(raw.phone),
+    country: cleanString(raw.country, { upper: true }),
+    taxId: cleanString(raw.taxId),
+  };
+}
+
+function hasAnyValue(values: Record<string, string | null>) {
+  return Object.values(values).some((v) => v !== null);
+}
 
 export async function GET(
   _request: Request,
@@ -86,7 +117,48 @@ export async function PATCH(
     allowedUpdates.status = "abandoned";
   }
 
+  // Persist collected customer form fields (names, email, phone, country,
+  // taxId) onto the customers row. We can only do this pre-payment when the
+  // merchant has attached a stable customerId to the session — otherwise
+  // the customer row is created by the indexer after PaymentReceived, and
+  // we have no key to upsert against yet.
+  let customerUpserted = false;
+  if (body.customer && typeof body.customer === "object") {
+    const normalized = normalizeCustomerForm(body.customer as CustomerFormPayload);
+    if (hasAnyValue(normalized)) {
+      const [session] = await db
+        .select({
+          userId: checkoutSessions.userId,
+          customerId: checkoutSessions.customerId,
+        })
+        .from(checkoutSessions)
+        .where(eq(checkoutSessions.id, id));
+
+      if (session && session.customerId) {
+        const setValues: Record<string, string> = {};
+        for (const [k, v] of Object.entries(normalized)) {
+          if (v !== null) setValues[k] = v;
+        }
+        await db
+          .insert(customers)
+          .values({
+            userId: session.userId,
+            customerId: session.customerId,
+            ...setValues,
+          })
+          .onConflictDoUpdate({
+            target: [customers.userId, customers.customerId],
+            set: setValues,
+          });
+        customerUpserted = true;
+      }
+    }
+  }
+
   if (Object.keys(allowedUpdates).length === 0) {
+    if (customerUpserted) {
+      return NextResponse.json({ ok: true });
+    }
     return NextResponse.json({ error: "No valid updates" }, { status: 400 });
   }
 
