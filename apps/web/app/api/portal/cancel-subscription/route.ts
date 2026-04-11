@@ -63,21 +63,11 @@ export async function POST(request: Request) {
     );
   }
 
-  // Defensive guard against orphaned rows from a previous deploy. See the
-  // matching comment in /api/subscriptions/[id]/cancel-gasless/route.ts.
-  const currentContract = CONTRACTS.subscriptionManager.toLowerCase();
-  if (
-    sub.contractAddress &&
-    sub.contractAddress.toLowerCase() !== currentContract
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "This subscription belongs to a previous contract deployment and can no longer be cancelled via the active SubscriptionManager.",
-      },
-      { status: 410 },
-    );
-  }
+  // Route to whichever SubscriptionManager owns this subscription. Falls
+  // back to the active env address for subs created before sub.contractAddress
+  // was always populated. See spec §Option Z.
+  const contractAddress = (sub.contractAddress ||
+    CONTRACTS.subscriptionManager) as `0x${string}`;
 
   // Fetch the customer's wallet address (subscriber address)
   const [customer] = await db
@@ -96,7 +86,7 @@ export async function POST(request: Request) {
   try {
     const relayer = createRelayerClient();
     const txHash = await relayer.writeContract({
-      address: CONTRACTS.subscriptionManager,
+      address: contractAddress, // was: CONTRACTS.subscriptionManager
       abi: SUBSCRIPTION_MANAGER_ABI,
       functionName: "cancelSubscriptionByRelayerForSubscriber",
       args: [BigInt(sub.onChainId), customer.walletAddress as `0x${string}`],

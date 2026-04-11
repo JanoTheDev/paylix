@@ -65,25 +65,11 @@ export async function POST(
     );
   }
 
-  // Defensive guard against orphaned rows from a previous deploy. If the
-  // subscription was created on a SubscriptionManager that's no longer the
-  // active contract (contract_address mismatches .env), the cancel call
-  // would revert with a cryptic "Not the merchant" because the contract
-  // would read a zero-value struct at that onChainId. Fail fast here with
-  // a clear error instead.
-  const currentContract = CONTRACTS.subscriptionManager.toLowerCase();
-  if (
-    sub.contractAddress &&
-    sub.contractAddress.toLowerCase() !== currentContract
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "This subscription belongs to a previous contract deployment and can no longer be cancelled via the active SubscriptionManager. Please wipe stale test data.",
-      },
-      { status: 410 },
-    );
-  }
+  // Route to whichever SubscriptionManager owns this subscription. Falls
+  // back to the active env address for subs created before sub.contractAddress
+  // was always populated. See spec §Option Z.
+  const contractAddress = (sub.contractAddress ||
+    CONTRACTS.subscriptionManager) as `0x${string}`;
 
   // Fetch the merchant's wallet address from the user table. The better-auth
   // session.user object doesn't include the walletAddress column by default,
@@ -104,7 +90,7 @@ export async function POST(
   try {
     const relayer = createRelayerClient();
     const txHash = await relayer.writeContract({
-      address: CONTRACTS.subscriptionManager,
+      address: contractAddress, // was: CONTRACTS.subscriptionManager
       abi: SUBSCRIPTION_MANAGER_ABI,
       functionName: "cancelSubscriptionByRelayerForMerchant",
       args: [BigInt(sub.onChainId), merchantRow.walletAddress as `0x${string}`],
