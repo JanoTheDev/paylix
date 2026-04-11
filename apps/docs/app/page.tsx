@@ -144,6 +144,56 @@ if (isValid) {
   }
 }`}</CodeBlock>
 
+      <SectionHeading>Dashboard tour</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The merchant dashboard is organized around eight pages:
+      </p>
+      <ul className="mt-3 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-disc">
+        <li>
+          <strong className="text-foreground">Overview</strong> — recent
+          payments, active subscription count, system health.
+        </li>
+        <li>
+          <strong className="text-foreground">Products</strong> — create and
+          edit products, set prices, configure tax rates per product.
+        </li>
+        <li>
+          <strong className="text-foreground">Payments</strong> — unified
+          transaction log. One-time charges and recurring subscription
+          charges share this view, distinguished by a Subscription badge
+          next to the amount. Every row has a Download invoice action.
+        </li>
+        <li>
+          <strong className="text-foreground">Checkout Links</strong> —
+          long-lived payment links you can share on your site or send
+          directly to customers.
+        </li>
+        <li>
+          <strong className="text-foreground">Customers</strong> — the
+          people hub. Segment chips filter by *All · Active subscribers ·
+          One-time · Past due*. Click any customer to see their payments,
+          subscriptions (with cancel), and invoices (with download links
+          for both invoice and receipt PDFs). Edit metadata inline. Add
+          customers manually with the &quot;+ New customer&quot; button.
+        </li>
+        <li>
+          <strong className="text-foreground">Webhooks</strong> — endpoint
+          list, create / edit / delete, send test events, view recent
+          delivery history.
+        </li>
+        <li>
+          <strong className="text-foreground">API Keys</strong> — manage
+          publishable (<code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px]">pk_</code>)
+          and secret (<code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px]">sk_</code>)
+          keys for the SDK.
+        </li>
+        <li>
+          <strong className="text-foreground">Settings</strong> — business
+          profile (appears on every invoice), payout wallets, active
+          network, billing email.
+        </li>
+      </ul>
+
       <SectionHeading>Next Steps</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         You have the basics. Dive deeper into the areas you need:

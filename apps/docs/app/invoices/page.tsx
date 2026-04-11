@@ -142,13 +142,19 @@ PUBLIC_APP_URL=https://paylix.example.com`}</CodeBlock>
 
       <SubsectionHeading>Merchant dashboard</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
+        Invoices are surfaced in two places in the dashboard. The{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-          /dashboard/invoices
+          Payments
         </code>{" "}
-        shows every invoice you&apos;ve issued, filterable by status and
-        customer. Click any row to preview the full invoice, resend the
-        email (if delivery failed), or download the PDF. The payments list
-        also includes a direct &quot;Invoice&quot; action on every row.
+        list shows a Download invoice action on every row. The customer
+        detail page at{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          Customers → [customer]
+        </code>{" "}
+        has a dedicated Invoices section with download links for both the
+        invoice PDF and the payment receipt, alongside that customer&apos;s
+        payments and subscriptions. There is no standalone Invoices page —
+        invoices live where the customer and payment context already is.
       </p>
 
       <SubsectionHeading>Customer portal</SubsectionHeading>
