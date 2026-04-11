@@ -20,6 +20,8 @@ export const subscriptions = pgTable(
     // SubscriptionCreated event this row tracks. Required so redeployed
     // contracts don't collide with stale rows on their onChainId sequences.
     contractAddress: text("contract_address").notNull(),
+    networkKey: text("network_key").notNull(),
+    tokenSymbol: text("token_symbol").notNull(),
     status: subscriptionStatusEnum("status").notNull().default("active"),
     currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),

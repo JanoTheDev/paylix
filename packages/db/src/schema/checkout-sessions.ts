@@ -1,13 +1,14 @@
-import { pgTable, uuid, text, integer, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, bigint, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { products } from "./products";
 
 export const checkoutStatusEnum = pgEnum("checkout_status", [
-  "active",     // link created, not yet opened
-  "viewed",     // user opened the checkout page
-  "abandoned",  // user saw it but left without paying
-  "completed",  // payment confirmed
-  "expired",    // session expired (30 min default)
+  "awaiting_currency", // session created, buyer hasn't selected network/token yet
+  "active",            // link created, not yet opened
+  "viewed",            // user opened the checkout page
+  "abandoned",         // user saw it but left without paying
+  "completed",         // payment confirmed
+  "expired",           // session expired (30 min default)
 ]);
 
 export const checkoutSessions = pgTable("checkout_sessions", {
@@ -16,9 +17,9 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   productId: uuid("product_id").notNull().references(() => products.id),
   customerId: text("customer_id"),
   merchantWallet: text("merchant_wallet").notNull(),
-  amount: integer("amount").notNull(),
-  currency: text("currency").notNull().default("USDC"),
-  chain: text("chain").notNull().default("base"),
+  amount: bigint("amount", { mode: "bigint" }).notNull(),
+  networkKey: text("network_key"),   // nullable while awaiting_currency
+  tokenSymbol: text("token_symbol"), // nullable while awaiting_currency
   type: text("type").notNull().default("one_time"),
   status: checkoutStatusEnum("status").notNull().default("active"),
   successUrl: text("success_url"),

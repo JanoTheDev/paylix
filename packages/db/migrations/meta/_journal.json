@@ -15,6 +15,13 @@
       "when": 1775870540861,
       "tag": "0001_shallow_snowbird",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775914657583,
+      "tag": "0002_black_gabe_jones",
+      "breakpoints": true
     }
   ]
 }
