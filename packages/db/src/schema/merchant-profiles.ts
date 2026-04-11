@@ -5,14 +5,14 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 
 export const merchantProfiles = pgTable(
   "merchant_profiles",
   {
-    userId: text("user_id")
+    organizationId: text("organization_id")
       .primaryKey()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => organization.id, { onDelete: "cascade" }),
     legalName: text("legal_name").notNull().default(""),
     addressLine1: text("address_line_1").notNull().default(""),
     addressLine2: text("address_line_2"),
@@ -34,7 +34,7 @@ export const merchantProfiles = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("merchant_profiles_user_idx").on(table.userId),
+    uniqueIndex("merchant_profiles_org_idx").on(table.organizationId),
   ],
 );
 
