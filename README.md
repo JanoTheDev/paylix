@@ -50,8 +50,12 @@ const { checkoutUrl } = await paylix.createCheckout({
 ```bash
 git clone https://github.com/JanoTheDev/paylix.git
 cd paylix
-cp .env.example .env
-# Edit .env with your values
+
+# Pick the environment you're running:
+cp .env.testnet.example .env    # Base Sepolia — free, for testing
+# cp .env.mainnet.example .env  # Base mainnet — real money, real deployment
+
+# Edit .env — at minimum set your RPC_URL and generate fresh wallet keys
 docker compose up -d
 ```
 
