@@ -1,12 +1,15 @@
 "use client";
 
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   PageShell,
   PageHeader,
   DataTable,
   EmptyState,
   col,
+  Amount,
 } from "@/components/paykit";
+import { Badge } from "@/components/ui/badge";
 
 export type PaymentRow = {
   id: string;
@@ -23,15 +26,32 @@ export type PaymentRow = {
   invoiceHostedToken: string | null;
 };
 
+const amountWithType: ColumnDef<PaymentRow, unknown> = {
+  accessorKey: "amount",
+  header: () => <div className="text-right">Amount</div>,
+  cell: ({ row }) => {
+    const r = row.original;
+    return (
+      <div className="flex items-center justify-end gap-2">
+        {r.productType === "subscription" && (
+          <Badge variant="info" className="font-normal">
+            Subscription
+          </Badge>
+        )}
+        <Amount cents={r.amount} withBadge align="right" />
+      </div>
+    );
+  },
+};
+
 const columns = [
   col.date<PaymentRow>("createdAt", "Date"),
   col.text<PaymentRow>("productName", "Product"),
-  col.status<PaymentRow>("productType", "Type", "productType"),
   col.customer<PaymentRow>({
     emailKey: "customerEmail",
     walletKey: "customerWallet",
   }),
-  col.amount<PaymentRow>("amount", "Amount", { withBadge: true }),
+  amountWithType,
   col.amount<PaymentRow>("fee", "Fee"),
   col.status<PaymentRow>("status", "Status", "payment"),
   col.hash<PaymentRow>("txHash", "Tx Hash"),
@@ -59,7 +79,7 @@ export default function PaymentsView({ rows }: PaymentsViewProps) {
     <PageShell>
       <PageHeader
         title="Payments"
-        description="All payments received by your account."
+        description="All payments received by your account, including subscription charges."
       />
       <DataTable
         columns={columns}
