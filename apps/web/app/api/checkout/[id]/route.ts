@@ -40,19 +40,26 @@ export async function GET(
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Check if expired
+  // session.amount is a bigint (native token units) — JSON.stringify can't
+  // handle BigInt, so serialize it to a string before returning.
+  const serialized = {
+    ...session,
+    amount: session.amount?.toString() ?? null,
+  };
+
   if (session.status === "active" && new Date(session.expiresAt) < new Date()) {
     await db
       .update(checkoutSessions)
       .set({ status: "expired" })
       .where(eq(checkoutSessions.id, id));
-    return NextResponse.json({ ...session, status: "expired" });
+    return NextResponse.json({ ...serialized, status: "expired" });
   }
 
   const portalToken = session.customerUuid
     ? signPortalToken(session.customerUuid)
     : null;
 
-  return NextResponse.json({ ...session, portalToken });
+  return NextResponse.json({ ...serialized, portalToken });
 }
 
 export async function PATCH(

@@ -98,8 +98,11 @@ export const NETWORKS = {
     tokens: {
       USDC: {
         symbol: "USDC",
-        // "Mock USDC" makes the UI explicit that this is not real USDC.
-        name: "Mock USDC",
+        // MUST match the on-chain ERC20Permit name verbatim — this string
+        // feeds into the EIP-712 domain separator. MockUSDC.sol constructs
+        // its permit with "USD Coin (Mock)", so any other value here silently
+        // breaks permit signature verification and allowance stays at 0.
+        name: "USD Coin (Mock)",
         decimals: 6,
         supportsPermit: true,
         // MockUSDC contract (src/MockUSDC.sol) uses the OpenZeppelin ERC20Permit
