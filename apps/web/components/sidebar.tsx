@@ -17,6 +17,7 @@ import {
 import { signOut } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { TeamSwitcher } from "@/components/team-switcher";
 
 const navItems = [
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
@@ -128,6 +129,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         >
           Paylix
         </Link>
+      </div>
+
+      <div className="px-2 py-2">
+        <TeamSwitcher />
       </div>
 
       <nav className="flex-1 space-y-0.5 px-2 py-3">
