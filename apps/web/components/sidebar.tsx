@@ -7,9 +7,7 @@ import {
   LayoutDashboard,
   Package,
   CreditCard,
-  FileText,
   Link2,
-  Users,
   UserCircle,
   Key,
   Webhook,
@@ -24,12 +22,10 @@ const navItems = [
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
   { href: "/products", label: "Products", icon: Package },
   { href: "/payments", label: "Payments", icon: CreditCard },
-  { href: "/invoices", label: "Invoices", icon: FileText },
   { href: "/checkout-links", label: "Checkout Links", icon: Link2 },
-  { href: "/subscribers", label: "Subscribers", icon: Users },
   { href: "/customers", label: "Customers", icon: UserCircle },
-  { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/webhooks", label: "Webhooks", icon: Webhook },
+  { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
