@@ -1,5 +1,5 @@
 import { pgTable, uuid, text, boolean, timestamp, pgEnum, uniqueIndex } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 
 export const apiKeyTypeEnum = pgEnum("api_key_type", ["publishable", "secret"]);
 
@@ -7,7 +7,7 @@ export const apiKeys = pgTable(
   "api_keys",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     keyHash: text("key_hash").notNull(),
     prefix: text("prefix").notNull(),
