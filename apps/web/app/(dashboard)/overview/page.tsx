@@ -1,22 +1,12 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { and, count, eq, gte, sum, sql } from "drizzle-orm";
 import { payments, subscriptions, merchantProfiles, merchantPayoutWallets } from "@paylix/db/schema";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
 import { FinishSetupBanner } from "@/components/finish-setup-banner";
 import OverviewView from "./overview-view";
 
 export default async function OverviewPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId } = await getActiveOrgOrRedirect();
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
