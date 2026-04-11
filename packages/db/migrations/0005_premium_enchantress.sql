@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ADD COLUMN "source" text DEFAULT 'checkout' NOT NULL;
