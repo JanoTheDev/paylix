@@ -10,6 +10,17 @@ export interface CreateCheckoutParams {
   successUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
+  /**
+   * Optional: pre-lock the session to a specific (network, token). If
+   * omitted, the session starts in "awaiting_currency" state and the
+   * buyer picks on the checkout page.
+   *
+   * Valid network keys depend on which networks the Paylix instance has
+   * configured — the SDK does not validate them client-side. If you pass
+   * an unsupported value, the server returns 400.
+   */
+  networkKey?: string;
+  tokenSymbol?: string;
 }
 
 export interface CreateCheckoutResult {
@@ -23,6 +34,17 @@ export interface CreateSubscriptionParams {
   successUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
+  /**
+   * Optional: pre-lock the session to a specific (network, token). If
+   * omitted, the session starts in "awaiting_currency" state and the
+   * buyer picks on the checkout page.
+   *
+   * Valid network keys depend on which networks the Paylix instance has
+   * configured — the SDK does not validate them client-side. If you pass
+   * an unsupported value, the server returns 400.
+   */
+  networkKey?: string;
+  tokenSymbol?: string;
 }
 
 /**
