@@ -1,6 +1,10 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, merchantPayoutWallets } from "@paylix/db/schema";
+import {
+  users,
+  merchantPayoutWallets,
+  merchantProfiles,
+} from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -44,6 +48,34 @@ export async function GET() {
     .from(merchantPayoutWallets)
     .where(eq(merchantPayoutWallets.userId, session.user.id));
 
+  let [profile] = await db
+    .select()
+    .from(merchantProfiles)
+    .where(eq(merchantProfiles.userId, session.user.id))
+    .limit(1);
+
+  if (!profile) {
+    const [created] = await db
+      .insert(merchantProfiles)
+      .values({ userId: session.user.id })
+      .returning();
+    profile = created;
+  }
+
+  const businessProfile = {
+    legalName: profile.legalName,
+    addressLine1: profile.addressLine1,
+    addressLine2: profile.addressLine2,
+    city: profile.city,
+    postalCode: profile.postalCode,
+    country: profile.country,
+    taxId: profile.taxId,
+    supportEmail: profile.supportEmail,
+    logoUrl: profile.logoUrl,
+    invoicePrefix: profile.invoicePrefix,
+    invoiceFooter: profile.invoiceFooter,
+  };
+
   // Build the response: every available network gets an entry, with defaults
   // if there's no row yet
   const available = getAvailableNetworks();
@@ -66,6 +98,7 @@ export async function GET() {
     ...user,
     checkoutFieldDefaults: defaults,
     networks,
+    businessProfile,
   });
 }
 
