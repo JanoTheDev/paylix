@@ -12,3 +12,4 @@ export * from "./webhook-deliveries";
 export * from "./checkout-sessions";
 export * from "./system-status";
 export * from "./unmatched-events";
+export * from "./merchant-profiles";
