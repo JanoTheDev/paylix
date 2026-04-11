@@ -68,7 +68,10 @@ describe("NETWORKS data", () => {
   });
 
   it("base-sepolia USDC is env-driven with version 1", () => {
-    const usdc = NETWORKS["base-sepolia"].tokens.USDC;
+    // Cast through TokenConfig so we can assert the optional `address` is absent
+    // — the `as const` map narrows the type to a shape without that field, which
+    // trips strict tsc even though vitest would pass without the cast.
+    const usdc: TokenConfig = NETWORKS["base-sepolia"].tokens.USDC;
     expect(usdc).toBeDefined();
     expect(usdc.address).toBeUndefined();
     expect(usdc.addressEnvVar).toBe("NEXT_PUBLIC_MOCK_USDC_ADDRESS");
