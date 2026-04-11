@@ -202,9 +202,46 @@ export async function PATCH(request: Request) {
     }
   }
 
-  // If only networks were updated, skip the users table update
+  if (body.businessProfile && typeof body.businessProfile === "object") {
+    const bp = body.businessProfile;
+    await db
+      .insert(merchantProfiles)
+      .values({
+        userId: session.user.id,
+        legalName: String(bp.legalName ?? ""),
+        addressLine1: String(bp.addressLine1 ?? ""),
+        addressLine2: bp.addressLine2 ?? null,
+        city: String(bp.city ?? ""),
+        postalCode: String(bp.postalCode ?? ""),
+        country: String(bp.country ?? "").toUpperCase(),
+        taxId: bp.taxId ?? null,
+        supportEmail: String(bp.supportEmail ?? ""),
+        logoUrl: bp.logoUrl ?? null,
+        invoicePrefix: String(bp.invoicePrefix ?? "INV-"),
+        invoiceFooter: bp.invoiceFooter ?? null,
+      })
+      .onConflictDoUpdate({
+        target: merchantProfiles.userId,
+        set: {
+          legalName: String(bp.legalName ?? ""),
+          addressLine1: String(bp.addressLine1 ?? ""),
+          addressLine2: bp.addressLine2 ?? null,
+          city: String(bp.city ?? ""),
+          postalCode: String(bp.postalCode ?? ""),
+          country: String(bp.country ?? "").toUpperCase(),
+          taxId: bp.taxId ?? null,
+          supportEmail: String(bp.supportEmail ?? ""),
+          logoUrl: bp.logoUrl ?? null,
+          invoicePrefix: String(bp.invoicePrefix ?? "INV-"),
+          invoiceFooter: bp.invoiceFooter ?? null,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  // If only networks/businessProfile were updated, skip the users table update
   if (Object.keys(updates).length === 0) {
-    if (Array.isArray(body.networks)) {
+    if (Array.isArray(body.networks) || body.businessProfile) {
       return NextResponse.json({ success: true });
     }
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
