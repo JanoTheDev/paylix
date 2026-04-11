@@ -13,7 +13,9 @@ import {
   SUBSCRIPTION_MANAGER_ABI,
 } from "@/lib/contracts";
 import { CHAIN_ID } from "@/lib/chain";
+import { NETWORKS } from "@paylix/config/networks";
 import { intervalToSeconds, formatInterval } from "@/lib/billing-intervals";
+import { fromNativeUnits, formatNativeAmount } from "@/lib/amounts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -53,13 +55,17 @@ interface CheckoutSession {
 
 interface CheckoutClientProps {
   session: CheckoutSession;
+  availablePrices: Array<{
+    networkKey: string;
+    tokenSymbol: string;
+    tokenName: string;
+    displayLabel: string;
+    amount: string;
+    decimals: number;
+  }>;
 }
 
-function formatAmount(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
-
-export function CheckoutClient({ session }: CheckoutClientProps) {
+export function CheckoutClient({ session, availablePrices }: CheckoutClientProps) {
   const { open } = useAppKit();
   const { isConnected, address } = useAppKitAccount();
   const [status, setStatus] = useState<CheckoutStatus>(session.status);
@@ -168,6 +174,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
   // Payment flow state
   const [payStep, setPayStep] = useState<"idle" | "approving" | "paying" | "confirming">("idle");
   const [payError, setPayError] = useState<string | null>(null);
+  const [isPicking, setIsPicking] = useState(false);
 
   // USDC balance pre-flight. Without this, a buyer with no Base USDC gets
   // to sign two EIP-712 messages before the relayer tx reverts with an
@@ -288,8 +295,8 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
         await switchChainAsync({ chainId: CHAIN_ID });
       }
 
-      // Convert USDC amount (cents → 6 decimals)
-      const usdcAmount = BigInt(session.amount) * BigInt(10_000);
+      // session.amount is already in native token units (no conversion needed)
+      const usdcAmount = BigInt(session.amount);
 
       const isSubscription = session.type === "subscription";
       const spender = isSubscription
@@ -321,31 +328,28 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
         }
       }
 
-      // Fetch the current on-chain permit nonce and the token name (used in
-      // the EIP-712 domain separator).
-      // EIP-712 domain version: MockUSDC uses "1"; real Circle USDC on Base
-      // mainnet uses "2"; some tokens don't expose the view at all. Read it
-      // dynamically with a fallback to "1" so signatures work across all
-      // permit-compatible tokens.
-      const [nonce, tokenName, tokenVersion] = await Promise.all([
+      // Read EIP-712 domain version from the registry. We no longer call
+      // contract.version() — the registry is authoritative.
+      const activeNetwork = session.networkKey
+        ? NETWORKS[session.networkKey as keyof typeof NETWORKS]
+        : null;
+      const activeToken = activeNetwork && session.tokenSymbol
+        ? activeNetwork.tokens[session.tokenSymbol as keyof typeof activeNetwork.tokens]
+        : null;
+      if (!activeNetwork || !activeToken) {
+        throw new Error("Session has no locked currency");
+      }
+      const tokenVersion = activeToken.eip712Version;
+      const tokenName = activeToken.name;
+
+      // Fetch the current on-chain permit nonce
+      const [nonce] = await Promise.all([
         publicClient.readContract({
           address: CONTRACTS.usdc,
           abi: ERC20_PERMIT_ABI,
           functionName: "nonces",
           args: [address as `0x${string}`],
         }),
-        publicClient.readContract({
-          address: CONTRACTS.usdc,
-          abi: ERC20_PERMIT_ABI,
-          functionName: "name",
-        }),
-        publicClient
-          .readContract({
-            address: CONTRACTS.usdc,
-            abi: ERC20_PERMIT_ABI,
-            functionName: "version",
-          })
-          .catch(() => "1" as string),
       ]);
 
       setPayStep("approving"); // reuse "approving" step for the signing prompt
@@ -491,6 +495,8 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
           r,
           s,
           intentSignature,
+          networkKey: session.networkKey,
+          tokenSymbol: session.tokenSymbol,
         }),
       });
 
@@ -516,18 +522,107 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
     }
   };
 
-  const displayAmount = formatAmount(Number(session.amount));
-
-  // USDC uses 6 decimals. session.amount is in cents (1000 = $10.00), so
-  // the on-chain required amount is cents × 10_000 — same math as inside
-  // handlePay. Kept as a derived value so the balance gate below and the
-  // handlePay call stay in sync.
-  const requiredUsdcAmount = BigInt(session.amount) * BigInt(10_000);
+  // session.amount is now native token units directly (bigint). Convert to
+  // human-readable for display, and keep the native value for the balance
+  // gate + payment call.
+  const requiredTokenAmount = BigInt(session.amount);
+  const tokenDecimals = (() => {
+    if (!session.networkKey || !session.tokenSymbol) return 6;
+    const network = NETWORKS[session.networkKey as keyof typeof NETWORKS];
+    if (!network) return 6;
+    const token = network.tokens[session.tokenSymbol as keyof typeof network.tokens];
+    return token?.decimals ?? 6;
+  })();
+  const displayAmount = fromNativeUnits(requiredTokenAmount, tokenDecimals);
   const hasInsufficientBalance =
     isConnected &&
     !balanceLoading &&
     usdcBalance !== null &&
-    usdcBalance < requiredUsdcAmount;
+    usdcBalance < requiredTokenAmount;
+
+  async function handlePickCurrency(
+    networkKey: string,
+    tokenSymbol: string,
+  ) {
+    setIsPicking(true);
+    setPayError(null);
+    try {
+      const res = await fetch(`/api/checkout/${session.id}/pick-currency`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ networkKey, tokenSymbol }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setPayError(
+          typeof body.error === "string"
+            ? body.error
+            : body.error?.message ?? "Failed to pick currency",
+        );
+        return;
+      }
+      // Server returns updated session — refresh the page to pick up the new state
+      window.location.reload();
+    } finally {
+      setIsPicking(false);
+    }
+  }
+
+  if (status === "awaiting_currency") {
+    return (
+      <Card className="w-full max-w-[480px] p-8 shadow-2xl">
+        {/* Product Info */}
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold tracking-[-0.4px]">
+            {session.productName}
+          </h1>
+          {session.productDescription && (
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {session.productDescription}
+            </p>
+          )}
+        </div>
+
+        <h3 className="mb-3 text-sm font-medium">Choose how to pay</h3>
+        <div className="flex flex-col gap-2">
+          {availablePrices.map((p) => (
+            <button
+              key={`${p.networkKey}:${p.tokenSymbol}`}
+              onClick={() => handlePickCurrency(p.networkKey, p.tokenSymbol)}
+              disabled={isPicking}
+              className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3 text-sm transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
+            >
+              <span className="font-medium">
+                {p.tokenSymbol} on {p.displayLabel}
+              </span>
+              <MonoText className="tabular-nums">
+                {formatNativeAmount(BigInt(p.amount), p.decimals, p.tokenSymbol)}
+              </MonoText>
+            </button>
+          ))}
+          {availablePrices.length === 0 && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                This product has no active prices. Contact the merchant.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        {payError && (
+          <Alert variant="destructive" className="mt-3">
+            <AlertDescription className="text-xs">{payError}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="mt-8 text-center">
+          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+            Powered by Paylix
+          </span>
+        </div>
+      </Card>
+    );
+  }
 
   if (status === "completed") {
     const isSubscription = session.type === "subscription";
@@ -745,11 +840,11 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
               buyer can see exactly where they stand before they sign. */}
           {isConnected && (
             <div className="mb-3 flex items-center justify-between rounded-lg border border-border bg-background px-3.5 py-2.5 text-[13px]">
-              <span className="text-muted-foreground">USDC on Base</span>
+              <span className="text-muted-foreground">{session.tokenSymbol ?? "USDC"} on {session.networkKey ?? "Base"}</span>
               <MonoText className="tabular-nums text-foreground">
                 {balanceLoading || usdcBalance === null
                   ? "—"
-                  : `$${(Number(usdcBalance) / 1_000_000).toFixed(2)}`}
+                  : fromNativeUnits(usdcBalance, tokenDecimals)}
               </MonoText>
             </div>
           )}

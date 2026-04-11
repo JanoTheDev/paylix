@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
-import { checkoutSessions, products } from "@paylix/db/schema";
+import { eq, and } from "drizzle-orm";
+import { checkoutSessions, products, productPrices } from "@paylix/db/schema";
 import { db } from "@/lib/db";
+import { NETWORKS } from "@paylix/config/networks";
 import { CheckoutProviders } from "@/components/providers";
 import { CheckoutClient } from "./checkout-client";
 
@@ -79,9 +80,49 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
     );
   }
 
+  let availablePrices: Array<{
+    networkKey: string;
+    tokenSymbol: string;
+    tokenName: string;
+    displayLabel: string;
+    amount: string;
+    decimals: number;
+  }> = [];
+
+  if (session.status === "awaiting_currency") {
+    const priceRows = await db
+      .select()
+      .from(productPrices)
+      .where(
+        and(
+          eq(productPrices.productId, session.productId),
+          eq(productPrices.isActive, true),
+        ),
+      );
+
+    availablePrices = priceRows
+      .map((p) => {
+        const network = NETWORKS[p.networkKey as keyof typeof NETWORKS];
+        if (!network) return null;
+        const token = network.tokens[p.tokenSymbol as keyof typeof network.tokens];
+        if (!token) return null;
+        return {
+          networkKey: p.networkKey,
+          tokenSymbol: p.tokenSymbol,
+          tokenName: token.name,
+          displayLabel: network.displayLabel,
+          amount: p.amount.toString(),
+          decimals: token.decimals,
+        };
+      })
+      .filter(
+        (p): p is NonNullable<typeof p> => p !== null,
+      );
+  }
+
   return (
     <CheckoutProviders>
-      <CheckoutClient session={session} />
+      <CheckoutClient session={session} availablePrices={availablePrices} />
     </CheckoutProviders>
   );
 }
