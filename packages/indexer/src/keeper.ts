@@ -1,6 +1,5 @@
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, baseSepolia } from "viem/chains";
 import { createDb } from "@paylix/db/client";
 import { subscriptions } from "@paylix/db/schema";
 import { eq, lte, and } from "drizzle-orm";
@@ -17,7 +16,7 @@ const chargeSubscriptionAbi = [{
 }] as const;
 
 function getChain() {
-  return config.network === "base" ? base : baseSepolia;
+  return config.chain;
 }
 
 export async function runKeeper() {

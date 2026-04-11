@@ -5,7 +5,6 @@ import {
   type Log,
   type PublicClient,
 } from "viem";
-import { base, baseSepolia } from "viem/chains";
 import { config } from "./config";
 import { getLastBlock, setLastBlock } from "./cursor";
 import {
@@ -82,7 +81,7 @@ const subscriptionCancelledEvent = parseAbiItem(
 );
 
 function getChain() {
-  return config.network === "base" ? base : baseSepolia;
+  return config.chain;
 }
 
 function isRateLimitError(err: unknown): boolean {

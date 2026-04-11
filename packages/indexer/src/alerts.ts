@@ -2,7 +2,6 @@ import { createDb } from "@paylix/db/client";
 import { systemStatus } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { createPublicClient, http, formatEther } from "viem";
-import { base, baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config";
 import { dispatchSystemWebhook } from "./webhook-dispatch";
@@ -22,7 +21,7 @@ const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 type AlertKey = "relayer_balance_low_fired" | "keeper_balance_low_fired";
 
 function getChain() {
-  return config.network === "base" ? base : baseSepolia;
+  return config.chain;
 }
 
 function getRelayerAddress(): `0x${string}` | null {

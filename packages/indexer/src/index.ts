@@ -10,7 +10,7 @@ import { startAlertsLoop } from "./alerts";
 async function main() {
   console.log("=================================");
   console.log("  Paylix Indexer + Keeper");
-  console.log(`  Network: ${config.network}`);
+  console.log(`  Network: ${config.networkKey}`);
   console.log("=================================");
 
   // Heartbeat must start BEFORE the listener — startListener() blocks on a

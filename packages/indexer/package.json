@@ -9,13 +9,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@paylix/config": "workspace:*",
     "@paylix/db": "workspace:*",
     "drizzle-orm": "^0.38",
     "postgres": "^3.4",
     "viem": "^2"
   },
   "devDependencies": {
-    "@paylix/config": "workspace:*",
     "@types/node": "25.5.2",
     "tsx": "^4",
     "typescript": "^5.5",
