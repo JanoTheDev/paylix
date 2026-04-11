@@ -2,9 +2,20 @@
   "name": "@paylix/config",
   "private": true,
   "version": "0.0.0",
+  "type": "module",
   "exports": {
     "./tsconfig.base.json": "./tsconfig.base.json",
     "./tsconfig.node.json": "./tsconfig.node.json",
-    "./tsconfig.nextjs.json": "./tsconfig.nextjs.json"
+    "./tsconfig.nextjs.json": "./tsconfig.nextjs.json",
+    "./networks": "./src/networks.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.4"
+  },
+  "dependencies": {
+    "viem": "^2"
   }
 }
