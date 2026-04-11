@@ -9,7 +9,7 @@ import {
   index,
   pgEnum,
 } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 import { payments } from "./payments";
 import { customers } from "./customers";
 
@@ -24,9 +24,9 @@ export const invoices = pgTable(
   "invoices",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    merchantId: text("merchant_id")
+    organizationId: text("organization_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => organization.id, { onDelete: "cascade" }),
     paymentId: uuid("payment_id")
       .notNull()
       .references(() => payments.id, { onDelete: "cascade" }),
@@ -81,11 +81,11 @@ export const invoices = pgTable(
   (table) => [
     uniqueIndex("invoices_payment_idx").on(table.paymentId),
     uniqueIndex("invoices_hosted_token_idx").on(table.hostedToken),
-    uniqueIndex("invoices_merchant_number_idx").on(
-      table.merchantId,
+    uniqueIndex("invoices_org_number_idx").on(
+      table.organizationId,
       table.number,
     ),
-    index("invoices_merchant_issued_idx").on(table.merchantId, table.issuedAt),
+    index("invoices_org_issued_idx").on(table.organizationId, table.issuedAt),
     index("invoices_customer_issued_idx").on(table.customerId, table.issuedAt),
   ],
 );
