@@ -234,10 +234,19 @@ export default function SettingsPage() {
       <PageHeader title="Settings" />
 
       <FormSection
-        title="Wallet"
-        description="USDC payments will be sent to this address on Base."
+        title="Default Payout Wallet"
+        description="The address that receives USDC payouts by default. You can override this per network in the Networks section below."
       >
-        <FormRow label="Payout Wallet Address" htmlFor="wallet-address">
+        <div className="flex items-center gap-2 pb-2">
+          <Badge variant={isMainnet ? "success" : "info"}>
+            {isMainnet ? "Mainnet" : "Testnet"}
+          </Badge>
+          <span className="text-xs text-foreground-muted">
+            Your account is operating on{" "}
+            {isMainnet ? "Base (Mainnet)" : "Base Sepolia (Testnet)"}
+          </span>
+        </div>
+        <FormRow label="Wallet address" htmlFor="wallet-address">
           <Input
             id="wallet-address"
             type="text"
@@ -263,76 +272,8 @@ export default function SettingsPage() {
       </FormSection>
 
       <FormSection
-        title="Network"
-        description="Configured via the NEXT_PUBLIC_NETWORK environment variable."
-      >
-        <div className="flex items-center gap-3">
-          <Badge variant={isMainnet ? "success" : "info"}>
-            {isMainnet ? "Mainnet" : "Testnet"}
-          </Badge>
-          <span className="text-sm">
-            {isMainnet ? "Base (Mainnet)" : "Base Sepolia (Testnet)"}
-          </span>
-        </div>
-      </FormSection>
-
-      <FormSection title="Profile">
-        <FormRow label="Name" htmlFor="profile-name">
-          <Input
-            id="profile-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Your name"
-          />
-        </FormRow>
-        <FormRow label="Email">
-          <div className="text-sm text-foreground-muted">{user.email}</div>
-        </FormRow>
-        {profileError && (
-          <Alert variant="destructive">
-            <AlertDescription>{profileError}</AlertDescription>
-          </Alert>
-        )}
-        <FormActions>
-          {profileSuccess && (
-            <span className="text-sm font-medium text-success">Saved</span>
-          )}
-          <Button onClick={saveProfile} disabled={profileSaving}>
-            {profileSaving ? "Saving…" : "Save"}
-          </Button>
-        </FormActions>
-      </FormSection>
-
-      <FormSection
-        title="Default Checkout Fields"
-        description="These fields will be enabled by default on new products."
-      >
-        <div className="flex flex-col gap-3">
-          {CHECKOUT_FIELDS.map(({ key, label }) => (
-            <div key={key} className="flex items-center justify-between">
-              <span className="text-sm">{label}</span>
-              <Switch
-                checked={checkoutDefaults[key]}
-                onCheckedChange={(val) =>
-                  setCheckoutDefaults((prev) => ({ ...prev, [key]: val }))
-                }
-              />
-            </div>
-          ))}
-        </div>
-        <FormActions>
-          {defaultsSuccess && (
-            <span className="text-sm font-medium text-success">Saved</span>
-          )}
-          <Button onClick={saveCheckoutDefaults} disabled={defaultsSaving}>
-            {defaultsSaving ? "Saving…" : "Save"}
-          </Button>
-        </FormActions>
-      </FormSection>
-
-      <FormSection
         title="Networks"
-        description="Choose which networks your account can accept payments on. Disabled networks cannot be selected when creating products."
+        description="Enable the networks you want to accept payments on. Each can use your default wallet or its own override address."
       >
         <div className="flex flex-col gap-3">
           {networks.map((n) => (
@@ -401,6 +342,60 @@ export default function SettingsPage() {
           )}
           <Button onClick={saveNetworks} disabled={networksSaving}>
             {networksSaving ? "Saving…" : "Save"}
+          </Button>
+        </FormActions>
+      </FormSection>
+
+      <FormSection title="Profile">
+        <FormRow label="Name" htmlFor="profile-name">
+          <Input
+            id="profile-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your name"
+          />
+        </FormRow>
+        <FormRow label="Email">
+          <div className="text-sm text-foreground-muted">{user.email}</div>
+        </FormRow>
+        {profileError && (
+          <Alert variant="destructive">
+            <AlertDescription>{profileError}</AlertDescription>
+          </Alert>
+        )}
+        <FormActions>
+          {profileSuccess && (
+            <span className="text-sm font-medium text-success">Saved</span>
+          )}
+          <Button onClick={saveProfile} disabled={profileSaving}>
+            {profileSaving ? "Saving…" : "Save"}
+          </Button>
+        </FormActions>
+      </FormSection>
+
+      <FormSection
+        title="Default Checkout Fields"
+        description="These fields will be enabled by default on new products."
+      >
+        <div className="flex flex-col gap-3">
+          {CHECKOUT_FIELDS.map(({ key, label }) => (
+            <div key={key} className="flex items-center justify-between">
+              <span className="text-sm">{label}</span>
+              <Switch
+                checked={checkoutDefaults[key]}
+                onCheckedChange={(val) =>
+                  setCheckoutDefaults((prev) => ({ ...prev, [key]: val }))
+                }
+              />
+            </div>
+          ))}
+        </div>
+        <FormActions>
+          {defaultsSuccess && (
+            <span className="text-sm font-medium text-success">Saved</span>
+          )}
+          <Button onClick={saveCheckoutDefaults} disabled={defaultsSaving}>
+            {defaultsSaving ? "Saving…" : "Save"}
           </Button>
         </FormActions>
       </FormSection>
