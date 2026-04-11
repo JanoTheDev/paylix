@@ -234,8 +234,8 @@ export default function SettingsPage() {
       <PageHeader title="Settings" />
 
       <FormSection
-        title="Default Payout Wallet"
-        description="The address that receives USDC payouts by default. You can override this per network in the Networks section below."
+        title="Your Payout Wallet"
+        description="Every successful checkout deposits USDC straight into this wallet. Paste the 0x address of a wallet you control — MetaMask, Coinbase Wallet, or a Safe multisig all work. You can override per-network below if you want different wallets for different chains."
       >
         <div className="flex items-center gap-2 pb-2">
           <Badge variant={isMainnet ? "success" : "info"}>
@@ -256,6 +256,11 @@ export default function SettingsPage() {
             className="font-mono"
           />
         </FormRow>
+        <p className="text-[11px] leading-relaxed text-foreground-muted">
+          Don&apos;t know your address? Open MetaMask (or Coinbase Wallet),
+          click the account name at the top, and copy the 0x… string. This is
+          a public address — safe to paste here, no private key involved.
+        </p>
         {walletError && (
           <Alert variant="destructive">
             <AlertDescription>{walletError}</AlertDescription>
@@ -273,7 +278,7 @@ export default function SettingsPage() {
 
       <FormSection
         title="Networks"
-        description="Enable the networks you want to accept payments on. Each can use your default wallet or its own override address."
+        description="Pick which blockchains you'll accept payments on. Enable only the ones your customers actually use. Each enabled network defaults to your payout wallet above — flip to 'Override' if you want payments on that chain to go to a different wallet (e.g. a separate Safe)."
       >
         <div className="flex flex-col gap-3">
           {networks.map((n) => (

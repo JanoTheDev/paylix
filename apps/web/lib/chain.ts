@@ -8,7 +8,6 @@
 
 import {
   getActiveNetwork,
-  resolveTokenAddress,
   type NetworkConfig,
   type NetworkKey,
 } from "@paylix/config/networks";
@@ -26,4 +25,19 @@ export const IS_MAINNET: boolean = network.environment === "mainnet";
 // sure it still has a "USDC" entry (or update the readers to pick another
 // token — but for the current refactor USDC is the load-bearing default).
 export const USDC_TOKEN = network.tokens.USDC;
-export const USDC_ADDRESS: `0x${string}` = resolveTokenAddress(USDC_TOKEN);
+
+// We DON'T use resolveTokenAddress() here even though it exists in the
+// registry. Reason: Next.js only statically inlines direct literal
+// `process.env.NEXT_PUBLIC_X` references in client bundles — dynamic
+// `process.env[variableName]` lookups (which is what resolveTokenAddress
+// does) get replaced with `undefined` at build time, so any client-side
+// caller crashes with "not set or zero address" at runtime.
+//
+// Instead, resolve here with explicit env var references that Next can
+// inline: canonical address if the token has one (mainnet USDC), otherwise
+// a hardcoded fallthrough to NEXT_PUBLIC_MOCK_USDC_ADDRESS (testnet).
+// When adding a new testnet network with its own MockUSDC env var, add a
+// branch here.
+export const USDC_ADDRESS: `0x${string}` = (USDC_TOKEN.address ??
+  process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS ??
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
