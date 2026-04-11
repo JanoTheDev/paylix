@@ -1,0 +1,58 @@
+name: Slither
+
+# Static analysis gate for Paylix smart contracts. Runs on every PR that
+# touches contract source. Fails the build if slither finds a new
+# medium-or-higher issue (low/informational/optimization are filtered out
+# in slither.config.json).
+#
+# False positives must be silenced inline with `// slither-disable-next-line
+# <detector>` and a comment explaining WHY it is safe — never blanket-ignored.
+
+on:
+  pull_request:
+    paths:
+      - "packages/contracts/src/**"
+      - "packages/contracts/foundry.toml"
+      - "packages/contracts/slither.config.json"
+      - ".github/workflows/slither.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "packages/contracts/src/**"
+      - "packages/contracts/foundry.toml"
+      - "packages/contracts/slither.config.json"
+      - ".github/workflows/slither.yml"
+
+jobs:
+  slither:
+    name: Run Slither on Paylix contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        id: slither
+        with:
+          target: packages/contracts/
+          slither-config: packages/contracts/slither.config.json
+          fail-on: medium
+          sarif: results.sarif
+
+      - name: Upload SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
