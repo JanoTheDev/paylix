@@ -97,7 +97,10 @@ export async function PATCH(
     .returning();
 
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(updated);
+  return NextResponse.json({
+    ...updated,
+    amount: updated.amount?.toString() ?? null,
+  });
 }
 
 // Allow POST as an alias for PATCH (needed for navigator.sendBeacon)
