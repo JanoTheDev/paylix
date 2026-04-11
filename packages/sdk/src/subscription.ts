@@ -35,7 +35,12 @@ export async function createSubscription(
     throw new Error(`Paylix subscription failed: ${error.error || response.statusText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  return {
+    checkoutUrl: data.checkoutUrl,
+    checkoutId: data.checkoutId,
+    trialEndsAt: typeof data.trialEndsAt === "string" ? data.trialEndsAt : null,
+  };
 }
 
 export async function cancelSubscription(

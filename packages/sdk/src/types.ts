@@ -1,3 +1,11 @@
+export type SubscriptionStatus =
+  | "active"
+  | "past_due"
+  | "cancelled"
+  | "expired"
+  | "trialing"
+  | "trial_conversion_failed";
+
 export interface PaylixConfig {
   apiKey: string;
   network: "base" | "base-sepolia";
@@ -58,6 +66,8 @@ export interface CreateSubscriptionParams {
 export interface CreateSubscriptionResult {
   checkoutUrl: string;
   checkoutId: string;
+  /** ISO-8601 timestamp if the underlying product has a trial period. */
+  trialEndsAt: string | null;
 }
 
 export interface CancelSubscriptionParams {
@@ -143,9 +153,10 @@ export interface CustomerPortalResult {
   }>;
   subscriptions: Array<{
     id: string;
-    status: string;
+    status: SubscriptionStatus;
     productName: string;
     nextChargeDate: string | null;
+    trialEndsAt: string | null;
     createdAt: string;
   }>;
 }
