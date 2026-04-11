@@ -7,7 +7,6 @@ import { CheckCircle2, Clock } from "lucide-react";
 import { keccak256, stringToBytes } from "viem";
 import {
   CONTRACTS,
-  ERC20_ABI,
   ERC20_PERMIT_ABI,
   PAYMENT_VAULT_ABI,
   SUBSCRIPTION_MANAGER_ABI,
@@ -176,14 +175,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
   const [payError, setPayError] = useState<string | null>(null);
   const [isPicking, setIsPicking] = useState(false);
 
-  // USDC balance pre-flight. Without this, a buyer with no Base USDC gets
-  // to sign two EIP-712 messages before the relayer tx reverts with an
-  // opaque ERC20 insufficient-balance error — terrible UX. We read their
-  // balance once the wallet connects and gate the pay button on it.
-  const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
-  const [balanceLoading, setBalanceLoading] = useState(false);
-  const [balanceRefreshTick, setBalanceRefreshTick] = useState(0);
-
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { signTypedDataAsync } = useSignTypedData();
@@ -197,36 +188,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
     hash: txHash ?? undefined,
     chainId: CHAIN_ID,
   });
-
-  // Read the buyer's USDC balance whenever wallet or chain changes, or when
-  // the user clicks the "I just sent some, re-check" button below.
-  useEffect(() => {
-    if (!isConnected || !address || !publicClient) {
-      setUsdcBalance(null);
-      return;
-    }
-    let cancelled = false;
-    setBalanceLoading(true);
-    publicClient
-      .readContract({
-        address: CONTRACTS.usdc,
-        abi: ERC20_ABI,
-        functionName: "balanceOf",
-        args: [address as `0x${string}`],
-      })
-      .then((raw) => {
-        if (!cancelled) setUsdcBalance(raw as bigint);
-      })
-      .catch(() => {
-        if (!cancelled) setUsdcBalance(null);
-      })
-      .finally(() => {
-        if (!cancelled) setBalanceLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, address, publicClient, balanceRefreshTick]);
 
   // Start polling when tx confirmed
   useEffect(() => {
@@ -523,8 +484,7 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
   };
 
   // session.amount is now native token units directly (bigint). Convert to
-  // human-readable for display, and keep the native value for the balance
-  // gate + payment call.
+  // human-readable for display and payment call.
   const requiredTokenAmount = BigInt(session.amount);
   const tokenDecimals = (() => {
     if (!session.networkKey || !session.tokenSymbol) return 6;
@@ -534,11 +494,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
     return token?.decimals ?? 6;
   })();
   const displayAmount = fromNativeUnits(requiredTokenAmount, tokenDecimals);
-  const hasInsufficientBalance =
-    isConnected &&
-    !balanceLoading &&
-    usdcBalance !== null &&
-    usdcBalance < requiredTokenAmount;
 
   async function handlePickCurrency(
     networkKey: string,
@@ -836,70 +791,53 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
             </button>
           </div>
 
-          {/* USDC balance line. Renders while the wallet is connected so the
-              buyer can see exactly where they stand before they sign. */}
-          {isConnected && (
-            <div className="mb-3 flex items-center justify-between rounded-lg border border-border bg-background px-3.5 py-2.5 text-[13px]">
-              <span className="text-muted-foreground">{session.tokenSymbol ?? "USDC"} on {session.networkKey ?? "Base"}</span>
-              <MonoText className="tabular-nums text-foreground">
-                {balanceLoading || usdcBalance === null
-                  ? "—"
-                  : fromNativeUnits(usdcBalance, tokenDecimals)}
-              </MonoText>
+          {/* Currency switcher — only shown when the product accepts more
+              than one (network, token) pair. Lets the buyer change their
+              mind before signing. pick-currency endpoint accepts active
+              sessions, so the swap just re-locks the session to a new row. */}
+          {availablePrices.length > 1 && (
+            <div className="mb-3">
+              <div className="mb-2 text-xs text-muted-foreground">Pay with</div>
+              <div className="flex flex-col gap-1.5">
+                {availablePrices.map((p) => {
+                  const selected =
+                    p.networkKey === session.networkKey &&
+                    p.tokenSymbol === session.tokenSymbol;
+                  return (
+                    <button
+                      key={`${p.networkKey}:${p.tokenSymbol}`}
+                      onClick={() =>
+                        !selected &&
+                        handlePickCurrency(p.networkKey, p.tokenSymbol)
+                      }
+                      disabled={isPicking || selected}
+                      className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors ${
+                        selected
+                          ? "border-primary/50 bg-primary/5"
+                          : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                      }`}
+                    >
+                      <span className="font-medium text-foreground">
+                        {p.tokenSymbol} on {p.displayLabel}
+                      </span>
+                      <MonoText className="tabular-nums text-muted-foreground">
+                        {formatNativeAmount(
+                          BigInt(p.amount),
+                          p.decimals,
+                          p.tokenSymbol,
+                        )}
+                      </MonoText>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {hasInsufficientBalance ? (
-            <div className="rounded-lg border border-[color:var(--warning)]/30 bg-[color:var(--warning)]/5 p-4">
-              <div className="mb-2 text-sm font-medium text-foreground">
-                You need ${displayAmount} USDC on Base
-              </div>
-              <div className="mb-3 text-xs text-muted-foreground">
-                You don&apos;t have enough USDC on the Base network yet. Pick
-                one of the options below, then come back and click{" "}
-                <span className="font-medium text-foreground">Re-check balance</span>.
-              </div>
-              <div className="flex flex-col gap-2">
-                <a
-                  href={`https://relay.link/bridge/base?toCurrency=${CONTRACTS.usdc}&toChainId=${CHAIN_ID}&amount=${displayAmount}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2.5 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-                >
-                  <span className="font-medium text-foreground">
-                    Bridge USDC from another chain
-                  </span>
-                  <span className="text-muted-foreground">
-                    Relay ↗
-                  </span>
-                </a>
-                <a
-                  href={`https://pay.coinbase.com/buy/select-asset?appId=9fe7f5c1-1c74-4e79-a55b-3cfee6b2f98f&addresses={"${address}":["base"]}&assets=["USDC"]&presetCryptoAmount=${displayAmount}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2.5 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-                >
-                  <span className="font-medium text-foreground">
-                    Buy USDC with card
-                  </span>
-                  <span className="text-muted-foreground">
-                    Coinbase Onramp ↗
-                  </span>
-                </a>
-                <button
-                  onClick={() => setBalanceRefreshTick((t) => t + 1)}
-                  disabled={balanceLoading}
-                  className="mt-1 rounded-md border border-border bg-background px-3 py-2.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50"
-                >
-                  {balanceLoading ? "Checking…" : "Re-check balance"}
-                </button>
-              </div>
-            </div>
-          ) : (
           <Button
             size="xl"
             onClick={handlePay}
-            disabled={!indexerOnline || payStep !== "idle" || balanceLoading}
+            disabled={!indexerOnline || payStep !== "idle" || isPicking}
           >
             {payStep === "idle" &&
               (session.type === "subscription"
@@ -913,7 +851,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
             {payStep === "paying" && "Confirm payment..."}
             {payStep === "confirming" && "Processing..."}
           </Button>
-          )}
           {payStep !== "idle" && (
             <Alert className="mt-3 border-primary/30 bg-primary/5">
               <AlertDescription className="text-xs">
@@ -936,8 +873,12 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
       )}
 
       <p className="mt-4 text-center text-xs text-muted-foreground">
-        Connect a wallet with {session.tokenSymbol ?? "USDC"} on Base Sepolia to pay
-        securely through our payment contract.
+        Connect a wallet with {session.tokenSymbol ?? "USDC"} on{" "}
+        {session.networkKey &&
+        NETWORKS[session.networkKey as keyof typeof NETWORKS]
+          ? NETWORKS[session.networkKey as keyof typeof NETWORKS].chainName
+          : "the active network"}{" "}
+        to pay securely through our payment contract.
       </p>
 
       {(isPolling || status === "viewed") && (

@@ -69,12 +69,15 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
-  if (session.status !== "awaiting_currency") {
+  // Allow picking from awaiting_currency (first-time selection) AND active
+  // (buyer changing their mind before signing). Once the session reaches
+  // completed/expired/abandoned the currency is locked for good.
+  if (session.status !== "awaiting_currency" && session.status !== "active") {
     return NextResponse.json(
       {
         error: {
-          code: "session_not_awaiting_currency",
-          message: `Session is in state '${session.status}', cannot pick currency`,
+          code: "session_currency_locked",
+          message: `Session is in state '${session.status}', currency can no longer be changed`,
         },
       },
       { status: 409 },
