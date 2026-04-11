@@ -17,6 +17,7 @@ import {
   BusinessProfileSection,
   type BusinessProfile,
 } from "@/components/settings/business-profile-section";
+import { TeamQuickInvite } from "@/components/settings/team-quick-invite";
 
 interface UserSettings {
   id: string;
@@ -357,6 +358,13 @@ export default function SettingsPage() {
             {networksSaving ? "Saving…" : "Save"}
           </Button>
         </FormActions>
+      </FormSection>
+
+      <FormSection
+        title="Team"
+        description="Invite teammates and manage members."
+      >
+        <TeamQuickInvite />
       </FormSection>
 
       {profile && <BusinessProfileSection initial={profile} />}
