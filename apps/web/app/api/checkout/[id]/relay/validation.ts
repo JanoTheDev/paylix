@@ -3,6 +3,13 @@
  * are unit-testable without mocking Next.js request/response.
  */
 
+import {
+  NETWORKS,
+  assertValidNetworkKey,
+  assertValidTokenSymbol,
+  type NetworkKey,
+} from "@paylix/config/networks";
+
 export interface RelayRequestBody {
   buyer?: unknown;
   deadline?: unknown;
@@ -11,6 +18,8 @@ export interface RelayRequestBody {
   s?: unknown;
   permitValue?: unknown;
   intentSignature?: unknown;
+  networkKey?: unknown;
+  tokenSymbol?: unknown;
 }
 
 export interface ValidatedRelayInput {
@@ -21,6 +30,8 @@ export interface ValidatedRelayInput {
   s: `0x${string}`;
   permitValue: bigint;
   intentSignature: `0x${string}`;
+  networkKey: string;
+  tokenSymbol: string;
 }
 
 export type ValidationError =
@@ -50,7 +61,7 @@ export function normalizePermitV(v: number): number {
 export function parseRelayBody(
   body: RelayRequestBody,
 ): { ok: true; value: ValidatedRelayInput } | { ok: false; error: ValidationError } {
-  const { buyer, deadline, v, r, s, permitValue, intentSignature } = body;
+  const { buyer, deadline, v, r, s, permitValue, intentSignature, networkKey, tokenSymbol } = body;
 
   if (typeof buyer !== "string" || !HEX_ADDRESS_RE.test(buyer)) {
     return { ok: false, error: { code: "invalid_body", message: "buyer must be a 0x-prefixed 20-byte hex address" } };
@@ -96,6 +107,45 @@ export function parseRelayBody(
     return { ok: false, error: { code: "invalid_body", message: "permitValue must be positive" } };
   }
 
+  // Validate networkKey against the registry
+  if (typeof networkKey !== "string") {
+    return {
+      ok: false,
+      error: { code: "invalid_body", message: "networkKey must be a string" },
+    };
+  }
+  try {
+    assertValidNetworkKey(networkKey);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_body",
+        message: err instanceof Error ? err.message : "Unknown networkKey",
+      },
+    };
+  }
+
+  // Validate tokenSymbol against the registry for the given network
+  if (typeof tokenSymbol !== "string") {
+    return {
+      ok: false,
+      error: { code: "invalid_body", message: "tokenSymbol must be a string" },
+    };
+  }
+  try {
+    const network = NETWORKS[networkKey as NetworkKey];
+    assertValidTokenSymbol(network, tokenSymbol);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_body",
+        message: err instanceof Error ? err.message : "Unknown tokenSymbol",
+      },
+    };
+  }
+
   return {
     ok: true,
     value: {
@@ -106,6 +156,8 @@ export function parseRelayBody(
       s: s as `0x${string}`,
       permitValue: permitValueBig,
       intentSignature: intentSignature as `0x${string}`,
+      networkKey: networkKey,
+      tokenSymbol: tokenSymbol,
     },
   };
 }

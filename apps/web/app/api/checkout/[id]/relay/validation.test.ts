@@ -15,6 +15,8 @@ const validBody = {
   permitValue: "10000000000",
   // 65-byte signature: r (32) || s (32) || v (1)
   intentSignature: "0x" + "3".repeat(128) + "1b",
+  networkKey: "base-sepolia",
+  tokenSymbol: "USDC",
 };
 
 describe("parseRelayBody", () => {
@@ -90,6 +92,28 @@ describe("parseRelayBody", () => {
       ...validBody,
       intentSignature: "not a hex string of any length really",
     });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects missing networkKey", () => {
+    const { networkKey: _, ...rest } = validBody;
+    const result = parseRelayBody(rest);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects missing tokenSymbol", () => {
+    const { tokenSymbol: _, ...rest } = validBody;
+    const result = parseRelayBody(rest);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects unknown networkKey", () => {
+    const result = parseRelayBody({ ...validBody, networkKey: "polygon" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects unknown tokenSymbol", () => {
+    const result = parseRelayBody({ ...validBody, tokenSymbol: "DOGE" });
     expect(result.ok).toBe(false);
   });
 });
