@@ -11,7 +11,7 @@ describe("requireActiveOrg", () => {
       requireActiveOrg({
         user: { id: "u1" },
         session: { id: "s1", userId: "u1", activeOrganizationId: null },
-      } as any),
+      } as Parameters<typeof requireActiveOrg>[0]),
     ).toThrow(/active team/i);
   });
 
@@ -24,7 +24,7 @@ describe("requireActiveOrg", () => {
           userId: "u1",
           activeOrganizationId: "org_123",
         },
-      } as any),
+      } as Parameters<typeof requireActiveOrg>[0]),
     ).toBe("org_123");
   });
 });
