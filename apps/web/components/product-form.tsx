@@ -55,6 +55,16 @@ const schema = z
       ])
       .optional()
       .or(z.literal("")),
+    trialDays: z
+      .union([
+        z
+          .number()
+          .int()
+          .min(0, "Trial days must be 0 or greater")
+          .max(365, "Trial days cannot exceed 365"),
+        z.null(),
+      ])
+      .optional(),
     taxRateBps: z
       .union([
         z
@@ -93,6 +103,7 @@ export type ProductFormData = {
     | "quarterly"
     | "yearly"
     | "";
+  trialDays?: number | null;
   metadata: Record<string, string>;
   checkoutFields: {
     firstName: boolean;
@@ -126,6 +137,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
       description: initialData?.description ?? "",
       type: initialData?.type ?? "one_time",
       billingInterval: initialData?.billingInterval ?? "",
+      trialDays: initialData?.trialDays ?? null,
       taxRateBps: initialData?.taxRateBps ?? null,
       taxLabel: initialData?.taxLabel ?? null,
       reverseChargeEligible: initialData?.reverseChargeEligible ?? false,
@@ -137,6 +149,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
   useEffect(() => {
     if (type !== "subscription") {
       form.setValue("billingInterval", "");
+      form.setValue("trialDays", null);
     }
   }, [type, form]);
 
@@ -326,6 +339,10 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
     if (values.type === "subscription" && values.billingInterval) {
       payload.billingInterval = values.billingInterval;
     }
+    payload.trialDays =
+      values.type === "subscription" && values.trialDays
+        ? values.trialDays
+        : null;
 
     try {
       const url =
@@ -443,6 +460,38 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {type === "subscription" && (
+              <FormField
+                control={form.control}
+                name="trialDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Trial period (days)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={365}
+                        step={1}
+                        placeholder="0"
+                        className="font-mono"
+                        value={field.value ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          field.onChange(v === "" ? null : Number(v));
+                        }}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-foreground-muted">
+                      Customers start the trial without being charged. First
+                      charge happens automatically when the trial ends.
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}
