@@ -1,5 +1,5 @@
 import { pgTable, uuid, text, integer, timestamp, bigint, pgEnum, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 import { products } from "./products";
 import { customers } from "./customers";
 
@@ -10,7 +10,7 @@ export const payments = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     productId: uuid("product_id").notNull().references(() => products.id),
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
     customerId: uuid("customer_id").notNull().references(() => customers.id),
     amount: integer("amount").notNull(),
     fee: integer("fee").notNull().default(0),
