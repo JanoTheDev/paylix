@@ -1,9 +1,9 @@
 import { pgTable, uuid, text, boolean, timestamp } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { organization } from "./auth";
 
 export const webhooks = pgTable("webhooks", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
   events: text("events").array().notNull(),
