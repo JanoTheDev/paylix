@@ -10,6 +10,7 @@ export interface RelayRequestBody {
   r?: unknown;
   s?: unknown;
   permitValue?: unknown;
+  intentSignature?: unknown;
 }
 
 export interface ValidatedRelayInput {
@@ -19,6 +20,7 @@ export interface ValidatedRelayInput {
   r: `0x${string}`;
   s: `0x${string}`;
   permitValue: bigint;
+  intentSignature: `0x${string}`;
 }
 
 export type ValidationError =
@@ -31,6 +33,8 @@ export type ValidationError =
 
 const HEX_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const HEX_BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+// 65-byte EIP-191/712 signature: r (32) || s (32) || v (1) = 130 hex chars
+const HEX_SIG65_RE = /^0x[0-9a-fA-F]{130}$/;
 
 /**
  * Normalize the permit signature recovery parameter. Some wallets return
@@ -46,7 +50,7 @@ export function normalizePermitV(v: number): number {
 export function parseRelayBody(
   body: RelayRequestBody,
 ): { ok: true; value: ValidatedRelayInput } | { ok: false; error: ValidationError } {
-  const { buyer, deadline, v, r, s, permitValue } = body;
+  const { buyer, deadline, v, r, s, permitValue, intentSignature } = body;
 
   if (typeof buyer !== "string" || !HEX_ADDRESS_RE.test(buyer)) {
     return { ok: false, error: { code: "invalid_body", message: "buyer must be a 0x-prefixed 20-byte hex address" } };
@@ -65,6 +69,15 @@ export function parseRelayBody(
   }
   if (typeof permitValue !== "string" && typeof permitValue !== "number") {
     return { ok: false, error: { code: "invalid_body", message: "permitValue must be a string or number" } };
+  }
+  if (typeof intentSignature !== "string" || !HEX_SIG65_RE.test(intentSignature)) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_body",
+        message: "intentSignature must be a 0x-prefixed 65-byte hex string",
+      },
+    };
   }
 
   let deadlineBig: bigint;
@@ -92,6 +105,7 @@ export function parseRelayBody(
       r: r as `0x${string}`,
       s: s as `0x${string}`,
       permitValue: permitValueBig,
+      intentSignature: intentSignature as `0x${string}`,
     },
   };
 }

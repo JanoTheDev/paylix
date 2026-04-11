@@ -13,6 +13,8 @@ const validBody = {
   r: "0x" + "1".repeat(64),
   s: "0x" + "2".repeat(64),
   permitValue: "10000000000",
+  // 65-byte signature: r (32) || s (32) || v (1)
+  intentSignature: "0x" + "3".repeat(128) + "1b",
 };
 
 describe("parseRelayBody", () => {
@@ -69,6 +71,26 @@ describe("parseRelayBody", () => {
       permitValue: 10000000000,
     });
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects missing intentSignature", () => {
+    const { intentSignature: _, ...rest } = validBody;
+    const result = parseRelayBody(rest);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("invalid_body");
+  });
+
+  it("rejects intentSignature of wrong length", () => {
+    const result = parseRelayBody({ ...validBody, intentSignature: "0x1234" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects non-hex intentSignature", () => {
+    const result = parseRelayBody({
+      ...validBody,
+      intentSignature: "not a hex string of any length really",
+    });
+    expect(result.ok).toBe(false);
   });
 });
 

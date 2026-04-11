@@ -57,7 +57,7 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const parsed = parseRelayBody(body);
   if (!parsed.ok) return errorResponse(parsed.error);
-  const { buyer, deadline, v, r, s, permitValue } = parsed.value;
+  const { buyer, deadline, v, r, s, permitValue, intentSignature } = parsed.value;
 
   // 2. Deadline sanity check (cheap — avoids a DB roundtrip on stale signatures)
   const deadlineCheck = validateDeadline(deadline);
@@ -135,18 +135,21 @@ export async function POST(
         abi: SUBSCRIPTION_MANAGER_ABI,
         functionName: "createSubscriptionWithPermit",
         args: [
-          CONTRACTS.usdc,
-          buyer,
-          session.merchantWallet as `0x${string}`,
-          usdcAmount,
-          intervalSeconds,
-          productIdBytes,
-          customerIdBytes,
-          permitValue,
-          deadline,
-          v,
-          r,
-          s,
+          {
+            token: CONTRACTS.usdc,
+            buyer,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: usdcAmount,
+            interval: intervalSeconds,
+            productId: productIdBytes,
+            customerId: customerIdBytes,
+            permitValue,
+            deadline,
+            v,
+            r,
+            s,
+          },
+          intentSignature,
         ],
       });
     } else {
@@ -161,10 +164,8 @@ export async function POST(
           usdcAmount,
           productIdBytes,
           customerIdBytes,
-          deadline,
-          v,
-          r,
-          s,
+          { deadline, v, r, s },
+          intentSignature,
         ],
       });
     }

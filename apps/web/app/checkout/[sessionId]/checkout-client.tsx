@@ -4,7 +4,13 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppKit, useAppKitAccount } from "@reown/appkit/react";
 import { useWaitForTransactionReceipt, useChainId, useSwitchChain, usePublicClient, useSignTypedData } from "wagmi";
 import { CheckCircle2, Clock } from "lucide-react";
-import { CONTRACTS, ERC20_PERMIT_ABI } from "@/lib/contracts";
+import { keccak256, stringToBytes } from "viem";
+import {
+  CONTRACTS,
+  ERC20_PERMIT_ABI,
+  PAYMENT_VAULT_ABI,
+  SUBSCRIPTION_MANAGER_ABI,
+} from "@/lib/contracts";
 import { intervalToSeconds, formatInterval } from "@/lib/billing-intervals";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -355,6 +361,98 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
       // Normalize: some wallets return v as 0/1 (EIP-155), ecrecover expects 27/28.
       const v = rawV < 27 ? rawV + 27 : rawV;
 
+      // ---- PaymentIntent / SubscriptionIntent EIP-712 signature ----
+      // The permit only authorizes the spender contract to pull `permitValue`
+      // from the buyer. It does NOT commit to a specific merchant. To prevent
+      // a compromised relayer from redirecting funds, the buyer also signs an
+      // EIP-712 PaymentIntent that binds merchant + amount + productId +
+      // customerId + nonce + deadline. The contract recovers this signature
+      // and reverts on mismatch.
+      //
+      // productId/customerId hashes MUST match what the server passes to the
+      // contract — see apps/web/app/api/checkout/[id]/relay/route.ts.
+      const productIdBytes = keccak256(stringToBytes(session.productId));
+      const customerIdBytes = keccak256(stringToBytes(session.id));
+
+      const intentNonce = (await publicClient.readContract({
+        address: spender as `0x${string}`,
+        abi: isSubscription ? SUBSCRIPTION_MANAGER_ABI : PAYMENT_VAULT_ABI,
+        functionName: "getIntentNonce",
+        args: [address as `0x${string}`],
+      })) as bigint;
+
+      let intentSignature: string;
+      if (isSubscription) {
+        const intervalSeconds = BigInt(intervalToSeconds(session.billingInterval));
+        intentSignature = await signTypedDataAsync({
+          domain: {
+            name: "Paylix SubscriptionManager",
+            version: "1",
+            chainId: 84532, // Base Sepolia
+            verifyingContract: spender as `0x${string}`,
+          },
+          types: {
+            SubscriptionIntent: [
+              { name: "buyer", type: "address" },
+              { name: "token", type: "address" },
+              { name: "merchant", type: "address" },
+              { name: "amount", type: "uint256" },
+              { name: "interval", type: "uint256" },
+              { name: "productId", type: "bytes32" },
+              { name: "customerId", type: "bytes32" },
+              { name: "permitValue", type: "uint256" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+            ],
+          },
+          primaryType: "SubscriptionIntent",
+          message: {
+            buyer: address as `0x${string}`,
+            token: CONTRACTS.usdc,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: usdcAmount,
+            interval: intervalSeconds,
+            productId: productIdBytes,
+            customerId: customerIdBytes,
+            permitValue,
+            nonce: intentNonce,
+            deadline,
+          },
+        });
+      } else {
+        intentSignature = await signTypedDataAsync({
+          domain: {
+            name: "Paylix PaymentVault",
+            version: "1",
+            chainId: 84532, // Base Sepolia
+            verifyingContract: spender as `0x${string}`,
+          },
+          types: {
+            PaymentIntent: [
+              { name: "buyer", type: "address" },
+              { name: "token", type: "address" },
+              { name: "merchant", type: "address" },
+              { name: "amount", type: "uint256" },
+              { name: "productId", type: "bytes32" },
+              { name: "customerId", type: "bytes32" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+            ],
+          },
+          primaryType: "PaymentIntent",
+          message: {
+            buyer: address as `0x${string}`,
+            token: CONTRACTS.usdc,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: usdcAmount,
+            productId: productIdBytes,
+            customerId: customerIdBytes,
+            nonce: intentNonce,
+            deadline,
+          },
+        });
+      }
+
       setPayStep("paying");
 
       // Submit to the backend relay endpoint — it will call the contract
@@ -369,6 +467,7 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
           v,
           r,
           s,
+          intentSignature,
         }),
       });
 
@@ -624,6 +723,19 @@ export function CheckoutClient({ session }: CheckoutClientProps) {
             {payStep === "paying" && "Confirm payment..."}
             {payStep === "confirming" && "Processing..."}
           </Button>
+          {payStep !== "idle" && (
+            <Alert className="mt-3 border-primary/30 bg-primary/5">
+              <AlertDescription className="text-xs">
+                <span className="font-medium text-foreground">
+                  Please don&apos;t close this window.
+                </span>{" "}
+                <span className="text-muted-foreground">
+                  Your payment is being processed on-chain. Closing now may
+                  delay confirmation.
+                </span>
+              </AlertDescription>
+            </Alert>
+          )}
           {payError && (
             <Alert variant="destructive" className="mt-3">
               <AlertDescription className="text-xs">{payError}</AlertDescription>
