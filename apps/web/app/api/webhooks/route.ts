@@ -7,6 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { validateWebhookUrl } from "@/lib/url-safety";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -26,14 +27,18 @@ const createWebhookSchema = z.object({
 
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   const rows = await db
     .select({
       id: webhooks.id,
-      userId: webhooks.userId,
+      organizationId: webhooks.organizationId,
       url: webhooks.url,
       events: webhooks.events,
       isActive: webhooks.isActive,
@@ -41,7 +46,7 @@ export async function GET() {
       // secret intentionally excluded — only returned once on creation.
     })
     .from(webhooks)
-    .where(eq(webhooks.userId, session.user.id))
+    .where(eq(webhooks.organizationId, organizationId))
     .orderBy(desc(webhooks.createdAt));
 
   return NextResponse.json(rows);
@@ -49,8 +54,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   const body = await request.json();
@@ -74,7 +83,7 @@ export async function POST(request: Request) {
   const [row] = await db
     .insert(webhooks)
     .values({
-      userId: session.user.id,
+      organizationId,
       url,
       secret,
       events,

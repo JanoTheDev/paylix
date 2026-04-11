@@ -4,21 +4,26 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { webhookDeliveries, webhooks } from "@paylix/db/schema";
 import { and, desc, eq } from "drizzle-orm";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
   const { id } = await params;
 
   const [hook] = await db
     .select({ id: webhooks.id })
     .from(webhooks)
-    .where(and(eq(webhooks.id, id), eq(webhooks.userId, session.user.id)));
+    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
 
   if (!hook) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

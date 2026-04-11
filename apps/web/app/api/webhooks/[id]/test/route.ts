@@ -6,14 +6,19 @@ import { webhooks, webhookDeliveries } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createHmac } from "crypto";
 import { validateWebhookUrl } from "@/lib/url-safety";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   const { id } = await params;
@@ -21,7 +26,7 @@ export async function POST(
   const [webhook] = await db
     .select()
     .from(webhooks)
-    .where(and(eq(webhooks.id, id), eq(webhooks.userId, session.user.id)));
+    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
 
   if (!webhook) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
