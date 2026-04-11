@@ -6,27 +6,32 @@ import { eq, and } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { signPortalToken } from "@/lib/portal-tokens";
+import { requireActiveOrg } from "@/lib/require-active-org";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Accept either a dashboard session or a secret API key (SDK callers).
-  let userId: string | null = null;
+  let organizationId: string | null = null;
   const session = await auth.api.getSession({ headers: await headers() });
   if (session) {
-    userId = session.user.id;
+    try {
+      organizationId = requireActiveOrg(session);
+    } catch {
+      return NextResponse.json({ error: "No active team selected" }, { status: 400 });
+    }
   } else {
     const apiAuth = await authenticateApiKey(request, "secret");
-    if (apiAuth) userId = apiAuth.user.id;
+    if (apiAuth) organizationId = apiAuth.organizationId;
   }
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!organizationId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const [customer] = await db
     .select()
     .from(customers)
-    .where(and(eq(customers.id, id), eq(customers.userId, userId)));
+    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)));
 
   if (!customer) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

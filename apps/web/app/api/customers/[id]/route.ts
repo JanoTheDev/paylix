@@ -10,6 +10,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 import { z } from "zod";
 
 export async function GET(
@@ -17,15 +18,20 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
+  }
 
   const { id } = await ctx.params;
-  const userId = session.user.id;
 
   const [customer] = await db
     .select()
     .from(customers)
-    .where(and(eq(customers.id, id), eq(customers.userId, userId)))
+    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
     .limit(1);
 
   if (!customer) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -46,7 +52,7 @@ export async function GET(
         })
         .from(payments)
         .leftJoin(products, eq(payments.productId, products.id))
-        .where(and(eq(payments.customerId, id), eq(payments.userId, userId)))
+        .where(and(eq(payments.customerId, id), eq(payments.organizationId, organizationId)))
         .orderBy(desc(payments.createdAt)),
       db
         .select({
@@ -62,7 +68,7 @@ export async function GET(
         .where(
           and(
             eq(subscriptions.customerId, id),
-            eq(subscriptions.userId, userId),
+            eq(subscriptions.organizationId, organizationId),
           ),
         )
         .orderBy(desc(subscriptions.createdAt)),
@@ -78,7 +84,7 @@ export async function GET(
         })
         .from(invoices)
         .where(
-          and(eq(invoices.customerId, id), eq(invoices.merchantId, userId)),
+          and(eq(invoices.customerId, id), eq(invoices.organizationId, organizationId)),
         )
         .orderBy(desc(invoices.issuedAt)),
     ]);
@@ -107,7 +113,13 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
+  }
 
   const { id } = await ctx.params;
   const body = await request.json().catch(() => null);
@@ -139,7 +151,7 @@ export async function PATCH(
   const [updated] = await db
     .update(customers)
     .set(updates)
-    .where(and(eq(customers.id, id), eq(customers.userId, session.user.id)))
+    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
     .returning();
 
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -4,11 +4,16 @@ import { invoices, customers } from "@paylix/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
   const rows = await db
     .select({
@@ -25,7 +30,7 @@ export async function GET() {
     })
     .from(invoices)
     .leftJoin(customers, eq(invoices.customerId, customers.id))
-    .where(eq(invoices.merchantId, session.user.id))
+    .where(eq(invoices.organizationId, organizationId))
     .orderBy(desc(invoices.issuedAt))
     .limit(500);
   return NextResponse.json({ invoices: rows });

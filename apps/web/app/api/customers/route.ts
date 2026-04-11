@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { z } from "zod";
+import { requireActiveOrg, AuthError } from "@/lib/require-active-org";
 
 const createSchema = z.object({
   firstName: z.string().trim().max(100).nullish(),
@@ -18,7 +19,13 @@ const createSchema = z.object({
 
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let organizationId: string;
+  try {
+    organizationId = requireActiveOrg(session);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
+  }
 
   const body = await request.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
@@ -44,7 +51,7 @@ export async function POST(request: Request) {
   const [inserted] = await db
     .insert(customers)
     .values({
-      userId: session.user.id,
+      organizationId,
       customerId,
       firstName: data.firstName ?? null,
       lastName: data.lastName ?? null,
