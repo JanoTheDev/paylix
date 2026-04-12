@@ -4,17 +4,41 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+type NavItem = { href: string; label: string };
+type NavGroup = { group: string; items: NavItem[] };
+
+const navGroups: (NavItem | NavGroup)[] = [
   { href: "/", label: "Getting Started" },
-  { href: "/sdk-reference", label: "SDK Reference" },
-  { href: "/subscriptions", label: "Subscriptions" },
-  { href: "/free-trials", label: "Free Trials" },
-  { href: "/invoices", label: "Invoices" },
-  { href: "/webhooks", label: "Webhooks" },
-  { href: "/webhook-verification", label: "Webhook Verification" },
-  { href: "/self-hosting", label: "Self-Hosting" },
-  { href: "/testnet", label: "Testnet Setup" },
-  { href: "/changelog", label: "API Changelog" },
+  {
+    group: "API Reference",
+    items: [
+      { href: "/sdk-reference", label: "SDK Reference" },
+      { href: "/products", label: "Products" },
+      { href: "/customers", label: "Customers" },
+      { href: "/error-codes", label: "Error Codes" },
+      { href: "/rate-limits", label: "Rate Limits" },
+    ],
+  },
+  {
+    group: "Features",
+    items: [
+      { href: "/subscriptions", label: "Subscriptions" },
+      { href: "/free-trials", label: "Free Trials" },
+      { href: "/invoices", label: "Invoices" },
+      { href: "/email-notifications", label: "Email Notifications" },
+      { href: "/webhooks", label: "Webhooks" },
+    ],
+  },
+  {
+    group: "Operations",
+    items: [
+      { href: "/self-hosting", label: "Self-Hosting" },
+      { href: "/testnet", label: "Testnet Setup" },
+      { href: "/audit-logs", label: "Audit Logs" },
+      { href: "/changelog", label: "API Changelog" },
+      { href: "/webhook-verification", label: "Webhook Verification" },
+    ],
+  },
 ];
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -31,26 +55,59 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           Paylix Docs
         </Link>
       </div>
-      <nav className="flex-1 space-y-0.5 px-2 py-3">
-        {navItems.map(({ href, label }) => {
-          const active =
-            href === "/"
-              ? pathname === "/"
-              : pathname === href || pathname.startsWith(href + "/");
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+        {navGroups.map((entry) => {
+          if ("href" in entry) {
+            const active =
+              entry.href === "/"
+                ? pathname === "/"
+                : pathname === entry.href ||
+                  pathname.startsWith(entry.href + "/");
+            return (
+              <Link
+                key={entry.href}
+                href={entry.href}
+                onClick={onNavigate}
+                className={cn(
+                  "flex h-9 items-center rounded-md px-3 text-sm transition-colors",
+                  active
+                    ? "bg-surface-3 text-foreground"
+                    : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
+                )}
+              >
+                {entry.label}
+              </Link>
+            );
+          }
+
           return (
-            <Link
-              key={href}
-              href={href}
-              onClick={onNavigate}
-              className={cn(
-                "flex h-9 items-center rounded-md px-3 text-sm transition-colors",
-                active
-                  ? "bg-surface-3 text-foreground"
-                  : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
-              )}
-            >
-              {label}
-            </Link>
+            <div key={entry.group} className="pt-4 first:pt-0">
+              <span className="px-3 text-xs font-medium uppercase tracking-wider text-foreground-muted/60">
+                {entry.group}
+              </span>
+              <div className="mt-1 space-y-0.5">
+                {entry.items.map(({ href, label }) => {
+                  const active =
+                    pathname === href ||
+                    pathname.startsWith(href + "/");
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      onClick={onNavigate}
+                      className={cn(
+                        "flex h-9 items-center rounded-md px-3 text-sm transition-colors",
+                        active
+                          ? "bg-surface-3 text-foreground"
+                          : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </nav>

@@ -342,6 +342,82 @@ INDEXER_CONFIRMATIONS=5
         changing either value.
       </p>
 
+      <SectionHeading>Optional Environment Variables</SectionHeading>
+      <DocTable>
+        <DocTableHead>
+          <DocTableRow>
+            <DocTableHeader>Variable</DocTableHeader>
+            <DocTableHeader>Required</DocTableHeader>
+            <DocTableHeader>Description</DocTableHeader>
+          </DocTableRow>
+        </DocTableHead>
+        <DocTableBody>
+          <DocTableRow>
+            <DocTableCell mono>
+              <span className="text-foreground">REDIS_URL</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">No</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Redis connection URL for distributed rate limiting. If unset,
+                in-memory rate limiting is used (single instance only).
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+          <DocTableRow>
+            <DocTableCell mono>
+              <span className="text-foreground">
+                MOCK_USDC_ADDRESS / NEXT_PUBLIC_MOCK_USDC_ADDRESS
+              </span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">Testnet only</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Address of the MockUSDC contract on Base Sepolia.
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+          <DocTableRow>
+            <DocTableCell mono>
+              <span className="text-foreground">INVOICE_FROM_EMAIL</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">No</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Sender email address for invoice and notification emails.
+                Default:{" "}
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+                  invoices@paylix.local
+                </code>
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+          <DocTableRow>
+            <DocTableCell mono>
+              <span className="text-foreground">PUBLIC_APP_URL</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">No</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Public URL of the dashboard. Used in email links and portal
+                URLs. Default:{" "}
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+                  http://localhost:3000
+                </code>
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+        </DocTableBody>
+      </DocTable>
+
       <SectionHeading>Updating</SectionHeading>
       <CodeBlock language="bash">{`git pull origin main
 docker compose down
