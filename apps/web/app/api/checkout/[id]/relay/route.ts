@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { keccak256, stringToBytes } from "viem";
 import { db } from "@/lib/db";
-import { checkoutSessions, products } from "@paylix/db/schema";
+import { checkoutSessions, products, subscriptions, customers } from "@paylix/db/schema";
 import { createRelayerClient } from "@/lib/relayer";
 import {
   CONTRACTS,
@@ -60,10 +60,6 @@ export async function POST(
   const { buyer, deadline, v, r, s, permitValue, intentSignature } = parsed.value;
   // (networkKey and tokenSymbol also in parsed.value, validated below after session load)
 
-  // 2. Deadline sanity check (cheap — avoids a DB roundtrip on stale signatures)
-  const deadlineCheck = validateDeadline(deadline);
-  if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
-
   // 3. Load session + product
   const [session] = await db
     .select({
@@ -78,7 +74,12 @@ export async function POST(
       tokenSymbol: checkoutSessions.tokenSymbol,
       merchantWallet: checkoutSessions.merchantWallet,
       productId: checkoutSessions.productId,
+      organizationId: checkoutSessions.organizationId,
+      customerId: checkoutSessions.customerId,
+      buyerCountry: checkoutSessions.buyerCountry,
+      buyerTaxId: checkoutSessions.buyerTaxId,
       billingInterval: products.billingInterval,
+      trialDays: products.trialDays,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -98,6 +99,12 @@ export async function POST(
     const status = sessionCheck.error.code === "session_not_found" ? 404 : 409;
     return errorResponse(sessionCheck.error, status);
   }
+
+  // 4. Compute on-chain args early (used in both trial and relay branches)
+  const tokenAmount = session.amount as bigint;
+  const productIdBytes = keccak256(stringToBytes(session.productId));
+  const customerIdBytes = keccak256(stringToBytes(session.id));
+  const isSubscription = session.type === "subscription";
 
   // Guard: session must have a locked currency before it can be relayed
   if (!session.networkKey || !session.tokenSymbol) {
@@ -136,6 +143,134 @@ export async function POST(
     );
   }
 
+  // 5. Trial subscription branch
+  const trialDays = session.trialDays ?? 0;
+  const isTrial = isSubscription && trialDays > 0;
+
+  const maxDeadlineWindowSeconds = isTrial
+    ? (trialDays + 2) * 24 * 60 * 60 + 60 * 60
+    : 60 * 60;
+  const deadlineCheck = validateDeadline(deadline, maxDeadlineWindowSeconds);
+  if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
+
+  if (isTrial) {
+    const existing = await db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, session.organizationId),
+          sql`lower(${subscriptions.subscriberAddress}) = lower(${buyer})`,
+          or(
+            eq(subscriptions.status, "trialing"),
+            eq(subscriptions.status, "active"),
+          ),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      return NextResponse.json(
+        { error: { code: "trial_in_progress", message: "This wallet already has an active or trialing subscription." } },
+        { status: 409 },
+      );
+    }
+
+    const intervalSeconds = intervalToSeconds(session.billingInterval);
+    if (intervalSeconds <= 0) {
+      return NextResponse.json(
+        { error: { code: "invalid_interval", message: "Product has no valid billing interval" } },
+        { status: 400 },
+      );
+    }
+
+    const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
+    const customerIdentifier = session.customerId ?? `anon_${buyer}`;
+    let [customer] = await db
+      .select()
+      .from(customers)
+      .where(
+        and(
+          eq(customers.organizationId, session.organizationId),
+          eq(customers.customerId, customerIdentifier),
+        ),
+      );
+    if (!customer) {
+      const [created] = await db
+        .insert(customers)
+        .values({
+          organizationId: session.organizationId,
+          customerId: customerIdentifier,
+          walletAddress: buyer,
+          country: session.buyerCountry ?? null,
+          taxId: session.buyerTaxId ?? null,
+        })
+        .returning();
+      customer = created;
+    }
+
+    const pendingPermitSignature = {
+      permit: {
+        value: permitValue.toString(),
+        deadline: Number(deadline),
+        v: Number(v),
+        r,
+        s,
+      },
+      intent: {
+        merchantId: session.merchantWallet,
+        amount: tokenAmount.toString(),
+        interval: Number(intervalSeconds),
+        nonce: session.id,
+        deadline: Number(deadline),
+        signature: intentSignature,
+        productIdBytes,
+        customerIdBytes,
+      },
+      priceSnapshot: {
+        networkKey: session.networkKey!,
+        tokenSymbol: session.tokenSymbol!,
+        amount: tokenAmount.toString(),
+      },
+    };
+
+    const [newSub] = await db
+      .insert(subscriptions)
+      .values({
+        productId: session.productId,
+        organizationId: session.organizationId,
+        customerId: customer.id,
+        subscriberAddress: buyer,
+        contractAddress: CONTRACTS.subscriptionManager,
+        networkKey: session.networkKey!,
+        tokenSymbol: session.tokenSymbol!,
+        status: "trialing",
+        trialEndsAt,
+        pendingPermitSignature,
+        intervalSeconds: Number(intervalSeconds),
+        metadata: {},
+      })
+      .returning();
+
+    await db
+      .update(checkoutSessions)
+      .set({
+        status: "completed",
+        completedAt: new Date(),
+        subscriptionId: newSub.id,
+      })
+      .where(eq(checkoutSessions.id, session.id));
+
+    // TODO: fire subscription.trial_started webhook once apps/web webhook dispatcher is factored out
+
+    return NextResponse.json({
+      trial: true,
+      subscriptionId: newSub.id,
+      trialEndsAt: trialEndsAt.toISOString(),
+    });
+  }
+
   // Acquire an atomic lock on the session so two concurrent relay attempts
   // can't both reach the contract call. The lock is released on terminal
   // failure (below); on success the indexer's session-completed update
@@ -148,19 +283,11 @@ export async function POST(
     );
   }
 
-  // 4. Compute on-chain args
+  // 6. Submit the relayed transaction
   // session.amount is now stored in native token units (bigint), no
   // conversion needed. The old cents × 10_000 math is gone — amounts are
   // whatever the merchant set in the product_prices entry for this
   // (networkKey, tokenSymbol) pair.
-  const tokenAmount = session.amount as bigint;
-  const productIdBytes = keccak256(stringToBytes(session.productId));
-  // Use the session UUID as the on-chain customerId — avoids collisions
-  // across concurrent checkouts and matches the existing direct-flow pattern
-  const customerIdBytes = keccak256(stringToBytes(session.id));
-  const isSubscription = session.type === "subscription";
-
-  // 5. Submit the relayed transaction
   const relayer = createRelayerClient();
   let txHash: `0x${string}`;
 

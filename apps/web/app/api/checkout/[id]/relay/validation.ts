@@ -190,10 +190,31 @@ export function validateSessionForRelay(
 
 export function validateDeadline(
   deadline: bigint,
-  now: Date = new Date(),
+  maxWindowSeconds?: number | Date,
+  now?: Date,
 ): { ok: true } | { ok: false; error: ValidationError } {
-  const nowSeconds = BigInt(Math.floor(now.getTime() / 1000));
+  // Handle overloads: validateDeadline(deadline) or validateDeadline(deadline, maxWindowSeconds) or validateDeadline(deadline, now) for backward compat
+  let actualMaxWindowSeconds = 60 * 60;
+  let actualNow = new Date();
+
+  if (maxWindowSeconds !== undefined) {
+    if (maxWindowSeconds instanceof Date) {
+      // Old signature: validateDeadline(deadline, now)
+      actualNow = maxWindowSeconds;
+    } else {
+      // New signature: validateDeadline(deadline, maxWindowSeconds, now?)
+      actualMaxWindowSeconds = maxWindowSeconds;
+      if (now !== undefined) {
+        actualNow = now;
+      }
+    }
+  }
+
+  const nowSeconds = BigInt(Math.floor(actualNow.getTime() / 1000));
   if (deadline <= nowSeconds) {
+    return { ok: false, error: { code: "deadline_passed" } };
+  }
+  if (deadline - nowSeconds > BigInt(actualMaxWindowSeconds)) {
     return { ok: false, error: { code: "deadline_passed" } };
   }
   return { ok: true };
