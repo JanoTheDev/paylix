@@ -18,7 +18,7 @@ import {
   BusinessProfileSection,
   type BusinessProfile,
 } from "@/components/settings/business-profile-section";
-import { TeamQuickInvite } from "@/components/settings/team-quick-invite";
+import { TeamTabContent } from "@/components/settings/team-tab-content";
 
 interface UserSettings {
   id: string;
@@ -344,12 +344,7 @@ export default function SettingsPage() {
 
         {/* Team tab */}
         <TabsContent value="team">
-          <FormSection
-            title="Team Members"
-            description="Invite teammates and manage access."
-          >
-            <TeamQuickInvite />
-          </FormSection>
+          <TeamTabContent />
         </TabsContent>
 
         {/* Business Profile tab */}
