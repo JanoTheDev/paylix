@@ -22,6 +22,7 @@ export async function GET(
     }
   } else {
     const apiAuth = await authenticateApiKey(request, "secret");
+    if (apiAuth?.rateLimitResponse) return apiAuth.rateLimitResponse;
     if (apiAuth) organizationId = apiAuth.organizationId;
   }
   if (!organizationId) return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });

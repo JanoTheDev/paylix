@@ -44,6 +44,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const apiAuth = await authenticateApiKey(request, "secret");
+  if (apiAuth?.rateLimitResponse) return apiAuth.rateLimitResponse;
   if (!apiAuth) return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
 
   const { id } = await params;

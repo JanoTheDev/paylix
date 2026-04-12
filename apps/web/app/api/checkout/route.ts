@@ -21,6 +21,7 @@ const createCheckoutSchema = z.object({
 
 export async function POST(request: Request) {
   const auth = await authenticateApiKey(request, "secret");
+  if (auth?.rateLimitResponse) return auth.rateLimitResponse;
   if (!auth) return apiError("unauthorized", "Authentication required", 401);
 
   const body = await request.json();

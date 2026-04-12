@@ -26,6 +26,7 @@ export async function POST(
   let merchantUserId: string | null = null;
 
   const apiAuth = await authenticateApiKey(request, "secret");
+  if (apiAuth?.rateLimitResponse) return apiAuth.rateLimitResponse;
   if (apiAuth) {
     merchantOrgId = apiAuth.organizationId;
   } else {

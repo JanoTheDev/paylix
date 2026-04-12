@@ -2,14 +2,25 @@ import { db } from "./db";
 import { apiKeys } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hashApiKey } from "./api-key-utils";
+import { checkRateLimit } from "./rate-limit";
+import { NextResponse } from "next/server";
+
+export type ApiKeyAuth = {
+  organizationId: string;
+  keyType: "publishable" | "secret";
+  rateLimitResponse?: undefined;
+};
+
+export type ApiKeyRateLimited = {
+  rateLimitResponse: NextResponse;
+};
+
+export type ApiKeyResult = ApiKeyAuth | ApiKeyRateLimited | null;
 
 export async function authenticateApiKey(
   request: Request,
   requiredType?: "publishable" | "secret"
-): Promise<{
-  organizationId: string;
-  keyType: "publishable" | "secret";
-} | null> {
+): Promise<ApiKeyResult> {
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
 
@@ -24,6 +35,18 @@ export async function authenticateApiKey(
   if (!found) return null;
 
   if (requiredType && found.type !== requiredType) return null;
+
+  const maxPerMinute = found.type === "publishable" ? 200 : 100;
+  const rl = checkRateLimit(`api:${found.id}`, maxPerMinute, 60_000);
+  if (!rl.ok) {
+    const retryAfter = String(Math.ceil((rl.retryAfterMs ?? 0) / 1000));
+    return {
+      rateLimitResponse: NextResponse.json(
+        { error: { code: "rate_limited", message: `Rate limit exceeded. Retry in ${retryAfter}s` } },
+        { status: 429, headers: { "Retry-After": retryAfter } },
+      ),
+    };
+  }
 
   // Fire-and-forget lastUsedAt update; don't block the request on it.
   void db
