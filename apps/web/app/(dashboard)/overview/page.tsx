@@ -25,6 +25,10 @@ export default async function OverviewPage() {
     revenueByDayRaw,
     subsGrowthRaw,
     subsBeforeWindowResult,
+    totalCompletedTrialsResult,
+    totalConvertedTrialsResult,
+    cancelledLast30dResult,
+    pastDueResult,
   ] = await Promise.all([
     db
       .select({ total: sum(payments.amount) })
@@ -133,6 +137,49 @@ export default async function OverviewPage() {
           sql`${subscriptions.createdAt} < ${thirtyDaysAgo}`,
         ),
       ),
+    // Trial conversion rate: total completed trials
+    db
+      .select({ total: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          sql`${subscriptions.trialEndsAt} IS NOT NULL`,
+          sql`${subscriptions.status} IN ('active', 'cancelled', 'expired')`,
+        ),
+      ),
+    // Trial conversion rate: converted to active
+    db
+      .select({ total: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          sql`${subscriptions.trialEndsAt} IS NOT NULL`,
+          eq(subscriptions.status, "active"),
+        ),
+      ),
+    // Churn rate (30d): cancelled in last 30 days
+    db
+      .select({ total: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          eq(subscriptions.status, "cancelled"),
+          gte(subscriptions.updatedAt, thirtyDaysAgo),
+        ),
+      ),
+    // Past-due count
+    db
+      .select({ total: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          eq(subscriptions.status, "past_due"),
+        ),
+      ),
   ]);
 
   const totalRevenue = Number(totalRevenueResult[0]?.total ?? 0);
@@ -141,6 +188,20 @@ export default async function OverviewPage() {
   const activeSubs = activeSubsResult[0]?.count ?? 0;
   const activeTrials = activeTrialsResult[0]?.count ?? 0;
   const convertingSoon = convertingSoonResult[0]?.count ?? 0;
+
+  // Health metrics
+  const totalCompletedTrials = totalCompletedTrialsResult[0]?.total ?? 0;
+  const totalConvertedTrials = totalConvertedTrialsResult[0]?.total ?? 0;
+  const trialConversionRate = totalCompletedTrials > 0
+    ? Math.round((totalConvertedTrials / totalCompletedTrials) * 100)
+    : null;
+
+  const cancelledLast30d = cancelledLast30dResult[0]?.total ?? 0;
+  const churnRate = activeSubs > 0
+    ? Math.round((cancelledLast30d / (activeSubs + cancelledLast30d)) * 100)
+    : null;
+
+  const pastDueCount = pastDueResult[0]?.total ?? 0;
 
   const revenueByDay = fillDateRange(revenueByDayRaw, "total");
   const subsBeforeWindow = subsBeforeWindowResult[0]?.count ?? 0;
@@ -168,6 +229,9 @@ export default async function OverviewPage() {
         activeSubs={activeSubs}
         activeTrials={activeTrials}
         convertingSoon={convertingSoon}
+        trialConversionRate={trialConversionRate}
+        churnRate={churnRate}
+        pastDueCount={pastDueCount}
         recentPayments={recentPayments}
         revenueByDay={revenueByDay}
         subsGrowth={subsGrowth}
