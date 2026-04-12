@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { ArrowLeft, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -109,12 +110,10 @@ export default function CustomerDetailView({
   const [metadataDirty, setMetadataDirty] = useState(false);
   const [savingMetadata, setSavingMetadata] = useState(false);
   const [metadataError, setMetadataError] = useState<string>("");
-  const [metadataSaved, setMetadataSaved] = useState(false);
 
   async function saveMetadata() {
     setSavingMetadata(true);
     setMetadataError("");
-    setMetadataSaved(false);
     try {
       const res = await fetch(`/api/customers/${customer.id}`, {
         method: "PATCH",
@@ -123,13 +122,17 @@ export default function CustomerDetailView({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setMetadataError(data.error ?? "Failed to save metadata");
+        const message = data.error ?? "Failed to save metadata";
+        setMetadataError(message);
+        toast.error(message);
         return;
       }
       setMetadataDirty(false);
-      setMetadataSaved(true);
-      setTimeout(() => setMetadataSaved(false), 2000);
+      toast.success("Customer metadata saved");
       router.refresh();
+    } catch {
+      setMetadataError("Failed to save metadata");
+      toast.error("Failed to save metadata");
     } finally {
       setSavingMetadata(false);
     }
@@ -258,11 +261,6 @@ export default function CustomerDetailView({
               >
                 {savingMetadata ? "Saving…" : "Save metadata"}
               </Button>
-              {metadataSaved && (
-                <span className="text-xs font-medium text-success">
-                  Saved
-                </span>
-              )}
             </div>
           </div>
         </div>

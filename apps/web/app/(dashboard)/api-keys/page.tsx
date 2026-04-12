@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,27 +80,42 @@ export default function ApiKeysPage() {
   async function handleCreate() {
     if (!newKeyName.trim()) return;
     setCreating(true);
-    const res = await fetch("/api/keys", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newKeyName, type: newKeyType }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setCreatedKey(data.key);
-      setCreateOpen(false);
-      setNewKeyName("");
-      setNewKeyType("publishable");
-      fetchKeys();
+    try {
+      const res = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newKeyName, type: newKeyType }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCreatedKey(data.key);
+        setCreateOpen(false);
+        setNewKeyName("");
+        setNewKeyType("publishable");
+        fetchKeys();
+        toast.success("API key created");
+      } else {
+        toast.error("Failed to create API key");
+      }
+    } catch {
+      toast.error("Failed to create API key");
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   }
 
   async function handleRevoke(id: string) {
-    const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
-    if (res.ok) {
-      setRevokeId(null);
-      fetchKeys();
+    try {
+      const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setRevokeId(null);
+        fetchKeys();
+        toast.success("API key revoked");
+      } else {
+        toast.error("Failed to revoke API key");
+      }
+    } catch {
+      toast.error("Failed to revoke API key");
     }
   }
 

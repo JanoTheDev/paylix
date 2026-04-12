@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,19 +115,27 @@ export default function WebhooksPage() {
   async function handleCreate() {
     if (!newUrl.trim() || newEvents.length === 0) return;
     setCreating(true);
-    const res = await fetch("/api/webhooks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: newUrl, events: newEvents }),
-    });
-    if (res.ok) {
-      const created = await res.json();
-      setCreatedSecret(created.secret ?? null);
-      setNewUrl("");
-      setNewEvents([]);
-      fetchWebhooks();
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: newUrl, events: newEvents }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setCreatedSecret(created.secret ?? null);
+        setNewUrl("");
+        setNewEvents([]);
+        fetchWebhooks();
+        toast.success("Webhook created");
+      } else {
+        toast.error("Failed to create webhook");
+      }
+    } catch {
+      toast.error("Failed to create webhook");
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   }
 
   function closeCreateDialog() {
@@ -193,22 +202,30 @@ export default function WebhooksPage() {
     if (!editUrl.trim() || editEvents.length === 0) return;
     setSavingEdit(true);
     setEditError("");
-    const res = await fetch(`/api/webhooks/${selected.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: editUrl, events: editEvents }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setEditError(data.error ?? "Failed to save");
+    try {
+      const res = await fetch(`/api/webhooks/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: editUrl, events: editEvents }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const message = data.error ?? "Failed to save";
+        setEditError(message);
+        toast.error(message);
+        return;
+      }
+      const updated = await res.json();
+      setSelected({ ...selected, url: updated.url, events: updated.events });
+      setEditing(false);
+      fetchWebhooks();
+      toast.success("Webhook saved");
+    } catch {
+      setEditError("Failed to save");
+      toast.error("Failed to save webhook");
+    } finally {
       setSavingEdit(false);
-      return;
     }
-    const updated = await res.json();
-    setSelected({ ...selected, url: updated.url, events: updated.events });
-    setEditing(false);
-    setSavingEdit(false);
-    fetchWebhooks();
   }
 
   function toggleEditEvent(event: string) {

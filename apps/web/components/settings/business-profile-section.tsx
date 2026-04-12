@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormSection, FormRow, FormActions } from "@/components/paykit";
@@ -27,7 +28,6 @@ interface Props {
 export function BusinessProfileSection({ initial }: Props) {
   const [profile, setProfile] = useState<BusinessProfile>(initial);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string>("");
   const [uploading, setUploading] = useState(false);
 
@@ -41,7 +41,6 @@ export function BusinessProfileSection({ initial }: Props) {
   async function save() {
     setSaving(true);
     setError("");
-    setSaved(false);
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -50,11 +49,15 @@ export function BusinessProfileSection({ initial }: Props) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Failed to save");
+        const message = data.error ?? "Failed to save business profile";
+        setError(message);
+        toast.error(message);
       } else {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        toast.success("Business profile saved");
       }
+    } catch {
+      setError("Failed to save");
+      toast.error("Failed to save business profile");
     } finally {
       setSaving(false);
     }
@@ -74,10 +77,13 @@ export function BusinessProfileSection({ initial }: Props) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Logo upload failed");
+        const message = data.error ?? "Logo upload failed";
+        setError(message);
+        toast.error(message);
       } else {
         const data = await res.json();
         update("logoUrl", data.url);
+        toast.success("Logo uploaded");
       }
     } finally {
       setUploading(false);
@@ -191,9 +197,6 @@ export function BusinessProfileSection({ initial }: Props) {
         </Alert>
       )}
       <FormActions>
-        {saved && (
-          <span className="text-sm font-medium text-success">Saved</span>
-        )}
         <Button onClick={save} disabled={saving}>
           {saving ? "Saving…" : "Save"}
         </Button>

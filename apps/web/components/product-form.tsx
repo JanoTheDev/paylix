@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -385,13 +386,21 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body.error ?? "Something went wrong");
+        const message = body.error ?? "Something went wrong";
+        setError(message);
+        toast.error(
+          mode === "edit" ? "Failed to save product" : "Failed to create product",
+        );
         return;
       }
+      toast.success(mode === "edit" ? "Product saved" : "Product created");
       router.push("/products");
       router.refresh();
     } catch {
       setError("Network error");
+      toast.error(
+        mode === "edit" ? "Failed to save product" : "Failed to create product",
+      );
     }
   }
 

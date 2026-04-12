@@ -108,15 +108,12 @@ export default function SettingsPage() {
   });
 
   const [walletSaving, setWalletSaving] = useState(false);
-  const [walletSuccess, setWalletSuccess] = useState(false);
   const [walletError, setWalletError] = useState("");
 
   const [defaultsSaving, setDefaultsSaving] = useState(false);
-  const [defaultsSuccess, setDefaultsSuccess] = useState(false);
 
   const [networks, setNetworks] = useState<NetworkConfigUI[]>([]);
   const [networksSaving, setNetworksSaving] = useState(false);
-  const [networksSuccess, setNetworksSuccess] = useState(false);
 
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
 
@@ -164,7 +161,6 @@ export default function SettingsPage() {
   async function saveWallet() {
     setWalletSaving(true);
     setWalletError("");
-    setWalletSuccess(false);
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -173,13 +169,16 @@ export default function SettingsPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        setWalletError(data.error?.message ?? data.error ?? "Failed to save");
+        const message =
+          data.error?.message ?? data.error ?? "Failed to save wallet";
+        setWalletError(message);
+        toast.error(message);
       } else {
-        setWalletSuccess(true);
-        setTimeout(() => setWalletSuccess(false), 2000);
+        toast.success("Payout wallet saved");
       }
     } catch {
       setWalletError("Failed to save");
+      toast.error("Failed to save wallet");
     } finally {
       setWalletSaving(false);
     }
@@ -187,7 +186,6 @@ export default function SettingsPage() {
 
   async function saveCheckoutDefaults() {
     setDefaultsSaving(true);
-    setDefaultsSuccess(false);
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -195,11 +193,12 @@ export default function SettingsPage() {
         body: JSON.stringify({ checkoutFieldDefaults: checkoutDefaults }),
       });
       if (res.ok) {
-        setDefaultsSuccess(true);
-        setTimeout(() => setDefaultsSuccess(false), 2000);
+        toast.success("Checkout defaults saved");
+      } else {
+        toast.error("Failed to save checkout defaults");
       }
     } catch {
-      // ignore
+      toast.error("Failed to save checkout defaults");
     } finally {
       setDefaultsSaving(false);
     }
@@ -293,7 +292,6 @@ export default function SettingsPage() {
 
   async function saveNetworks() {
     setNetworksSaving(true);
-    setNetworksSuccess(false);
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -307,9 +305,12 @@ export default function SettingsPage() {
         }),
       });
       if (res.ok) {
-        setNetworksSuccess(true);
-        setTimeout(() => setNetworksSuccess(false), 2000);
+        toast.success("Networks saved");
+      } else {
+        toast.error("Failed to save networks");
       }
+    } catch {
+      toast.error("Failed to save networks");
     } finally {
       setNetworksSaving(false);
     }
@@ -367,9 +368,6 @@ export default function SettingsPage() {
               </Alert>
             )}
             <FormActions>
-              {walletSuccess && (
-                <span className="text-sm font-medium text-success">Saved</span>
-              )}
               <Button onClick={saveWallet} disabled={walletSaving}>
                 {walletSaving ? "Saving…" : "Save"}
               </Button>
@@ -448,9 +446,6 @@ export default function SettingsPage() {
               )}
             </div>
             <FormActions>
-              {networksSuccess && (
-                <span className="text-sm font-medium text-success">Saved</span>
-              )}
               <Button onClick={saveNetworks} disabled={networksSaving}>
                 {networksSaving ? "Saving…" : "Save"}
               </Button>
@@ -545,9 +540,6 @@ export default function SettingsPage() {
               ))}
             </div>
             <FormActions>
-              {defaultsSuccess && (
-                <span className="text-sm font-medium text-success">Saved</span>
-              )}
               <Button onClick={saveCheckoutDefaults} disabled={defaultsSaving}>
                 {defaultsSaving ? "Saving…" : "Save"}
               </Button>
