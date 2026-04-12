@@ -1,5 +1,6 @@
 import { startListener } from "./listener";
 import { runKeeper } from "./keeper";
+import { runTrialConverterTick, runTrialReminderTick } from "./trial-converter";
 import { config } from "./config";
 import { createDb } from "@paylix/db/client";
 import { systemStatus } from "@paylix/db/schema";
@@ -74,6 +75,12 @@ async function main() {
     keeperRunning = true;
     try {
       await runKeeper();
+      await runTrialConverterTick().catch((err) => {
+        console.error("[Indexer] trial converter failed:", err);
+      });
+      await runTrialReminderTick().catch((err) => {
+        console.error("[Indexer] trial reminder failed:", err);
+      });
     } catch (err) {
       console.error("[Keeper] Unhandled error:", err);
     } finally {
