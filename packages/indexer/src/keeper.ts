@@ -8,6 +8,7 @@ import {
   classifyDunningOutcome,
   computeNextRetryAt,
   RETRY_SCHEDULE_HOURS,
+  MAX_PAST_DUE_DAYS,
 } from "./dunning";
 import { sendSubscriptionEmail } from "./emails/send-subscription-email";
 
@@ -194,4 +195,26 @@ export async function runKeeper() {
   }
 
   console.log("[Keeper] Charge check complete.");
+}
+
+export async function sweepLongPastDue() {
+  const db = createDb(config.databaseUrl);
+  const cutoff = new Date(Date.now() - MAX_PAST_DUE_DAYS * 24 * 60 * 60 * 1000);
+
+  const expired = await db
+    .update(subscriptions)
+    .set({ status: "cancelled" })
+    .where(
+      and(
+        eq(subscriptions.status, "past_due"),
+        lte(subscriptions.pastDueSince, cutoff),
+      ),
+    )
+    .returning({ id: subscriptions.id });
+
+  if (expired.length > 0) {
+    console.log(`[Keeper] Auto-cancelled ${expired.length} long-past-due subscriptions`);
+  }
+
+  return expired.length;
 }

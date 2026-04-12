@@ -1,5 +1,5 @@
 import { startListener } from "./listener";
-import { runKeeper } from "./keeper";
+import { runKeeper, sweepLongPastDue } from "./keeper";
 import { runTrialConverterTick, runTrialReminderTick } from "./trial-converter";
 import { config } from "./config";
 import { createDb } from "@paylix/db/client";
@@ -75,6 +75,9 @@ async function main() {
     keeperRunning = true;
     try {
       await runKeeper();
+      await sweepLongPastDue().catch((err) => {
+        console.error("[Indexer] sweepLongPastDue failed:", err);
+      });
       await runTrialConverterTick().catch((err) => {
         console.error("[Indexer] trial converter failed:", err);
       });
