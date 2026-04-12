@@ -1,12 +1,29 @@
 import { and, count, eq, gte, lte, sum, sql } from "drizzle-orm";
-import { payments, subscriptions, merchantProfiles, merchantPayoutWallets } from "@paylix/db/schema";
+import { payments, subscriptions, merchantProfiles, merchantPayoutWallets, products } from "@paylix/db/schema";
 import { db } from "@/lib/db";
 import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
 import { FinishSetupBanner } from "@/components/finish-setup-banner";
+import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
 import OverviewView from "./overview-view";
 
 export default async function OverviewPage() {
   const { organizationId } = await getActiveOrgOrRedirect();
+
+  const [productCountResult] = await db
+    .select({ total: count() })
+    .from(products)
+    .where(eq(products.organizationId, organizationId));
+
+  const hasProducts = (productCountResult?.total ?? 0) > 0;
+
+  if (!hasProducts) {
+    const [wallet] = await db
+      .select()
+      .from(merchantPayoutWallets)
+      .where(eq(merchantPayoutWallets.organizationId, organizationId));
+
+    return <OnboardingWizard hasWallet={!!wallet} />;
+  }
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
