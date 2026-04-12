@@ -22,7 +22,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { MonoText } from "@/components/mono-text";
 import { UsdcBadge } from "@/components/usdc-badge";
 
@@ -753,10 +752,10 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
   }
 
   return (
-    <Card className="w-full max-w-[480px] p-8 shadow-2xl">
-      {/* Product Info */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
+    <Card className="w-full max-w-[720px] shadow-2xl overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-2">
+        {/* Left: Product Info */}
+        <div className="p-8 lg:border-r lg:border-border">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-[-0.4px]">
               {session.productName}
@@ -771,303 +770,318 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
               )
             )}
           </div>
+
           {session.productDescription && (
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
               {session.productDescription}
             </p>
           )}
+
+          <div className="mt-6">
+            <div className="flex items-baseline gap-2">
+              <MonoText className="text-3xl font-semibold tracking-[-0.3px]">
+                ${displayAmount}
+              </MonoText>
+              <UsdcBadge symbol={session.tokenSymbol ?? "USDC"} />
+            </div>
+            {session.type === "subscription" && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {formatInterval(session.billingInterval)}
+              </p>
+            )}
+          </div>
+
           {session.type === "subscription" && (
-            <p className="mt-2 text-[13px] leading-snug text-muted-foreground">
-              {isTrial ? (
-                <>
-                  Free for{" "}
-                  <span className="font-mono text-foreground">{trialDuration}</span>
-                  , then{" "}
-                  <span className="font-medium text-foreground">
-                    ${displayAmount} {session.tokenSymbol ?? "USDC"}
-                  </span>{" "}
-                  {formatInterval(session.billingInterval)}.
-                </>
-              ) : (
-                <>
-                  You&apos;ll be charged{" "}
-                  <span className="font-medium text-foreground">
-                    ${displayAmount} {session.tokenSymbol ?? "USDC"}
-                  </span>{" "}
-                  {formatInterval(session.billingInterval)} until cancelled.
-                </>
-              )}
-            </p>
-          )}
-          {productHasTrial && trialEligible === false && trialIneligibleReason === "wallet_inactive" && (
-            <p className="mt-2 text-[12px] italic text-muted-foreground">
-              Free trials require a wallet with on-chain activity. Please use an established wallet or subscribe at the regular price.
-            </p>
-          )}
-          {productHasTrial && trialEligible === false && trialIneligibleReason !== "wallet_inactive" && (
-            <p className="mt-2 text-[12px] italic text-muted-foreground">
-              You&apos;ve already used the free trial for this product.
-            </p>
-          )}
-        </div>
-        <div className="flex flex-shrink-0 flex-col items-end gap-1">
-          <div className="flex items-baseline gap-2">
-            <MonoText className="text-2xl font-semibold tracking-[-0.3px]">
-              ${displayAmount}
-            </MonoText>
-            <UsdcBadge symbol={session.tokenSymbol ?? "USDC"} />
-          </div>
-          {session.type === "subscription" && (
-            <span className="text-[11px] text-muted-foreground">
-              {formatInterval(session.billingInterval)}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Indexer Offline Warning */}
-      {!indexerOnline && (
-        <Alert variant="default" className="mt-6 border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10">
-          <AlertTitle className="text-[color:var(--warning)]">
-            Payment processing unavailable
-          </AlertTitle>
-          <AlertDescription>
-            Our payment system is temporarily down. Please try again in a few
-            minutes.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Customer Fields */}
-      {hasCheckoutFields && (
-        <>
-          <Separator className="my-6" />
-          <div className="flex flex-col gap-3">
-            {session.checkoutFields?.firstName && (
-              <div className="space-y-1.5">
-                <Label>First Name</Label>
-                <Input
-                  type="text"
-                  value={customerFields.firstName}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      firstName: e.target.value,
-                    }))
-                  }
-                  placeholder="John"
-                />
-              </div>
-            )}
-            {session.checkoutFields?.lastName && (
-              <div className="space-y-1.5">
-                <Label>Last Name</Label>
-                <Input
-                  type="text"
-                  value={customerFields.lastName}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      lastName: e.target.value,
-                    }))
-                  }
-                  placeholder="Doe"
-                />
-              </div>
-            )}
-            {session.checkoutFields?.email && (
-              <div className="space-y-1.5">
-                <Label>Email</Label>
-                <Input
-                  type="email"
-                  value={customerFields.email}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      email: e.target.value,
-                    }))
-                  }
-                  placeholder="john@example.com"
-                />
-              </div>
-            )}
-            {session.checkoutFields?.phone && (
-              <div className="space-y-1.5">
-                <Label>Phone</Label>
-                <Input
-                  type="tel"
-                  value={customerFields.phone}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      phone: e.target.value,
-                    }))
-                  }
-                  placeholder="+1 (555) 123-4567"
-                />
-              </div>
-            )}
-            {session.collectCountry && (
-              <div className="space-y-1.5">
-                <Label>Country (ISO code)</Label>
-                <Input
-                  type="text"
-                  maxLength={2}
-                  value={customerFields.country}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      country: e.target.value.toUpperCase(),
-                    }))
-                  }
-                  placeholder="DE"
-                />
-              </div>
-            )}
-            {session.collectTaxId && (
-              <div className="space-y-1.5">
-                <Label>Tax / VAT ID (optional)</Label>
-                <Input
-                  type="text"
-                  value={customerFields.taxId}
-                  onChange={(e) =>
-                    setCustomerFields((f) => ({
-                      ...f,
-                      taxId: e.target.value,
-                    }))
-                  }
-                  placeholder="DE123456789"
-                />
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      <Separator className="my-6" />
-
-      {/* Connect Wallet / Pay */}
-      {!isConnected ? (
-        <Button
-          size="xl"
-          onClick={() => open()}
-          disabled={!indexerOnline}
-        >
-          Connect Wallet
-        </Button>
-      ) : (
-        <>
-          <div className="mb-4 flex items-center justify-between rounded-lg border border-border bg-background px-3.5 py-2.5">
-            <MonoText className="text-[13px] text-muted-foreground">
-              {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ""}
-            </MonoText>
-            <button
-              onClick={() => open()}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Disconnect
-            </button>
-          </div>
-
-          {/* Currency switcher — only shown when the product accepts more
-              than one (network, token) pair. Lets the buyer change their
-              mind before signing. pick-currency endpoint accepts active
-              sessions, so the swap just re-locks the session to a new row. */}
-          {availablePrices.length > 1 && (
-            <div className="mb-3">
-              <div className="mb-2 text-xs text-muted-foreground">Pay with</div>
-              <div className="flex flex-col gap-1.5">
-                {availablePrices.map((p) => {
-                  const selected =
-                    p.networkKey === session.networkKey &&
-                    p.tokenSymbol === session.tokenSymbol;
-                  return (
-                    <button
-                      key={`${p.networkKey}:${p.tokenSymbol}`}
-                      onClick={() =>
-                        !selected &&
-                        handlePickCurrency(p.networkKey, p.tokenSymbol)
-                      }
-                      disabled={isPicking || selected}
-                      className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors ${
-                        selected
-                          ? "border-primary/50 bg-primary/5"
-                          : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                      }`}
-                    >
-                      <span className="font-medium text-foreground">
-                        {p.tokenSymbol} on {p.displayLabel}
-                      </span>
-                      <MonoText className="tabular-nums text-muted-foreground">
-                        {formatNativeAmount(
-                          BigInt(p.amount),
-                          p.decimals,
-                          p.tokenSymbol,
-                        )}
-                      </MonoText>
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="mt-4">
+              <p className="text-[13px] leading-snug text-muted-foreground">
+                {isTrial ? (
+                  <>
+                    Free for{" "}
+                    <span className="font-mono text-foreground">{trialDuration}</span>
+                    , then{" "}
+                    <span className="font-medium text-foreground">
+                      ${displayAmount} {session.tokenSymbol ?? "USDC"}
+                    </span>{" "}
+                    {formatInterval(session.billingInterval)}.
+                  </>
+                ) : (
+                  <>
+                    Charged{" "}
+                    <span className="font-medium text-foreground">
+                      ${displayAmount} {session.tokenSymbol ?? "USDC"}
+                    </span>{" "}
+                    {formatInterval(session.billingInterval)} until cancelled.
+                  </>
+                )}
+              </p>
             </div>
           )}
 
-          <Button
-            size="xl"
-            onClick={handlePay}
-            disabled={!indexerOnline || payStep !== "idle" || isPicking}
-          >
-            {payStep === "idle" &&
-              (isTrial
-                ? "Start free trial"
-                : session.type === "subscription"
-                ? `Subscribe for $${displayAmount} ${formatInterval(
-                    session.billingInterval,
-                  )
-                    .replace("per ", "/")
-                    .replace("every 2 weeks", "/2 weeks")}`
-                : `Pay $${displayAmount} ${session.tokenSymbol ?? "USDC"}`)}
-            {payStep === "approving" && "Approving USDC..."}
-            {payStep === "paying" && "Confirm payment..."}
-            {payStep === "confirming" && "Processing..."}
-          </Button>
-          {isTrial && payStep === "idle" && (
-            <p className="mt-2 text-center text-xs text-muted-foreground">
-              No charge today. Cancel anytime before the trial ends.
+          {productHasTrial && trialEligible === false && (
+            <p className="mt-3 text-[12px] italic text-muted-foreground">
+              {trialIneligibleReason === "wallet_inactive"
+                ? "Free trials require a wallet with on-chain activity."
+                : "You've already used the free trial for this product."}
             </p>
           )}
-          {payStep !== "idle" && (
-            <Alert className="mt-3 border-primary/30 bg-primary/5">
-              <AlertDescription className="text-xs">
-                <span className="font-medium text-foreground">
-                  Please don&apos;t close this window.
-                </span>{" "}
-                <span className="text-muted-foreground">
-                  Your payment is being processed on-chain. Closing now may
-                  delay confirmation.
-                </span>
+
+          {session.metadata && Object.keys(session.metadata).length > 0 && (
+            <div className="mt-6 space-y-1.5">
+              {Object.entries(session.metadata).map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{k}</span>
+                  <span className="font-mono text-foreground">{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!indexerOnline && (
+            <Alert variant="default" className="mt-6 border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10">
+              <AlertTitle className="text-[color:var(--warning)]">
+                Payment processing unavailable
+              </AlertTitle>
+              <AlertDescription>
+                Our payment system is temporarily down. Please try again in a few
+                minutes.
               </AlertDescription>
             </Alert>
           )}
-          {payError && (
-            <Alert variant="destructive" className="mt-3">
-              <AlertDescription className="text-xs">{payError}</AlertDescription>
-            </Alert>
-          )}
-        </>
-      )}
 
-      <p className={`${isTrial ? "mt-2" : "mt-4"} text-center text-xs text-muted-foreground`}>
-        Connect a wallet with {session.tokenSymbol ?? "USDC"} on{" "}
-        {session.networkKey &&
-        NETWORKS[session.networkKey as keyof typeof NETWORKS]
-          ? NETWORKS[session.networkKey as keyof typeof NETWORKS].chainName
-          : "the active network"}{" "}
-        to pay securely through our payment contract.
-      </p>
+          <div className="mt-8">
+            <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
+              Powered by Paylix
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Action area */}
+        <div className="flex flex-col justify-between p-8">
+          <div className="flex flex-col gap-4">
+            {hasCheckoutFields && (
+              <div className="flex flex-col gap-3">
+                {session.checkoutFields?.firstName && (
+                  <div className="space-y-1.5">
+                    <Label>First Name</Label>
+                    <Input
+                      type="text"
+                      value={customerFields.firstName}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          firstName: e.target.value,
+                        }))
+                      }
+                      placeholder="John"
+                    />
+                  </div>
+                )}
+                {session.checkoutFields?.lastName && (
+                  <div className="space-y-1.5">
+                    <Label>Last Name</Label>
+                    <Input
+                      type="text"
+                      value={customerFields.lastName}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          lastName: e.target.value,
+                        }))
+                      }
+                      placeholder="Doe"
+                    />
+                  </div>
+                )}
+                {session.checkoutFields?.email && (
+                  <div className="space-y-1.5">
+                    <Label>Email</Label>
+                    <Input
+                      type="email"
+                      value={customerFields.email}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          email: e.target.value,
+                        }))
+                      }
+                      placeholder="john@example.com"
+                    />
+                  </div>
+                )}
+                {session.checkoutFields?.phone && (
+                  <div className="space-y-1.5">
+                    <Label>Phone</Label>
+                    <Input
+                      type="tel"
+                      value={customerFields.phone}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          phone: e.target.value,
+                        }))
+                      }
+                      placeholder="+1 (555) 123-4567"
+                    />
+                  </div>
+                )}
+                {session.collectCountry && (
+                  <div className="space-y-1.5">
+                    <Label>Country (ISO code)</Label>
+                    <Input
+                      type="text"
+                      maxLength={2}
+                      value={customerFields.country}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          country: e.target.value.toUpperCase(),
+                        }))
+                      }
+                      placeholder="DE"
+                    />
+                  </div>
+                )}
+                {session.collectTaxId && (
+                  <div className="space-y-1.5">
+                    <Label>Tax / VAT ID (optional)</Label>
+                    <Input
+                      type="text"
+                      value={customerFields.taxId}
+                      onChange={(e) =>
+                        setCustomerFields((f) => ({
+                          ...f,
+                          taxId: e.target.value,
+                        }))
+                      }
+                      placeholder="DE123456789"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!isConnected ? (
+              <Button
+                size="xl"
+                onClick={() => open()}
+                disabled={!indexerOnline}
+              >
+                Connect Wallet
+              </Button>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3.5 py-2.5">
+                  <MonoText className="text-[13px] text-muted-foreground">
+                    {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ""}
+                  </MonoText>
+                  <button
+                    onClick={() => open()}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+
+                {availablePrices.length > 1 && (
+                  <div>
+                    <div className="mb-2 text-xs text-muted-foreground">Pay with</div>
+                    <div className="flex flex-col gap-1.5">
+                      {availablePrices.map((p) => {
+                        const selected =
+                          p.networkKey === session.networkKey &&
+                          p.tokenSymbol === session.tokenSymbol;
+                        return (
+                          <button
+                            key={`${p.networkKey}:${p.tokenSymbol}`}
+                            onClick={() =>
+                              !selected &&
+                              handlePickCurrency(p.networkKey, p.tokenSymbol)
+                            }
+                            disabled={isPicking || selected}
+                            className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors ${
+                              selected
+                                ? "border-primary/50 bg-primary/5"
+                                : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                            }`}
+                          >
+                            <span className="font-medium text-foreground">
+                              {p.tokenSymbol} on {p.displayLabel}
+                            </span>
+                            <MonoText className="tabular-nums text-muted-foreground">
+                              {formatNativeAmount(
+                                BigInt(p.amount),
+                                p.decimals,
+                                p.tokenSymbol,
+                              )}
+                            </MonoText>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <Button
+                  size="xl"
+                  onClick={handlePay}
+                  disabled={!indexerOnline || payStep !== "idle" || isPicking}
+                >
+                  {payStep === "idle" &&
+                    (isTrial
+                      ? "Start free trial"
+                      : session.type === "subscription"
+                      ? `Subscribe for $${displayAmount} ${formatInterval(
+                          session.billingInterval,
+                        )
+                          .replace("per ", "/")
+                          .replace("every 2 weeks", "/2 weeks")}`
+                      : `Pay $${displayAmount} ${session.tokenSymbol ?? "USDC"}`)}
+                  {payStep === "approving" && "Approving USDC..."}
+                  {payStep === "paying" && "Confirm payment..."}
+                  {payStep === "confirming" && "Processing..."}
+                </Button>
+
+                {isTrial && payStep === "idle" && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    No charge today. Cancel anytime before the trial ends.
+                  </p>
+                )}
+
+                {payStep !== "idle" && (
+                  <Alert className="border-primary/30 bg-primary/5">
+                    <AlertDescription className="text-xs">
+                      <span className="font-medium text-foreground">
+                        Please don&apos;t close this window.
+                      </span>{" "}
+                      <span className="text-muted-foreground">
+                        Your payment is being processed on-chain. Closing now may
+                        delay confirmation.
+                      </span>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {payError && (
+                  <Alert variant="destructive">
+                    <AlertDescription className="text-xs">{payError}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
+          </div>
+
+          <p className="mt-6 text-center text-[11px] text-muted-foreground">
+            Pay securely with {session.tokenSymbol ?? "USDC"} on{" "}
+            {session.networkKey &&
+            NETWORKS[session.networkKey as keyof typeof NETWORKS]
+              ? NETWORKS[session.networkKey as keyof typeof NETWORKS].chainName
+              : "the active network"}
+          </p>
+        </div>
+      </div>
 
       {(isPolling || status === "viewed") && (
-        <div className="mt-6 flex items-center justify-center gap-2">
+        <div className="border-t border-border px-8 py-3 flex items-center justify-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
@@ -1077,12 +1091,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
           </span>
         </div>
       )}
-
-      <div className="mt-8 text-center">
-        <span className="text-xs tracking-[0.2px] text-muted-foreground">
-          Powered by Paylix
-        </span>
-      </div>
     </Card>
   );
 }
