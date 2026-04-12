@@ -196,3 +196,54 @@ export async function runTrialConverterTick() {
     resolveUsdcAddress: resolveUsdcAddressForNetwork,
   });
 }
+
+/**
+ * Sends a "trial ending soon" reminder for trialing subscriptions whose
+ * trial_ends_at falls within the next 3 days. Idempotent: each row is only
+ * notified once, tracked via `trial_reminder_sent_at`.
+ *
+ * Runs on the same tick as runTrialConverterTick.
+ */
+export async function runTrialReminderTick(): Promise<{ scanned: number }> {
+  const { createDb } = await import("@paylix/db/client");
+  const { subscriptions } = await import("@paylix/db/schema");
+  const { and, eq, gt, lte, isNull } = await import("drizzle-orm");
+  const { config } = await import("./config");
+
+  const db = createDb(config.databaseUrl);
+  const now = new Date();
+  const threshold = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+  const rows = await db
+    .select({
+      id: subscriptions.id,
+      organizationId: subscriptions.organizationId,
+      customerId: subscriptions.customerId,
+      trialEndsAt: subscriptions.trialEndsAt,
+    })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.status, "trialing"),
+        isNull(subscriptions.trialReminderSentAt),
+        lte(subscriptions.trialEndsAt, threshold),
+        gt(subscriptions.trialEndsAt, now),
+      ),
+    )
+    .limit(50);
+
+  for (const row of rows) {
+    try {
+      // TODO: wire real mailer in Task 13.
+      console.log("[TrialReminder] would send for", row.id);
+      await db
+        .update(subscriptions)
+        .set({ trialReminderSentAt: new Date() })
+        .where(eq(subscriptions.id, row.id));
+    } catch (err) {
+      console.error("[TrialReminder] failed for", row.id, err);
+    }
+  }
+
+  return { scanned: rows.length };
+}
