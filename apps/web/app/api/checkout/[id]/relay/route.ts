@@ -22,6 +22,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { signPortalToken } from "@/lib/portal-tokens";
 import { normalizeEmail, isDisposableEmail } from "@/lib/email-normalize";
 import { checkWalletActivity } from "@/lib/wallet-activity";
+import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 
 function errorResponse(err: ValidationError, status = 400) {
   return NextResponse.json({ error: err }, { status });
@@ -340,7 +341,15 @@ export async function POST(
       })
       .where(eq(checkoutSessions.id, session.id));
 
-    // TODO: fire subscription.trial_started webhook once apps/web webhook dispatcher is factored out
+    void dispatchWebhooks(session.organizationId, "subscription.trial_started", {
+      subscriptionId: newSub.id,
+      checkoutId: session.id,
+      productId: session.productId,
+      customerId: customer.customerId,
+      subscriberAddress: buyer,
+      trialEndsAt: trialEndsAt.toISOString(),
+      metadata: newSub.metadata ?? {},
+    }).catch((err) => console.error("[Relay] trial_started webhook failed:", err));
 
     return NextResponse.json({
       trial: true,
