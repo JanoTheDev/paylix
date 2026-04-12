@@ -7,6 +7,19 @@ import { validateWebhookUrl } from "./url-safety";
 
 const db = createDb(config.databaseUrl);
 
+const urlDeliveryCounts = new Map<string, { count: number; resetAt: number }>();
+
+function isUrlRateLimited(url: string, maxPerMinute = 10): boolean {
+  const now = Date.now();
+  const entry = urlDeliveryCounts.get(url);
+  if (!entry || entry.resetAt < now) {
+    urlDeliveryCounts.set(url, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  entry.count++;
+  return entry.count > maxPerMinute;
+}
+
 export async function dispatchWebhooks(
   organizationId: string,
   event: string,
@@ -30,6 +43,11 @@ export async function dispatchWebhooks(
   const payload = JSON.stringify(eventPayload);
 
   for (const wh of matchingWebhooks) {
+    if (isUrlRateLimited(wh.url)) {
+      console.warn(`[Webhook] Rate limited URL ${wh.url}, skipping delivery`);
+      continue;
+    }
+
     const urlError = await validateWebhookUrl(wh.url);
     if (urlError) {
       await db.insert(webhookDeliveries).values({
@@ -134,6 +152,11 @@ export async function dispatchSystemWebhook(
   const payload = JSON.stringify(eventPayload);
 
   for (const wh of matching) {
+    if (isUrlRateLimited(wh.url)) {
+      console.warn(`[Webhook] Rate limited URL ${wh.url}, skipping delivery`);
+      continue;
+    }
+
     const urlError = await validateWebhookUrl(wh.url);
     if (urlError) {
       await db.insert(webhookDeliveries).values({
@@ -182,6 +205,11 @@ export async function retryFailedWebhooks() {
       .from(webhooks)
       .where(eq(webhooks.id, delivery.webhookId));
     if (!webhook || !webhook.isActive) continue;
+
+    if (isUrlRateLimited(webhook.url)) {
+      console.warn(`[Webhook] Rate limited URL ${webhook.url}, skipping retry`);
+      continue;
+    }
 
     const payload = JSON.stringify(delivery.payload);
     const newAttempt = delivery.attempts + 1;
