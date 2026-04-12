@@ -116,6 +116,8 @@ export function PortalClient({
   );
   const [cancelTrialTarget, setCancelTrialTarget] =
     useState<PortalSubscription | null>(null);
+  const [pauseTarget, setPauseTarget] = useState<PortalSubscription | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<PortalSubscription | null>(null);
 
   async function handleConfirmed() {
     // Trigger the server-component refresh and hold the dialog's "Working..."
@@ -156,6 +158,8 @@ export function PortalClient({
             {subscriptions.map((sub) => {
               const canCancel =
                 sub.status === "active" || sub.status === "past_due";
+              const canPause = sub.status === "active";
+              const canResume = sub.status === "paused";
               const isTrialing = sub.status === "trialing";
               const isTrialFailed = sub.status === "trial_conversion_failed";
               return (
@@ -202,15 +206,35 @@ export function PortalClient({
                       <span className="text-xs font-mono text-foreground-muted">
                         {sub.tokenSymbol}
                       </span>
-                      {canCancel && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => setCancelTarget(sub)}
-                        >
-                          Cancel
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {canPause && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPauseTarget(sub)}
+                          >
+                            Pause
+                          </Button>
+                        )}
+                        {canResume && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setResumeTarget(sub)}
+                          >
+                            Resume
+                          </Button>
+                        )}
+                        {canCancel && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setCancelTarget(sub)}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -374,6 +398,64 @@ export function PortalClient({
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error || "Cancel trial failed");
+          }
+          await handleConfirmed();
+        }}
+      />
+
+      <ConfirmDialog
+        open={pauseTarget !== null}
+        onOpenChange={(v) => !v && setPauseTarget(null)}
+        title="Pause subscription?"
+        description={
+          pauseTarget
+            ? `Pause "${pauseTarget.productName}"? Billing will be paused and your next charge date will shift accordingly.`
+            : "Pause this subscription?"
+        }
+        confirmLabel="Pause subscription"
+        onConfirm={async () => {
+          if (!pauseTarget) return;
+          const res = await fetch("/api/portal/pause-subscription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subscriptionId: pauseTarget.id,
+              customerId,
+              token: portalToken,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error?.message || "Pause failed");
+          }
+          await handleConfirmed();
+        }}
+      />
+
+      <ConfirmDialog
+        open={resumeTarget !== null}
+        onOpenChange={(v) => !v && setResumeTarget(null)}
+        title="Resume subscription?"
+        description={
+          resumeTarget
+            ? `Resume "${resumeTarget.productName}"? Billing will restart and your next charge date will be updated.`
+            : "Resume this subscription?"
+        }
+        confirmLabel="Resume subscription"
+        onConfirm={async () => {
+          if (!resumeTarget) return;
+          const res = await fetch("/api/portal/resume-subscription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subscriptionId: resumeTarget.id,
+              customerId,
+              token: portalToken,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error?.message || "Resume failed");
           }
           await handleConfirmed();
         }}
