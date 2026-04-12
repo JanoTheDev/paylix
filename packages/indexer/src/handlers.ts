@@ -410,7 +410,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       and(
         eq(subscriptions.status, "trialing"),
         sql`lower(${subscriptions.subscriberAddress}) = lower(${args.subscriber})`,
-        eq(subscriptions.contractAddress, contractAddr),
+        sql`lower(${subscriptions.contractAddress}) = lower(${contractAddr})`,
         sql`${subscriptions.pendingPermitSignature}->'intent'->>'amount' = ${args.amount.toString()}`,
         sql`(${subscriptions.pendingPermitSignature}->'intent'->>'interval')::bigint = ${args.interval}::bigint`,
       ),

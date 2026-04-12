@@ -248,7 +248,7 @@ export async function POST(
         organizationId: session.organizationId,
         customerId: customer.id,
         subscriberAddress: buyer,
-        contractAddress: CONTRACTS.subscriptionManager,
+        contractAddress: CONTRACTS.subscriptionManager.toLowerCase(),
         networkKey: session.networkKey!,
         tokenSymbol: session.tokenSymbol!,
         status: "trialing",
