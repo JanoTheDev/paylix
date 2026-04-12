@@ -255,7 +255,7 @@ function UserProfileMenu({
       {open && (
         <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-lg border border-border bg-surface-1 shadow-xl">
           <Link
-            href="/settings"
+            href="/user/settings"
             onClick={() => {
               setOpen(false);
               onNavigate?.();
@@ -263,7 +263,7 @@ function UserProfileMenu({
             className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <Settings size={14} strokeWidth={1.75} />
-            Settings
+            Account settings
           </Link>
           <div className="border-t border-border" />
           <button
