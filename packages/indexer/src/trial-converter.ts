@@ -190,8 +190,16 @@ export async function runTrialConverterTick() {
       await db.update(subscriptions).set(patch as never).where(eq(subscriptions.id, id));
     },
     sendMail: async (args) => {
-      // Wired to real mailer in Task 13. For now, log so the tick still runs.
-      console.log("[TrialConverter] sendMail stub:", args);
+      try {
+        const { sendTrialEmail } = await import("./emails/send-trial-email");
+        await sendTrialEmail({
+          kind: "trial-conversion-failed",
+          subscriptionId: args.subscriptionId,
+          reason: args.reason,
+        });
+      } catch (err) {
+        console.error("[TrialConverter] sendTrialEmail failed:", err);
+      }
     },
     resolveUsdcAddress: resolveUsdcAddressForNetwork,
   });
@@ -234,8 +242,11 @@ export async function runTrialReminderTick(): Promise<{ scanned: number }> {
 
   for (const row of rows) {
     try {
-      // TODO: wire real mailer in Task 13.
-      console.log("[TrialReminder] would send for", row.id);
+      const { sendTrialEmail } = await import("./emails/send-trial-email");
+      await sendTrialEmail({
+        kind: "trial-ending-soon",
+        subscriptionId: row.id,
+      });
       await db
         .update(subscriptions)
         .set({ trialReminderSentAt: new Date() })
