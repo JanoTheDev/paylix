@@ -27,6 +27,7 @@ export interface PortalSubscription {
   trialEndsAt: string | null;
   trialConversionLastError: string | null;
   productId: string;
+  pausedBy?: string | null;
 }
 
 function humanizeTrialReason(reason: string | null): string {
@@ -159,7 +160,8 @@ export function PortalClient({
               const canCancel =
                 sub.status === "active" || sub.status === "past_due";
               const canPause = sub.status === "active";
-              const canResume = sub.status === "paused";
+              const merchantPaused = sub.status === "paused" && sub.pausedBy === "merchant";
+              const canResume = sub.status === "paused" && !merchantPaused;
               const isTrialing = sub.status === "trialing";
               const isTrialFailed = sub.status === "trial_conversion_failed";
               return (
@@ -224,6 +226,20 @@ export function PortalClient({
                           >
                             Resume
                           </Button>
+                        )}
+                        {merchantPaused && (
+                          <div className="flex flex-col items-end gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled
+                            >
+                              Paused by merchant
+                            </Button>
+                            <span className="text-[11px] text-foreground-muted">
+                              Contact the merchant to resume.
+                            </span>
+                          </div>
                         )}
                         {canCancel && (
                           <Button

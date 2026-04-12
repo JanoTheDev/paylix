@@ -73,6 +73,7 @@ export default async function PortalPage({
       trialEndsAt: subscriptions.trialEndsAt,
       trialConversionLastError: subscriptions.trialConversionLastError,
       productId: subscriptions.productId,
+      pausedBy: subscriptions.pausedBy,
     })
     .from(subscriptions)
     .innerJoin(products, eq(subscriptions.productId, products.id))
@@ -130,6 +131,7 @@ export default async function PortalPage({
     trialEndsAt: r.trialEndsAt ? r.trialEndsAt.toISOString() : null,
     trialConversionLastError: r.trialConversionLastError,
     productId: r.productId,
+    pausedBy: r.pausedBy,
   }));
 
   const portalPayments: PortalPayment[] = payRows.map((r) => ({

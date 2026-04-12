@@ -18,6 +18,7 @@ export interface ActionItem {
   onSelect: () => void;
   variant?: "default" | "destructive";
   separatorBefore?: boolean;
+  disabled?: boolean;
 }
 
 interface ActionMenuProps {
@@ -40,6 +41,7 @@ export function ActionMenu({ items, label = "Actions" }: ActionMenuProps) {
             {item.separatorBefore && <DropdownMenuSeparator />}
             <DropdownMenuItem
               onSelect={item.onSelect}
+              disabled={item.disabled}
               className={cn(
                 "gap-2",
                 item.variant === "destructive" &&

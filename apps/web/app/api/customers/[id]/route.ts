@@ -56,6 +56,7 @@ export async function GET(
           trialEndsAt: subscriptions.trialEndsAt,
           productName: products.name,
           metadata: subscriptions.metadata,
+          pausedBy: subscriptions.pausedBy,
         })
         .from(subscriptions)
         .leftJoin(products, eq(subscriptions.productId, products.id))

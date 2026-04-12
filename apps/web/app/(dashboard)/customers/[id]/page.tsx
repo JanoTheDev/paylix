@@ -61,6 +61,7 @@ export default async function CustomerDetailPage({
           trialEndsAt: subscriptions.trialEndsAt,
           productName: products.name,
           metadata: subscriptions.metadata,
+          pausedBy: subscriptions.pausedBy,
         })
         .from(subscriptions)
         .leftJoin(products, eq(subscriptions.productId, products.id))
@@ -117,6 +118,7 @@ export default async function CustomerDetailPage({
         trialEndsAt: s.trialEndsAt,
         productName: s.productName,
         metadata: (s.metadata as Record<string, string> | null) ?? {},
+        pausedBy: s.pausedBy,
       }))}
       invoices={customerInvoices.map((i) => ({
         id: i.id,

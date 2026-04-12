@@ -13,9 +13,10 @@ interface Props {
   subscriptionId: string;
   status: ActionableStatus;
   productName?: string | null;
+  pausedBy?: string | null;
 }
 
-export function SubscriptionActionsMenu({ subscriptionId, status, productName }: Props) {
+export function SubscriptionActionsMenu({ subscriptionId, status, productName, pausedBy }: Props) {
   const router = useRouter();
   const [cancelOpen, setCancelOpen] = useState(false);
 
@@ -69,12 +70,15 @@ export function SubscriptionActionsMenu({ subscriptionId, status, productName }:
       { ...cancelItem, separatorBefore: true },
     ];
   } else if (status === "paused") {
+    const customerPaused = pausedBy === "customer";
     items = [
       {
-        label: "Resume subscription",
+        label: customerPaused ? "Paused by customer" : "Resume subscription",
         icon: <PlayCircle className="h-3.5 w-3.5" />,
         onSelect: handleResume,
+        disabled: customerPaused,
       },
+      { ...cancelItem, separatorBefore: true },
     ];
   } else {
     items = [cancelItem];

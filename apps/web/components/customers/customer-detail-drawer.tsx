@@ -54,6 +54,7 @@ interface CustomerData {
     trialEndsAt: string | null;
     productName: string | null;
     metadata: Record<string, string> | null;
+    pausedBy?: string | null;
   }>;
   invoices: Array<{
     id: string;
@@ -527,6 +528,7 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
                           subscriptionId={s.id}
                           status={s.status}
                           productName={s.productName}
+                          pausedBy={s.pausedBy}
                         />
                       )}
                     </div>

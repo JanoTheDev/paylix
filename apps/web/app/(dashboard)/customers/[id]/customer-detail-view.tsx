@@ -44,6 +44,7 @@ type CustomerSubscriptionRow = {
   trialEndsAt: Date | null;
   productName: string | null;
   metadata: Record<string, string>;
+  pausedBy?: string | null;
 };
 
 type CustomerInvoiceRow = {
@@ -206,6 +207,7 @@ export default function CustomerDetailView({
             subscriptionId={row.id}
             status={row.status}
             productName={row.productName}
+            pausedBy={row.pausedBy}
           />
         );
       }
