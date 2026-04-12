@@ -35,7 +35,7 @@ const mockPrice = {
 };
 
 let txInsertedValues: unknown[] = [];
-let txUpdatePatch: unknown = null;
+let _txUpdatePatch: unknown = null;
 let txSelectReturn: unknown[] = [];
 
 const mockTx = {
@@ -47,7 +47,7 @@ const mockTx = {
   }),
   update: vi.fn().mockReturnValue({
     set: vi.fn().mockImplementation((patch: unknown) => {
-      txUpdatePatch = patch;
+      _txUpdatePatch = patch;
       return {
         where: vi.fn().mockReturnValue({
           returning: vi.fn().mockResolvedValue([mockProduct]),
@@ -100,7 +100,7 @@ describe("Products API integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     txInsertedValues = [];
-    txUpdatePatch = null;
+    _txUpdatePatch = null;
     txSelectReturn = [mockProduct];
   });
 

@@ -211,7 +211,7 @@ export function OnboardingWizard({
     }
   }
 
-  const currentStepIndex = step;
+
   const totalSteps = hasWallet ? 3 : 4;
   const displayStep = hasWallet && step >= 3 ? step - 1 : step;
 
@@ -250,7 +250,7 @@ export function OnboardingWizard({
             Welcome to Paylix
           </h1>
           <p className="mt-2 max-w-md text-sm text-foreground-muted">
-            Let's create your first product and start accepting payments in
+            Let&apos;s create your first product and start accepting payments in
             under 2 minutes.
           </p>
           <Button className="mt-6" onClick={() => setStep(2)}>
@@ -480,7 +480,7 @@ export function OnboardingWizard({
       {step === 4 && (
         <div className="flex flex-col items-center text-center">
           <CheckCircle2 size={48} className="mb-4 text-primary" />
-          <h2 className="text-xl font-semibold">You're all set!</h2>
+          <h2 className="text-xl font-semibold">You&apos;re all set!</h2>
           <p className="mt-2 text-sm text-foreground-muted">
             Your first product is ready.
             {checkoutUrl
