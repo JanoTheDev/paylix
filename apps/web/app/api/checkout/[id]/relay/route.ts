@@ -80,6 +80,7 @@ export async function POST(
       buyerTaxId: checkoutSessions.buyerTaxId,
       billingInterval: products.billingInterval,
       trialDays: products.trialDays,
+      trialMinutes: products.trialMinutes,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -145,10 +146,16 @@ export async function POST(
 
   // 5. Trial subscription branch
   const trialDays = session.trialDays ?? 0;
-  const isTrial = isSubscription && trialDays > 0;
+  const trialMinutes = session.trialMinutes ?? 0;
+  const trialDurationSeconds =
+    trialMinutes > 0
+      ? trialMinutes * 60
+      : trialDays * 24 * 60 * 60;
+  const isTrial = isSubscription && trialDurationSeconds > 0;
 
+  // Permit deadline window: trial duration + 48h grace + 1h slop
   const maxDeadlineWindowSeconds = isTrial
-    ? (trialDays + 2) * 24 * 60 * 60 + 60 * 60
+    ? trialDurationSeconds + 48 * 60 * 60 + 60 * 60
     : 60 * 60;
   const deadlineCheck = validateDeadline(deadline, maxDeadlineWindowSeconds);
   if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
@@ -184,7 +191,7 @@ export async function POST(
       );
     }
 
-    const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+    const trialEndsAt = new Date(Date.now() + trialDurationSeconds * 1000);
 
     const customerIdentifier = session.customerId ?? `anon_${buyer}`;
     let [customer] = await db

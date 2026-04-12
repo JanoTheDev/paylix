@@ -40,6 +40,7 @@ const updateProductSchema = z.object({
   taxLabel: z.string().max(64).nullable().optional(),
   reverseChargeEligible: z.boolean().optional(),
   trialDays: z.number().int().min(0).max(365).nullish(),
+  trialMinutes: z.number().int().min(0).max(60 * 24).nullish(),
 });
 
 export async function PATCH(
@@ -76,6 +77,9 @@ export async function PATCH(
     };
     if (data.trialDays !== undefined) {
       patch.trialDays = data.trialDays;
+    }
+    if (data.trialMinutes !== undefined) {
+      patch.trialMinutes = data.trialMinutes;
     }
 
     const [row] = await tx

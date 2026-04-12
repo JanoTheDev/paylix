@@ -65,6 +65,16 @@ const schema = z
         z.null(),
       ])
       .optional(),
+    trialMinutes: z
+      .union([
+        z
+          .number()
+          .int()
+          .min(0, "Trial minutes must be 0 or greater")
+          .max(1440, "Trial minutes cannot exceed 1440"),
+        z.null(),
+      ])
+      .optional(),
     taxRateBps: z
       .union([
         z
@@ -104,6 +114,7 @@ export type ProductFormData = {
     | "yearly"
     | "";
   trialDays?: number | null;
+  trialMinutes?: number | null;
   metadata: Record<string, string>;
   checkoutFields: {
     firstName: boolean;
@@ -138,6 +149,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
       type: initialData?.type ?? "one_time",
       billingInterval: initialData?.billingInterval ?? "",
       trialDays: initialData?.trialDays ?? null,
+      trialMinutes: initialData?.trialMinutes ?? null,
       taxRateBps: initialData?.taxRateBps ?? null,
       taxLabel: initialData?.taxLabel ?? null,
       reverseChargeEligible: initialData?.reverseChargeEligible ?? false,
@@ -150,6 +162,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
     if (type !== "subscription") {
       form.setValue("billingInterval", "");
       form.setValue("trialDays", null);
+      form.setValue("trialMinutes", null);
     }
   }, [type, form]);
 
@@ -343,6 +356,10 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
       values.type === "subscription" && values.trialDays
         ? values.trialDays
         : null;
+    payload.trialMinutes =
+      values.type === "subscription" && values.trialMinutes
+        ? values.trialMinutes
+        : null;
 
     try {
       const url =
@@ -491,6 +508,38 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                     <p className="text-xs text-foreground-muted">
                       Customers start the trial without being charged. First
                       charge happens automatically when the trial ends.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {type === "subscription" && (
+              <FormField
+                control={form.control}
+                name="trialMinutes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Trial minutes (testing)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={1440}
+                        step={1}
+                        placeholder="0"
+                        className="font-mono"
+                        value={field.value ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          field.onChange(v === "" ? null : Number(v));
+                        }}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-foreground-muted">
+                      For testing only — overrides trial days when set. The
+                      trial converts after this many minutes instead.
                     </p>
                     <FormMessage />
                   </FormItem>

@@ -63,6 +63,7 @@ export default async function EditProductPage({
         type: product.type,
         billingInterval: product.billingInterval ?? "",
         trialDays: product.trialDays ?? null,
+        trialMinutes: product.trialMinutes ?? null,
         metadata: (product.metadata as Record<string, string>) ?? {},
         checkoutFields: {
           firstName:
