@@ -110,20 +110,23 @@ export async function convertExpiredTrials(
       // handler will do that during match-and-activate (Task 10).
     } catch (err) {
       const category = classifyTrialConversionError(err);
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[TrialConverter] writeContract reverted for ${row.id} (${category}):`, rawMessage);
+      const errorDetail = `${category}: ${rawMessage}`.slice(0, 500);
       const nextAttempts = row.trialConversionAttempts + 1;
       const shouldFail = isTerminal(category) || nextAttempts >= MAX_TRIAL_CONVERSION_ATTEMPTS;
       if (shouldFail) {
         await updateSub(row.id, {
           status: "trial_conversion_failed",
           trialConversionAttempts: nextAttempts,
-          trialConversionLastError: category,
+          trialConversionLastError: errorDetail,
         });
         await sendMail({ template: "trial-conversion-failed", subscriptionId: row.id, reason: category });
         failed++;
       } else {
         await updateSub(row.id, {
           trialConversionAttempts: nextAttempts,
-          trialConversionLastError: category,
+          trialConversionLastError: errorDetail,
         });
       }
     }
@@ -163,7 +166,16 @@ export async function runTrialConverterTick() {
   }
 
   const db = createDb(config.databaseUrl);
-  const account = privateKeyToAccount(config.keeperPrivateKey);
+  // createSubscriptionWithPermit is gated by `onlyRelayer` on the contract, so
+  // we MUST use the relayer wallet here, not the keeper. The keeper wallet is
+  // only whitelisted for chargeSubscription.
+  const relayerKey = config.relayerPrivateKey;
+  if (!relayerKey) {
+    throw new Error(
+      "RELAYER_PRIVATE_KEY is required for trial conversion. Set it in the indexer env.",
+    );
+  }
+  const account = privateKeyToAccount(relayerKey);
   const walletClient = createWalletClient({ account, chain: config.chain, transport: http(config.rpcUrl) });
 
   const now = new Date();

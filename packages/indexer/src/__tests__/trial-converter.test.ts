@@ -86,7 +86,7 @@ describe("convertExpiredTrials", () => {
     });
     expect(updateSub).toHaveBeenCalledWith("sub-2", expect.objectContaining({
       status: "trial_conversion_failed",
-      trialConversionLastError: "permit_expired",
+      trialConversionLastError: expect.stringContaining("permit_expired"),
     }));
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
       template: "trial-conversion-failed",
@@ -105,7 +105,7 @@ describe("convertExpiredTrials", () => {
     });
     expect(updateSub).toHaveBeenCalledWith("sub-3", expect.objectContaining({
       trialConversionAttempts: 1,
-      trialConversionLastError: "insufficient_balance",
+      trialConversionLastError: expect.stringContaining("insufficient_balance"),
     }));
     expect(updateSub).not.toHaveBeenCalledWith("sub-3", expect.objectContaining({
       status: "trial_conversion_failed",
