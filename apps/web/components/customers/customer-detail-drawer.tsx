@@ -10,8 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MetadataEditor } from "@/components/metadata-editor";
-import { CancelSubscriptionButton } from "@/components/subscriptions/cancel-subscription-button";
-import { PauseResumeSubscriptionButton } from "@/components/subscriptions/pause-resume-subscription-button";
+import { SubscriptionActionsMenu } from "@/components/subscriptions/subscription-actions-menu";
 import { TrialActionButton } from "@/components/subscriptions/trial-action-button";
 import { formatTrialRemaining } from "@/lib/format-trial";
 import { cn } from "@/lib/utils";
@@ -521,28 +520,13 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
                           productName={s.productName}
                         />
                       )}
-                      {s.status === "active" && (
-                        <div className="flex items-center gap-1">
-                          <PauseResumeSubscriptionButton
-                            subscriptionId={s.id}
-                            status="active"
-                          />
-                          <CancelSubscriptionButton
-                            subscriptionId={s.id}
-                            productName={s.productName}
-                          />
-                        </div>
-                      )}
-                      {s.status === "past_due" && (
-                        <CancelSubscriptionButton
+                      {(s.status === "active" ||
+                        s.status === "past_due" ||
+                        s.status === "paused") && (
+                        <SubscriptionActionsMenu
                           subscriptionId={s.id}
+                          status={s.status}
                           productName={s.productName}
-                        />
-                      )}
-                      {s.status === "paused" && (
-                        <PauseResumeSubscriptionButton
-                          subscriptionId={s.id}
-                          status="paused"
                         />
                       )}
                     </div>

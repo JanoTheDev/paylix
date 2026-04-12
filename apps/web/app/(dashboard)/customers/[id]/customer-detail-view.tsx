@@ -20,8 +20,7 @@ import {
   col,
 } from "@/components/paykit";
 import { MetadataEditor } from "@/components/metadata-editor";
-import { CancelSubscriptionButton } from "@/components/subscriptions/cancel-subscription-button";
-import { PauseResumeSubscriptionButton } from "@/components/subscriptions/pause-resume-subscription-button";
+import { SubscriptionActionsMenu } from "@/components/subscriptions/subscription-actions-menu";
 import { TrialActionButton } from "@/components/subscriptions/trial-action-button";
 import { formatTrialRemaining } from "@/lib/format-trial";
 import { formatDate } from "@/lib/format";
@@ -197,27 +196,16 @@ export default function CustomerDetailView({
           />
         );
       }
-      if (row.status === "active" || row.status === "past_due") {
+      if (
+        row.status === "active" ||
+        row.status === "past_due" ||
+        row.status === "paused"
+      ) {
         return (
-          <div className="flex items-center gap-1">
-            {row.status === "active" && (
-              <PauseResumeSubscriptionButton
-                subscriptionId={row.id}
-                status="active"
-              />
-            )}
-            <CancelSubscriptionButton
-              subscriptionId={row.id}
-              productName={row.productName}
-            />
-          </div>
-        );
-      }
-      if (row.status === "paused") {
-        return (
-          <PauseResumeSubscriptionButton
+          <SubscriptionActionsMenu
             subscriptionId={row.id}
-            status="paused"
+            status={row.status}
+            productName={row.productName}
           />
         );
       }
