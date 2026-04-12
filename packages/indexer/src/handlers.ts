@@ -178,6 +178,10 @@ export async function handlePaymentReceived(log: Log, args: {
           walletAddress: args.payer,
           country: session.buyerCountry,
           taxId: session.buyerTaxId,
+          firstName: session.buyerFirstName,
+          lastName: session.buyerLastName,
+          email: session.buyerEmail,
+          phone: session.buyerPhone,
         })
         .returning();
       customer = created;
@@ -187,6 +191,10 @@ export async function handlePaymentReceived(log: Log, args: {
       if (!customer.walletAddress) patch.walletAddress = args.payer;
       if (session.buyerCountry && !customer.country) patch.country = session.buyerCountry;
       if (session.buyerTaxId && !customer.taxId) patch.taxId = session.buyerTaxId;
+      if (session.buyerFirstName && !customer.firstName) patch.firstName = session.buyerFirstName;
+      if (session.buyerLastName && !customer.lastName) patch.lastName = session.buyerLastName;
+      if (session.buyerEmail && !customer.email) patch.email = session.buyerEmail;
+      if (session.buyerPhone && !customer.phone) patch.phone = session.buyerPhone;
       if (Object.keys(patch).length > 0) {
         const [updated] = await tx
           .update(customers)
@@ -517,6 +525,10 @@ export async function handleSubscriptionCreated(log: Log, args: {
           walletAddress: args.subscriber,
           country: session.buyerCountry,
           taxId: session.buyerTaxId,
+          firstName: session.buyerFirstName,
+          lastName: session.buyerLastName,
+          email: session.buyerEmail,
+          phone: session.buyerPhone,
         })
         .returning();
       customer = created;
@@ -526,6 +538,10 @@ export async function handleSubscriptionCreated(log: Log, args: {
       if (!customer.walletAddress) patch.walletAddress = args.subscriber;
       if (session.buyerCountry && !customer.country) patch.country = session.buyerCountry;
       if (session.buyerTaxId && !customer.taxId) patch.taxId = session.buyerTaxId;
+      if (session.buyerFirstName && !customer.firstName) patch.firstName = session.buyerFirstName;
+      if (session.buyerLastName && !customer.lastName) patch.lastName = session.buyerLastName;
+      if (session.buyerEmail && !customer.email) patch.email = session.buyerEmail;
+      if (session.buyerPhone && !customer.phone) patch.phone = session.buyerPhone;
       if (Object.keys(patch).length > 0) {
         const [updated] = await tx
           .update(customers)

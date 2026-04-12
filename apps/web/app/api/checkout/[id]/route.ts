@@ -139,13 +139,17 @@ export async function PATCH(
         .where(eq(checkoutSessions.id, id));
 
       if (session) {
-        if (normalized.country !== null || normalized.taxId !== null) {
+        const sessionPatch: Record<string, string | null> = {};
+        if (normalized.country !== null) sessionPatch.buyerCountry = normalized.country;
+        if (normalized.taxId !== null) sessionPatch.buyerTaxId = normalized.taxId;
+        if (normalized.firstName !== null) sessionPatch.buyerFirstName = normalized.firstName;
+        if (normalized.lastName !== null) sessionPatch.buyerLastName = normalized.lastName;
+        if (normalized.email !== null) sessionPatch.buyerEmail = normalized.email;
+        if (normalized.phone !== null) sessionPatch.buyerPhone = normalized.phone;
+        if (Object.keys(sessionPatch).length > 0) {
           await db
             .update(checkoutSessions)
-            .set({
-              buyerCountry: normalized.country,
-              buyerTaxId: normalized.taxId,
-            })
+            .set(sessionPatch)
             .where(eq(checkoutSessions.id, id));
         }
 

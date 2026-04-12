@@ -80,6 +80,10 @@ export async function POST(
       customerId: checkoutSessions.customerId,
       buyerCountry: checkoutSessions.buyerCountry,
       buyerTaxId: checkoutSessions.buyerTaxId,
+      buyerFirstName: checkoutSessions.buyerFirstName,
+      buyerLastName: checkoutSessions.buyerLastName,
+      buyerEmail: checkoutSessions.buyerEmail,
+      buyerPhone: checkoutSessions.buyerPhone,
       billingInterval: products.billingInterval,
       trialDays: products.trialDays,
       trialMinutes: products.trialMinutes,
@@ -212,9 +216,26 @@ export async function POST(
           walletAddress: buyer,
           country: session.buyerCountry ?? null,
           taxId: session.buyerTaxId ?? null,
+          firstName: session.buyerFirstName ?? null,
+          lastName: session.buyerLastName ?? null,
+          email: session.buyerEmail ?? null,
+          phone: session.buyerPhone ?? null,
         })
         .returning();
       customer = created;
+    } else {
+      const customerPatch: Record<string, string | null> = {};
+      if (!customer.walletAddress) customerPatch.walletAddress = buyer;
+      if (!customer.firstName && session.buyerFirstName) customerPatch.firstName = session.buyerFirstName;
+      if (!customer.lastName && session.buyerLastName) customerPatch.lastName = session.buyerLastName;
+      if (!customer.email && session.buyerEmail) customerPatch.email = session.buyerEmail;
+      if (!customer.phone && session.buyerPhone) customerPatch.phone = session.buyerPhone;
+      if (!customer.country && session.buyerCountry) customerPatch.country = session.buyerCountry;
+      if (!customer.taxId && session.buyerTaxId) customerPatch.taxId = session.buyerTaxId;
+      if (Object.keys(customerPatch).length > 0) {
+        await db.update(customers).set(customerPatch).where(eq(customers.id, customer.id));
+        customer = { ...customer, ...customerPatch } as typeof customer;
+      }
     }
 
     const pendingPermitSignature = {
