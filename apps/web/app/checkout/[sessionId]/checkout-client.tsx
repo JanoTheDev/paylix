@@ -196,6 +196,36 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
   const { signTypedDataAsync } = useSignTypedData();
   const publicClient = usePublicClient({ chainId: CHAIN_ID });
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
+  const [trialEligible, setTrialEligible] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!address) {
+      setTrialEligible(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/checkout/${session.id}/trial-eligibility?buyer=${address}`,
+        );
+        if (!res.ok) {
+          if (!cancelled) setTrialEligible(null);
+          return;
+        }
+        const data = (await res.json()) as {
+          eligible: boolean;
+          productHasTrial: boolean;
+        };
+        if (!cancelled) setTrialEligible(data.eligible);
+      } catch {
+        if (!cancelled) setTrialEligible(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, session.id]);
   const {
     isSuccess: txConfirmed,
     isError: txFailed,
@@ -561,7 +591,8 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
   const displayAmount = fromNativeUnits(requiredTokenAmount, tokenDecimals);
 
   const trialDuration = formatTrialDuration(session.trialDays, session.trialMinutes);
-  const isTrial = trialDuration !== null && session.type === "subscription";
+  const productHasTrial = trialDuration !== null && session.type === "subscription";
+  const isTrial = productHasTrial && trialEligible !== false;
 
   async function handlePickCurrency(
     networkKey: string,
@@ -756,6 +787,11 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
                   {formatInterval(session.billingInterval)} until cancelled.
                 </>
               )}
+            </p>
+          )}
+          {productHasTrial && trialEligible === false && (
+            <p className="mt-2 text-[12px] italic text-muted-foreground">
+              You&apos;ve already used the free trial for this product.
             </p>
           )}
         </div>

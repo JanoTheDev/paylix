@@ -166,7 +166,8 @@ export async function POST(
   const deadlineCheck = validateDeadline(deadline, maxDeadlineWindowSeconds);
   if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
 
-  if (isTrial) {
+  let runTrialBranch = isTrial;
+  if (runTrialBranch) {
     const dedup = await checkExistingSubscription({
       organizationId: session.organizationId,
       productId: session.productId,
@@ -176,17 +177,17 @@ export async function POST(
     });
 
     if (dedup.exists) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "duplicate_subscription",
-            message: "You've already used the free trial for this product.",
-          },
-        },
-        { status: 409 },
+      // Customer has already used the trial on this product.
+      // Fall through to the regular paid subscription path — they can still
+      // subscribe, just without the free period.
+      console.log(
+        `[Relay] trial dedup hit for buyer=${buyer} product=${session.productId}; falling back to paid subscription`,
       );
+      runTrialBranch = false;
     }
+  }
 
+  if (runTrialBranch) {
     const intervalSeconds = intervalToSeconds(session.billingInterval);
     if (intervalSeconds <= 0) {
       return NextResponse.json(
