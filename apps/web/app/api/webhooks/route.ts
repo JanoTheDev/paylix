@@ -54,7 +54,12 @@ export async function POST(request: Request) {
   const { organizationId, userId } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
-    const body = JSON.parse(rawBody);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
     const parsed = createWebhookSchema.safeParse(body);
     if (!parsed.success) {
       const issues = parsed.error.issues.map((i) => i.message).join("; ");
@@ -68,6 +73,14 @@ export async function POST(request: Request) {
       return apiError("invalid_url", urlError);
     }
 
+    // NOTE: Generating a fresh secret here means that under the concurrent-miss
+    // race documented in withIdempotency, two simultaneous requests with the
+    // same Idempotency-Key would produce different secrets — one row survives
+    // via onConflictDoNothing and the other caller would keep a dead secret
+    // that fails every HMAC check. In practice this requires a client that
+    // retries a creation POST while the first is still in flight, which is
+    // vanishingly rare for dashboard-driven webhook creation. Revisit when the
+    // two-phase insert is added to the idempotency helper.
     const secret = `whsec_${randomBytes(32).toString("hex")}`;
 
     const [row] = await db

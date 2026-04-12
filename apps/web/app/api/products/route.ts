@@ -100,7 +100,12 @@ export async function POST(request: Request) {
   const { organizationId, userId } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
-    const body = JSON.parse(rawBody);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
     const parsed = createProductSchema.safeParse(body);
     if (!parsed.success) {
       const issues = parsed.error.issues.map((i) => i.message).join("; ");

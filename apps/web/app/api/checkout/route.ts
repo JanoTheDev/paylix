@@ -26,7 +26,12 @@ export async function POST(request: Request) {
   if (!auth) return apiError("unauthorized", "Authentication required", 401);
 
   return withIdempotency(request, auth.organizationId, async (rawBody) => {
-    const body = JSON.parse(rawBody);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
     const parsed = createCheckoutSchema.safeParse(body);
     if (!parsed.success) {
       const issues = parsed.error.issues.map((i) => i.message).join("; ");
