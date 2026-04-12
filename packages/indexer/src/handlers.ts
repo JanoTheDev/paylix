@@ -399,6 +399,63 @@ export async function handleSubscriptionCreated(log: Log, args: {
     return;
   }
 
+  // Trial activation path: try to match a pending trialing row first.
+  // If found, UPDATE it in place instead of creating a new row. This is the
+  // completion of the "off-chain trial -> on-chain subscription" handshake
+  // kicked off by the trial converter keeper loop.
+  const trialRows = await db
+    .select()
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.status, "trialing"),
+        sql`lower(${subscriptions.subscriberAddress}) = lower(${args.subscriber})`,
+        eq(subscriptions.contractAddress, contractAddr),
+        sql`${subscriptions.pendingPermitSignature}->'intent'->>'amount' = ${args.amount.toString()}`,
+        sql`(${subscriptions.pendingPermitSignature}->'intent'->>'interval')::bigint = ${args.interval}::bigint`,
+      ),
+    )
+    .orderBy(subscriptions.trialEndsAt)
+    .limit(1);
+
+  if (trialRows.length > 0) {
+    const trialRow = trialRows[0];
+    const trialIntervalSeconds = Number(args.interval);
+    const now = new Date();
+    const nextCharge = new Date(now.getTime() + trialIntervalSeconds * 1000);
+
+    await db
+      .update(subscriptions)
+      .set({
+        status: "active",
+        onChainId,
+        currentPeriodStart: now,
+        currentPeriodEnd: nextCharge,
+        nextChargeDate: nextCharge,
+        pendingPermitSignature: null,
+        trialConversionLastError: null,
+        intervalSeconds: trialIntervalSeconds,
+      })
+      .where(eq(subscriptions.id, trialRow.id));
+
+    console.log(`[Handler] Activated trial subscription ${trialRow.id} (onChainId: ${onChainId})`);
+
+    // TODO(trial-first-payment): also insert the first payments/invoice row
+    // here so the trial-converted subscription's initial charge is visible in
+    // the dashboard the same way non-trial subscriptions are. Skipped in this
+    // task to avoid duplicating the existing checkout-session-match path
+    // (which depends on a matching checkout_session row that trialing rows
+    // don't necessarily have).
+    await dispatchWebhooks(trialRow.organizationId, "subscription.trial_converted", {
+      subscriptionId: trialRow.id,
+      onChainId,
+      subscriberAddress: args.subscriber,
+      merchantAddress: args.merchant,
+      txHash: log.transactionHash,
+    });
+    return;
+  }
+
   const subToken = getToken(config.networkKey, symbolForTokenAddress(config.networkKey as NetworkKey, args.token));
   const amountCents = Number(args.amount) / 10 ** (subToken.decimals - 2);
   const intervalSeconds = Number(args.interval);
