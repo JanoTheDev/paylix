@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { auth } from "./auth";
 import { apiError } from "./api-error";
+import { getDashboardLivemode } from "./request-mode";
 
 type SessionLike = Awaited<ReturnType<typeof auth.api.getSession>>;
 
@@ -33,6 +34,7 @@ export async function resolveActiveOrg(): Promise<
       ok: true;
       organizationId: string;
       userId: string;
+      livemode: boolean;
       session: NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
     }
   | { ok: false; response: NextResponse }
@@ -40,10 +42,12 @@ export async function resolveActiveOrg(): Promise<
   const session = await auth.api.getSession({ headers: await headers() });
   try {
     const organizationId = requireActiveOrg(session);
+    const livemode = await getDashboardLivemode();
     return {
       ok: true,
       organizationId,
       userId: session!.user.id,
+      livemode,
       session: session!,
     };
   } catch (e) {
@@ -61,6 +65,7 @@ export async function resolveActiveOrg(): Promise<
 export async function getActiveOrgOrRedirect(): Promise<{
   organizationId: string;
   userId: string;
+  livemode: boolean;
   session: NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
 }> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -68,5 +73,6 @@ export async function getActiveOrgOrRedirect(): Promise<{
   const activeOrgId = (session.session as { activeOrganizationId?: string | null })
     .activeOrganizationId;
   if (!activeOrgId) redirect("/onboarding");
-  return { organizationId: activeOrgId, userId: session.user.id, session };
+  const livemode = await getDashboardLivemode();
+  return { organizationId: activeOrgId, userId: session.user.id, livemode, session };
 }
