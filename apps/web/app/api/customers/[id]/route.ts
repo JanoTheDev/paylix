@@ -53,6 +53,7 @@ export async function GET(
           status: subscriptions.status,
           createdAt: subscriptions.createdAt,
           nextChargeDate: subscriptions.nextChargeDate,
+          trialEndsAt: subscriptions.trialEndsAt,
           productName: products.name,
           metadata: subscriptions.metadata,
         })

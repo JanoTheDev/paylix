@@ -20,6 +20,10 @@ import {
 } from "@/components/paykit";
 import { MetadataEditor } from "@/components/metadata-editor";
 import { CancelSubscriptionButton } from "@/components/subscriptions/cancel-subscription-button";
+import { TrialActionButton } from "@/components/subscriptions/trial-action-button";
+import { formatTrialRemaining } from "@/lib/format-trial";
+import { formatDate } from "@/lib/format";
+import type { ColumnDef } from "@tanstack/react-table";
 
 type CustomerPaymentRow = {
   id: string;
@@ -36,6 +40,7 @@ type CustomerSubscriptionRow = {
   status: string;
   createdAt: Date;
   nextChargeDate: Date | null;
+  trialEndsAt: Date | null;
   productName: string | null;
   metadata: Record<string, string>;
 };
@@ -150,17 +155,54 @@ export default function CustomerDetailView({
     col.text<CustomerSubscriptionRow>("productName", "Plan"),
     col.status<CustomerSubscriptionRow>("status", "Status", "subscription"),
     col.date<CustomerSubscriptionRow>("createdAt", "Started"),
-    col.date<CustomerSubscriptionRow>("nextChargeDate", "Next Charge"),
-    col.actions<CustomerSubscriptionRow>((row) =>
-      row.status === "active" || row.status === "past_due" ? (
-        <CancelSubscriptionButton
-          subscriptionId={row.id}
-          productName={row.productName}
-        />
-      ) : (
-        <span className="text-foreground-dim">—</span>
-      ),
-    ),
+    {
+      accessorKey: "nextChargeDate",
+      header: "Next Charge",
+      cell: ({ row }) => {
+        const r = row.original;
+        if (r.status === "trialing") {
+          return (
+            <span className="font-mono text-xs text-info">
+              {formatTrialRemaining(r.trialEndsAt)}
+            </span>
+          );
+        }
+        return (
+          <span className="text-foreground-muted">
+            {r.nextChargeDate ? formatDate(r.nextChargeDate) : "—"}
+          </span>
+        );
+      },
+    } satisfies ColumnDef<CustomerSubscriptionRow, unknown>,
+    col.actions<CustomerSubscriptionRow>((row) => {
+      if (row.status === "trialing") {
+        return (
+          <TrialActionButton
+            subscriptionId={row.id}
+            action="cancel"
+            productName={row.productName}
+          />
+        );
+      }
+      if (row.status === "trial_conversion_failed") {
+        return (
+          <TrialActionButton
+            subscriptionId={row.id}
+            action="retry"
+            productName={row.productName}
+          />
+        );
+      }
+      if (row.status === "active" || row.status === "past_due") {
+        return (
+          <CancelSubscriptionButton
+            subscriptionId={row.id}
+            productName={row.productName}
+          />
+        );
+      }
+      return <span className="text-foreground-dim">—</span>;
+    }),
   ];
 
   return (
@@ -238,6 +280,20 @@ export default function CustomerDetailView({
           }
         />
       </Section>
+
+      {subscriptions.some((s) => s.status === "trialing") && (
+        <div className="rounded-lg border border-info/30 bg-info/5 p-4">
+          <p className="text-sm font-medium text-foreground">
+            Trial in progress
+          </p>
+          <p className="mt-1 font-mono text-xs text-foreground-muted">
+            {formatTrialRemaining(
+              subscriptions.find((s) => s.status === "trialing")?.trialEndsAt ??
+                null,
+            )}
+          </p>
+        </div>
+      )}
 
       <Section title="Subscriptions">
         <DataTable

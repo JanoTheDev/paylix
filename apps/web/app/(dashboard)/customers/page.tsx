@@ -45,16 +45,26 @@ export default async function CustomersPage() {
     .from(subscriptions)
     .where(eq(subscriptions.organizationId, organizationId));
 
-  const subByCustomer = new Map<string, { active: number; pastDue: number }>();
+  const subByCustomer = new Map<
+    string,
+    { active: number; pastDue: number; trialing: number }
+  >();
   for (const s of subRows) {
-    const agg = subByCustomer.get(s.customerId) ?? { active: 0, pastDue: 0 };
+    const agg =
+      subByCustomer.get(s.customerId) ?? {
+        active: 0,
+        pastDue: 0,
+        trialing: 0,
+      };
     if (s.status === "active") agg.active += 1;
     if (s.status === "past_due") agg.pastDue += 1;
+    if (s.status === "trialing") agg.trialing += 1;
     subByCustomer.set(s.customerId, agg);
   }
 
   const rows: CustomerRow[] = raw.map((r) => {
-    const agg = subByCustomer.get(r.id) ?? { active: 0, pastDue: 0 };
+    const agg =
+      subByCustomer.get(r.id) ?? { active: 0, pastDue: 0, trialing: 0 };
     return {
       id: r.id,
       name:
@@ -69,6 +79,7 @@ export default async function CustomersPage() {
       lastPayment: r.lastPayment ? new Date(r.lastPayment) : null,
       activeSubscriptionCount: agg.active,
       hasPastDue: agg.pastDue > 0,
+      hasActiveTrial: agg.trialing > 0,
     };
   });
 

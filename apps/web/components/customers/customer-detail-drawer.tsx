@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MetadataEditor } from "@/components/metadata-editor";
 import { CancelSubscriptionButton } from "@/components/subscriptions/cancel-subscription-button";
+import { TrialActionButton } from "@/components/subscriptions/trial-action-button";
+import { formatTrialRemaining } from "@/lib/format-trial";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -49,6 +51,7 @@ interface CustomerData {
     status: string;
     createdAt: string;
     nextChargeDate: string | null;
+    trialEndsAt: string | null;
     productName: string | null;
     metadata: Record<string, string> | null;
   }>;
@@ -412,6 +415,20 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
             )}
           </Section>
 
+          {data.subscriptions.some((s) => s.status === "trialing") && (
+            <div className="rounded-lg border border-info/30 bg-info/5 p-3">
+              <p className="text-xs font-medium text-foreground">
+                Trial in progress
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-foreground-muted">
+                {formatTrialRemaining(
+                  data.subscriptions.find((s) => s.status === "trialing")
+                    ?.trialEndsAt ?? null,
+                )}
+              </p>
+            </div>
+          )}
+
           <Section title={`Subscriptions (${data.subscriptions.length})`}>
             {data.subscriptions.length === 0 ? (
               <EmptyState
@@ -420,42 +437,74 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
               />
             ) : (
               <div className="flex flex-col gap-2">
-                {data.subscriptions.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5"
-                  >
-                    <div className="flex flex-1 flex-col text-xs">
-                      <span className="font-medium text-foreground">
-                        {s.productName ?? "—"}
-                      </span>
-                      <span className="text-foreground-muted">
-                        {s.nextChargeDate
-                          ? `Next: ${new Date(s.nextChargeDate).toLocaleDateString()}`
-                          : `Started ${new Date(s.createdAt).toLocaleDateString()}`}
-                      </span>
-                    </div>
-                    <Badge
-                      variant={
-                        s.status === "active"
-                          ? "success"
-                          : s.status === "past_due"
-                            ? "warning"
-                            : s.status === "cancelled"
-                              ? "destructive"
-                              : "default"
-                      }
+                {data.subscriptions.map((s) => {
+                  const trialing = s.status === "trialing";
+                  const trialFailed = s.status === "trial_conversion_failed";
+                  return (
+                    <div
+                      key={s.id}
+                      className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5"
                     >
-                      {s.status}
-                    </Badge>
-                    {(s.status === "active" || s.status === "past_due") && (
-                      <CancelSubscriptionButton
-                        subscriptionId={s.id}
-                        productName={s.productName}
-                      />
-                    )}
-                  </div>
-                ))}
+                      <div className="flex flex-1 flex-col text-xs">
+                        <span className="font-medium text-foreground">
+                          {s.productName ?? "—"}
+                        </span>
+                        <span className="text-foreground-muted">
+                          {trialing ? (
+                            <span className="font-mono text-info">
+                              {formatTrialRemaining(s.trialEndsAt)}
+                            </span>
+                          ) : s.nextChargeDate ? (
+                            `Next: ${new Date(s.nextChargeDate).toLocaleDateString()}`
+                          ) : (
+                            `Started ${new Date(s.createdAt).toLocaleDateString()}`
+                          )}
+                        </span>
+                      </div>
+                      <Badge
+                        variant={
+                          trialing
+                            ? "info"
+                            : trialFailed
+                              ? "destructive"
+                              : s.status === "active"
+                                ? "success"
+                                : s.status === "past_due"
+                                  ? "warning"
+                                  : s.status === "cancelled"
+                                    ? "destructive"
+                                    : "default"
+                        }
+                      >
+                        {trialing
+                          ? "Trial"
+                          : trialFailed
+                            ? "Trial failed"
+                            : s.status}
+                      </Badge>
+                      {trialing && (
+                        <TrialActionButton
+                          subscriptionId={s.id}
+                          action="cancel"
+                          productName={s.productName}
+                        />
+                      )}
+                      {trialFailed && (
+                        <TrialActionButton
+                          subscriptionId={s.id}
+                          action="retry"
+                          productName={s.productName}
+                        />
+                      )}
+                      {(s.status === "active" || s.status === "past_due") && (
+                        <CancelSubscriptionButton
+                          subscriptionId={s.id}
+                          productName={s.productName}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Section>

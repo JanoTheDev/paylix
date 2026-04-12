@@ -1,4 +1,4 @@
-import { and, count, eq, gte, sum, sql } from "drizzle-orm";
+import { and, count, eq, gte, lte, sum, sql } from "drizzle-orm";
 import { payments, subscriptions, merchantProfiles, merchantPayoutWallets } from "@paylix/db/schema";
 import { db } from "@/lib/db";
 import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
@@ -10,12 +10,15 @@ export default async function OverviewPage() {
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   const [
     totalRevenueResult,
     revenue30dResult,
     paymentCountResult,
     activeSubsResult,
+    activeTrialsResult,
+    convertingSoonResult,
     recentPayments,
     [profile],
     [wallet],
@@ -50,6 +53,25 @@ export default async function OverviewPage() {
         ),
       ),
     db
+      .select({ count: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          eq(subscriptions.status, "trialing"),
+        ),
+      ),
+    db
+      .select({ count: count() })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.organizationId, organizationId),
+          eq(subscriptions.status, "trialing"),
+          lte(subscriptions.trialEndsAt, sevenDaysFromNow),
+        ),
+      ),
+    db
       .select({
         id: payments.id,
         amount: payments.amount,
@@ -75,6 +97,8 @@ export default async function OverviewPage() {
   const revenue30d = Number(revenue30dResult[0]?.total ?? 0);
   const paymentCount = paymentCountResult[0]?.count ?? 0;
   const activeSubs = activeSubsResult[0]?.count ?? 0;
+  const activeTrials = activeTrialsResult[0]?.count ?? 0;
+  const convertingSoon = convertingSoonResult[0]?.count ?? 0;
 
   const needsProfile = !profile || !profile.legalName;
   const needsWallet = !wallet;
@@ -96,6 +120,8 @@ export default async function OverviewPage() {
         revenue30d={revenue30d}
         paymentCount={paymentCount}
         activeSubs={activeSubs}
+        activeTrials={activeTrials}
+        convertingSoon={convertingSoon}
         recentPayments={recentPayments}
       />
     </>

@@ -26,6 +26,7 @@ export type CustomerRow = {
   lastPayment: Date | null;
   activeSubscriptionCount: number;
   hasPastDue: boolean;
+  hasActiveTrial: boolean;
 };
 
 type Segment = "all" | "subscribers" | "one-time" | "past-due";
@@ -52,6 +53,7 @@ const columns = [
       {row.activeSubscriptionCount > 0 && (
         <Badge variant="success">Subscriber</Badge>
       )}
+      {row.hasActiveTrial && <Badge variant="info">Trial</Badge>}
       {row.hasPastDue && <Badge variant="warning">Past due</Badge>}
       {row.source === "manual" && <Badge variant="info">Manual</Badge>}
       <PortalLinkButton customerUuid={row.id} />

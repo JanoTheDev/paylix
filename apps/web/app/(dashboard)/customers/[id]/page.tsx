@@ -58,6 +58,7 @@ export default async function CustomerDetailPage({
           status: subscriptions.status,
           createdAt: subscriptions.createdAt,
           nextChargeDate: subscriptions.nextChargeDate,
+          trialEndsAt: subscriptions.trialEndsAt,
           productName: products.name,
           metadata: subscriptions.metadata,
         })
@@ -113,6 +114,7 @@ export default async function CustomerDetailPage({
         status: s.status,
         createdAt: s.createdAt,
         nextChargeDate: s.nextChargeDate,
+        trialEndsAt: s.trialEndsAt,
         productName: s.productName,
         metadata: (s.metadata as Record<string, string> | null) ?? {},
       }))}

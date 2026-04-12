@@ -33,6 +33,8 @@ interface OverviewViewProps {
   revenue30d: number;
   paymentCount: number;
   activeSubs: number;
+  activeTrials: number;
+  convertingSoon: number;
   recentPayments: RecentPayment[];
 }
 
@@ -41,6 +43,8 @@ export default function OverviewView({
   revenue30d,
   paymentCount,
   activeSubs,
+  activeTrials,
+  convertingSoon,
   recentPayments,
 }: OverviewViewProps) {
   return (
@@ -57,6 +61,11 @@ export default function OverviewView({
         <MetricCard
           label="Active Subscribers"
           value={activeSubs.toLocaleString()}
+        />
+        <MetricCard
+          label="Active Trials"
+          value={activeTrials.toLocaleString()}
+          hint={`${convertingSoon.toLocaleString()} converting in next 7 days`}
         />
       </MetricGrid>
 
