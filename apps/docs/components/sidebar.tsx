@@ -8,10 +8,13 @@ const navItems = [
   { href: "/", label: "Getting Started" },
   { href: "/sdk-reference", label: "SDK Reference" },
   { href: "/subscriptions", label: "Subscriptions" },
+  { href: "/free-trials", label: "Free Trials" },
   { href: "/invoices", label: "Invoices" },
   { href: "/webhooks", label: "Webhooks" },
+  { href: "/webhook-verification", label: "Webhook Verification" },
   { href: "/self-hosting", label: "Self-Hosting" },
   { href: "/testnet", label: "Testnet Setup" },
+  { href: "/changelog", label: "API Changelog" },
 ];
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
