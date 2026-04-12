@@ -477,12 +477,150 @@ export async function handleSubscriptionCreated(log: Log, args: {
 
     console.log(`[Handler] Activated trial subscription ${trialRow.id} (onChainId: ${onChainId})`);
 
-    // TODO(trial-first-payment): also insert the first payments/invoice row
-    // here so the trial-converted subscription's initial charge is visible in
-    // the dashboard the same way non-trial subscriptions are. Skipped in this
-    // task to avoid duplicating the existing checkout-session-match path
-    // (which depends on a matching checkout_session row that trialing rows
-    // don't necessarily have).
+    const trialSubToken = getToken(config.networkKey, symbolForTokenAddress(config.networkKey as NetworkKey, args.token));
+    const trialAmountCents = Number(args.amount) / 10 ** (trialSubToken.decimals - 2);
+
+    const [trialPayment] = await db
+      .insert(payments)
+      .values({
+        productId: trialRow.productId,
+        organizationId: trialRow.organizationId,
+        customerId: trialRow.customerId,
+        amount: trialAmountCents,
+        fee: 0,
+        status: "confirmed",
+        txHash: log.transactionHash,
+        chain: trialRow.networkKey,
+        token: trialRow.tokenSymbol,
+        fromAddress: args.subscriber,
+        toAddress: args.merchant,
+        blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+      })
+      .returning();
+
+    await db
+      .update(subscriptions)
+      .set({ lastPaymentId: trialPayment.id })
+      .where(eq(subscriptions.id, trialRow.id));
+
+    console.log(`[Handler] Created trial conversion payment ${trialPayment.id}`);
+
+    try {
+      const [trialProduct] = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, trialRow.productId))
+        .limit(1);
+
+      if (trialProduct) {
+        await db
+          .insert(merchantProfiles)
+          .values({ organizationId: trialRow.organizationId })
+          .onConflictDoNothing({ target: merchantProfiles.organizationId });
+
+        const [trialProfile] = await db
+          .select()
+          .from(merchantProfiles)
+          .where(eq(merchantProfiles.organizationId, trialRow.organizationId))
+          .limit(1);
+
+        if (trialProfile) {
+          const [trialCustomer] = await db
+            .select()
+            .from(customers)
+            .where(eq(customers.id, trialRow.customerId))
+            .limit(1);
+
+          if (trialCustomer) {
+            const trialBuilt = buildInvoice({
+              profile: {
+                organizationId: trialProfile.organizationId,
+                legalName: trialProfile.legalName,
+                addressLine1: trialProfile.addressLine1,
+                addressLine2: trialProfile.addressLine2,
+                city: trialProfile.city,
+                postalCode: trialProfile.postalCode,
+                country: trialProfile.country,
+                taxId: trialProfile.taxId,
+                supportEmail: trialProfile.supportEmail,
+                logoUrl: trialProfile.logoUrl,
+                invoicePrefix: trialProfile.invoicePrefix,
+                invoiceFooter: trialProfile.invoiceFooter,
+                invoiceSequence: trialProfile.invoiceSequence,
+              },
+              product: {
+                id: trialProduct.id,
+                name: trialProduct.name,
+                taxRateBps: trialProduct.taxRateBps,
+                taxLabel: trialProduct.taxLabel,
+                reverseChargeEligible: trialProduct.reverseChargeEligible,
+              },
+              customer: {
+                id: trialCustomer.id,
+                firstName: trialCustomer.firstName,
+                lastName: trialCustomer.lastName,
+                email: trialCustomer.email,
+                country: trialCustomer.country,
+                taxId: trialCustomer.taxId,
+              },
+              payment: { id: trialPayment.id, amount: trialPayment.amount },
+            });
+
+            await db
+              .update(merchantProfiles)
+              .set({ invoiceSequence: trialBuilt.nextSequence })
+              .where(eq(merchantProfiles.organizationId, trialRow.organizationId));
+
+            const trialHasProfile =
+              trialProfile.legalName.trim().length > 0 &&
+              trialProfile.supportEmail.trim().length > 0;
+
+            const [trialInvoice] = await db
+              .insert(invoices)
+              .values({
+                ...trialBuilt.invoice,
+                emailStatus: trialHasProfile ? "pending" : "skipped",
+              })
+              .returning();
+
+            await db.insert(invoiceLineItems).values(
+              trialBuilt.lineItems.map((li) => ({
+                invoiceId: trialInvoice.id,
+                description: li.description,
+                quantity: li.quantity,
+                unitAmountCents: li.unitAmountCents,
+                amountCents: li.amountCents,
+              })),
+            );
+
+            console.log(`[Handler] Created trial conversion invoice ${trialInvoice.id}`);
+
+            await dispatchWebhooks(trialRow.organizationId, "invoice.issued", {
+              invoiceId: trialInvoice.id,
+              number: trialInvoice.number,
+              paymentId: trialPayment.id,
+              subscriptionId: trialRow.id,
+              customerId: trialCustomer.customerId,
+              totalCents: trialInvoice.totalCents,
+              currency: trialInvoice.currency,
+              hostedUrl: `/i/${trialInvoice.hostedToken}`,
+            });
+
+            if (trialHasProfile) {
+              await sendInvoiceEmail({
+                invoiceId: trialInvoice.id,
+                organizationId: trialRow.organizationId,
+              }).catch((err) => {
+                console.error("[Handler] sendInvoiceEmail (trial conversion) failed:", err);
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[Handler] Trial conversion invoice creation failed:", err);
+    }
+
     await dispatchWebhooks(trialRow.organizationId, "subscription.trial_converted", {
       subscriptionId: trialRow.id,
       onChainId,
@@ -490,6 +628,22 @@ export async function handleSubscriptionCreated(log: Log, args: {
       merchantAddress: args.merchant,
       txHash: log.transactionHash,
     });
+
+    await dispatchWebhooks(trialRow.organizationId, "subscription.created", {
+      subscriptionId: trialRow.id,
+      onChainId,
+      productId: trialRow.productId,
+      customerId: trialRow.customerId,
+      amount: trialAmountCents,
+      currency: trialRow.tokenSymbol,
+      chain: trialRow.networkKey,
+      interval: trialIntervalSeconds,
+      subscriberAddress: args.subscriber,
+      merchantAddress: args.merchant,
+      txHash: log.transactionHash,
+      metadata: trialRow.metadata ?? {},
+    });
+
     return;
   }
 

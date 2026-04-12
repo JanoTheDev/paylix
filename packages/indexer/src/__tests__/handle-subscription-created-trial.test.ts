@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// --- Mock network config ---
+vi.mock("@paylix/config/networks", () => ({
+  NETWORKS: {
+    "base-sepolia": {
+      tokens: {
+        USDC: { address: "0xusdc", decimals: 6 },
+      },
+    },
+  },
+  getToken: () => ({ decimals: 6, address: "0xusdc", symbol: "USDC" }),
+}));
+
 // --- Mock config BEFORE importing handlers ---
 vi.mock("../config", () => ({
   config: {
@@ -18,6 +30,47 @@ vi.mock("../config", () => ({
   },
 }));
 
+// --- Mock invoice helpers ---
+vi.mock("../invoices/create", () => ({
+  buildInvoice: () => ({
+    invoice: {
+      organizationId: "org_1",
+      paymentId: "pay_trial_1",
+      customerId: "cust_1",
+      hostedToken: "tok_hosted",
+      number: "INV-000001",
+      merchantLegalName: "Test Co",
+      merchantAddressLine1: "",
+      merchantAddressLine2: null,
+      merchantCity: "",
+      merchantPostalCode: "",
+      merchantCountry: "",
+      merchantTaxId: null,
+      merchantSupportEmail: "",
+      merchantLogoUrl: null,
+      merchantFooter: null,
+      customerName: null,
+      customerEmail: null,
+      customerCountry: null,
+      customerTaxId: null,
+      customerAddress: null,
+      currency: "USDC",
+      subtotalCents: 100,
+      taxCents: 0,
+      totalCents: 100,
+      taxLabel: null,
+      taxRateBps: null,
+      reverseCharge: false,
+    },
+    lineItems: [{ description: "Test", quantity: 1, unitAmountCents: 100, amountCents: 100 }],
+    nextSequence: 2,
+  }),
+}));
+
+vi.mock("../invoices/send-email", () => ({
+  sendInvoiceEmail: vi.fn(async () => {}),
+}));
+
 // --- Mock webhook dispatch ---
 const dispatchWebhooks = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("../webhook-dispatch", () => ({
@@ -31,6 +84,7 @@ vi.mock("../webhook-dispatch", () => ({
 type QueryResult = unknown[];
 
 const selectResults: QueryResult[] = [];
+const insertResults: QueryResult[] = [];
 const updateCalls: Array<{ set: Record<string, unknown> }> = [];
 const insertCalls: Array<{ values: unknown }> = [];
 const transactionFn = vi.fn();
@@ -76,7 +130,7 @@ function makeInsertChain() {
   };
   (chain as { then: (r: (v: QueryResult) => void) => void }).then = (resolve) => {
     insertCalls.push(captured);
-    resolve([]);
+    resolve(insertResults.shift() ?? []);
   };
   return chain;
 }
@@ -101,6 +155,11 @@ const TRIAL_ROW = {
   subscriberAddress: "0xBuyer",
   contractAddress: "0xcontract",
   status: "trialing",
+  productId: "prod_1",
+  customerId: "cust_1",
+  networkKey: "base-sepolia",
+  tokenSymbol: "USDC",
+  metadata: {},
   pendingPermitSignature: {
     intent: { amount: "1000000", interval: 2592000 },
   },
@@ -126,6 +185,7 @@ const baseArgs = {
 describe("handleSubscriptionCreated trial activation", () => {
   beforeEach(() => {
     selectResults.length = 0;
+    insertResults.length = 0;
     updateCalls.length = 0;
     insertCalls.length = 0;
     mockDb.select.mockClear();
@@ -139,10 +199,23 @@ describe("handleSubscriptionCreated trial activation", () => {
     selectResults.push([]);
     // 2nd select: trial-match query -> returns the trialing row
     selectResults.push([TRIAL_ROW]);
+    // 3rd select: product lookup for invoice
+    selectResults.push([{ id: "prod_1", name: "Test Product", taxRateBps: null, taxLabel: null, reverseChargeEligible: false }]);
+    // 4th select: merchant profile lookup
+    selectResults.push([{ organizationId: "org_1", legalName: "", addressLine1: "", addressLine2: null, city: "", postalCode: "", country: "", taxId: null, supportEmail: "", logoUrl: null, invoicePrefix: "INV-", invoiceFooter: null, invoiceSequence: 1 }]);
+    // 5th select: customer lookup
+    selectResults.push([{ id: "cust_1", customerId: "cust_ext_1", firstName: null, lastName: null, email: null, country: null, taxId: null }]);
+
+    // Insert results: 1st = payment row, 2nd = merchantProfile upsert (no returning),
+    // 3rd = invoice row, 4th = invoice line items
+    insertResults.push([{ id: "pay_trial_1", amount: 100 }]);
+    insertResults.push([]); // merchantProfile onConflictDoNothing
+    insertResults.push([{ id: "inv_1", number: "INV-000001", totalCents: 100, currency: "USDC", hostedToken: "tok_hosted" }]);
+    insertResults.push([]); // invoice line items
 
     await handleSubscriptionCreated(baseLog, baseArgs);
 
-    expect(updateCalls).toHaveLength(1);
+    // First update: set subscription to active
     expect(updateCalls[0].set).toMatchObject({
       status: "active",
       onChainId: "42",
@@ -154,8 +227,17 @@ describe("handleSubscriptionCreated trial activation", () => {
     expect(updateCalls[0].set.currentPeriodEnd).toBeInstanceOf(Date);
     expect(updateCalls[0].set.nextChargeDate).toBeInstanceOf(Date);
 
-    // No duplicate subscription insert should have been issued.
-    expect(mockDb.insert).not.toHaveBeenCalled();
+    // Second update: link lastPaymentId
+    expect(updateCalls[1].set).toMatchObject({ lastPaymentId: "pay_trial_1" });
+
+    // Payment insert was issued (not a subscription insert).
+    expect(insertCalls.length).toBeGreaterThanOrEqual(1);
+    expect(insertCalls[0].values).toMatchObject({
+      productId: "prod_1",
+      organizationId: "org_1",
+      customerId: "cust_1",
+      status: "confirmed",
+    });
 
     // trial_converted webhook dispatched.
     expect(dispatchWebhooks).toHaveBeenCalledWith(
@@ -166,6 +248,17 @@ describe("handleSubscriptionCreated trial activation", () => {
         onChainId: "42",
       }),
     );
+
+    // subscription.created webhook dispatched.
+    expect(dispatchWebhooks).toHaveBeenCalledWith(
+      "org_1",
+      "subscription.created",
+      expect.objectContaining({
+        subscriptionId: "sub_trial_1",
+        onChainId: "42",
+        productId: "prod_1",
+      }),
+    );
   });
 
   it("falls through to the checkout-session flow when no trialing row matches", async () => {
@@ -173,13 +266,10 @@ describe("handleSubscriptionCreated trial activation", () => {
     selectResults.push([]);
     // 2nd select: trial-match query -> empty (no trial row)
     selectResults.push([]);
+    // 3rd select: checkout session candidates -> empty (no match)
+    selectResults.push([]);
 
-    // The real handler then calls symbolForTokenAddress() which throws for
-    // our fake "0xusdc" token — which is fine. We only care that control
-    // flowed PAST the trial-match block. The throw itself proves fall-through.
-    await expect(handleSubscriptionCreated(baseLog, baseArgs)).rejects.toThrow(
-      /not registered/,
-    );
+    await handleSubscriptionCreated(baseLog, baseArgs);
 
     // The early-return trial path did NOT fire: no update was issued.
     expect(updateCalls).toHaveLength(0);
@@ -189,7 +279,9 @@ describe("handleSubscriptionCreated trial activation", () => {
       "subscription.trial_converted",
       expect.anything(),
     );
-    // Two selects ran (idempotency + trial-match) before the throw.
-    expect(mockDb.select.mock.calls.length).toBe(2);
+    // Three selects ran (idempotency + trial-match + checkout candidates).
+    expect(mockDb.select.mock.calls.length).toBe(3);
+    // An unmatched event insert was issued (recordUnmatched).
+    expect(mockDb.insert).toHaveBeenCalled();
   });
 });
