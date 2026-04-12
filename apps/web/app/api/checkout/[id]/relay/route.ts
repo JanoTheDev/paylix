@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { keccak256, stringToBytes } from "viem";
 import { db } from "@/lib/db";
 import { checkoutSessions, products, subscriptions, customers } from "@paylix/db/schema";
@@ -17,6 +17,7 @@ import {
   type ValidationError,
 } from "./validation";
 import { acquireRelayLock, releaseRelayLock } from "./lock";
+import { checkExistingSubscription } from "./dedup";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 function errorResponse(err: ValidationError, status = 400) {
@@ -161,24 +162,22 @@ export async function POST(
   if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
 
   if (isTrial) {
-    const existing = await db
-      .select({ id: subscriptions.id })
-      .from(subscriptions)
-      .where(
-        and(
-          eq(subscriptions.organizationId, session.organizationId),
-          sql`lower(${subscriptions.subscriberAddress}) = lower(${buyer})`,
-          or(
-            eq(subscriptions.status, "trialing"),
-            eq(subscriptions.status, "active"),
-          ),
-        ),
-      )
-      .limit(1);
+    const dedup = await checkExistingSubscription({
+      organizationId: session.organizationId,
+      productId: session.productId,
+      buyerWallet: buyer,
+      customerIdentifier: session.customerId ?? null,
+    });
 
-    if (existing.length > 0) {
+    if (dedup.exists) {
       return NextResponse.json(
-        { error: { code: "trial_in_progress", message: "This wallet already has an active or trialing subscription." } },
+        {
+          error: {
+            code: "duplicate_subscription",
+            message:
+              "This customer already has an active or trialing subscription for this product.",
+          },
+        },
         { status: 409 },
       );
     }
@@ -276,6 +275,27 @@ export async function POST(
       subscriptionId: newSub.id,
       trialEndsAt: trialEndsAt.toISOString(),
     });
+  }
+
+  if (isSubscription) {
+    const dedup = await checkExistingSubscription({
+      organizationId: session.organizationId,
+      productId: session.productId,
+      buyerWallet: buyer,
+      customerIdentifier: session.customerId ?? null,
+    });
+    if (dedup.exists) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "duplicate_subscription",
+            message:
+              "This customer already has an active or trialing subscription for this product.",
+          },
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // Acquire an atomic lock on the session so two concurrent relay attempts

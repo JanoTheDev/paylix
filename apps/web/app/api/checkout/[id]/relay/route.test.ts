@@ -283,7 +283,7 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
     expect(writeContract).not.toHaveBeenCalled();
   });
 
-  it("should return 409 with code trial_in_progress when wallet has active/trialing subscription", async () => {
+  it("should return 409 with code duplicate_subscription when wallet has active/trialing subscription on the product", async () => {
     // Setup: session load
     const selectFromChain = {
       from: vi.fn(function () {
@@ -298,8 +298,9 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
     };
     mockDb.select.mockReturnValueOnce(selectFromChain);
 
-    // Setup: 409 guard returns existing subscription
-    const selectExistingTrialsChain = {
+    // Setup: dedup subscriptions query returns existing subscription
+    // (customerId is null on TRIAL_SESSION so customer lookup is skipped)
+    const selectExistingSubsChain = {
       from: vi.fn(function () {
         return {
           where: vi.fn(function () {
@@ -312,7 +313,7 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
         };
       }),
     };
-    mockDb.select.mockReturnValueOnce(selectExistingTrialsChain);
+    mockDb.select.mockReturnValueOnce(selectExistingSubsChain);
 
     const res = await POST(makeRequest(VALID_BODY), {
       params: Promise.resolve({ id: "sess-1" }),
@@ -320,9 +321,200 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
 
     expect(res.status).toBe(409);
     const json = await res.json();
-    expect(json.error.code).toBe("trial_in_progress");
+    expect(json.error.code).toBe("duplicate_subscription");
 
     // Assert that writeContract was NOT called
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("blocks duplicate subscription by customer id when wallet differs", async () => {
+    const sessionWithCustomer = { ...TRIAL_SESSION, customerId: "cust-id" };
+
+    const selectFromChain = {
+      from: vi.fn(function () {
+        return {
+          innerJoin: vi.fn(function () {
+            return {
+              where: vi.fn().mockResolvedValue([sessionWithCustomer]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectFromChain);
+
+    // Dedup helper: customer lookup returns a customer with no email
+    const selectCustomerLookupChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn(function () {
+            return {
+              limit: vi
+                .fn()
+                .mockResolvedValue([{ id: "cust-1", email: null }]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectCustomerLookupChain);
+
+    // Dedup helper: subscription query returns an existing sub matched by customer_id
+    const selectExistingSubsChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn(function () {
+            return {
+              limit: vi
+                .fn()
+                .mockResolvedValue([{ id: "existing-sub" }]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectExistingSubsChain);
+
+    const res = await POST(makeRequest(VALID_BODY), {
+      params: Promise.resolve({ id: "sess-1" }),
+    });
+
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error.code).toBe("duplicate_subscription");
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("blocks duplicate subscription by email when customer_id differs", async () => {
+    const sessionWithCustomer = { ...TRIAL_SESSION, customerId: "cust-id" };
+
+    const selectFromChain = {
+      from: vi.fn(function () {
+        return {
+          innerJoin: vi.fn(function () {
+            return {
+              where: vi.fn().mockResolvedValue([sessionWithCustomer]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectFromChain);
+
+    // Customer lookup returns a customer with email
+    const selectCustomerLookupChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn(function () {
+            return {
+              limit: vi.fn().mockResolvedValue([
+                { id: "cust-2", email: "buyer@example.com" },
+              ]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectCustomerLookupChain);
+
+    const selectExistingSubsChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn(function () {
+            return {
+              limit: vi
+                .fn()
+                .mockResolvedValue([{ id: "existing-sub-email" }]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectExistingSubsChain);
+
+    const res = await POST(makeRequest(VALID_BODY), {
+      params: Promise.resolve({ id: "sess-1" }),
+    });
+
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error.code).toBe("duplicate_subscription");
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("allows different customer on same product (no duplicate)", async () => {
+    const selectFromChain = {
+      from: vi.fn(function () {
+        return {
+          innerJoin: vi.fn(function () {
+            return {
+              where: vi.fn().mockResolvedValue([TRIAL_SESSION]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectFromChain);
+
+    // Dedup subscriptions query: no existing
+    const selectExistingSubsChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn(function () {
+            return {
+              limit: vi.fn().mockResolvedValue([]),
+            };
+          }),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectExistingSubsChain);
+
+    // find customer by (org, identifier) — empty so new customer is inserted
+    const selectCustomerChain = {
+      from: vi.fn(function () {
+        return {
+          where: vi.fn().mockResolvedValue([]),
+        };
+      }),
+    };
+    mockDb.select.mockReturnValueOnce(selectCustomerChain);
+
+    const insertCustomerChain = {
+      values: vi.fn(function () {
+        return {
+          returning: vi.fn().mockResolvedValue([CUSTOMER_ROW]),
+        };
+      }),
+    };
+    mockDb.insert.mockReturnValueOnce(insertCustomerChain);
+
+    const insertSubChain = {
+      values: vi.fn(function () {
+        return {
+          returning: vi.fn().mockResolvedValue([NEW_SUBSCRIPTION]),
+        };
+      }),
+    };
+    mockDb.insert.mockReturnValueOnce(insertSubChain);
+
+    const updateSessionChain = {
+      set: vi.fn(function () {
+        return {
+          where: vi.fn().mockResolvedValue([]),
+        };
+      }),
+    };
+    mockDb.update.mockReturnValueOnce(updateSessionChain);
+
+    const res = await POST(makeRequest(VALID_BODY), {
+      params: Promise.resolve({ id: "sess-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.trial).toBe(true);
+    expect(json.subscriptionId).toBe(NEW_SUBSCRIPTION.id);
     expect(writeContract).not.toHaveBeenCalled();
   });
 });
