@@ -7,6 +7,7 @@ import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { withIdempotency } from "@/lib/idempotency";
+import { orgScope } from "@/lib/org-scope";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -54,12 +55,12 @@ const createProductSchema = z
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const rows = await db
     .select()
     .from(products)
-    .where(eq(products.organizationId, organizationId))
+    .where(orgScope(products, { organizationId, livemode }))
     .orderBy(products.createdAt);
 
   const productIds = rows.map((p) => p.id);
@@ -97,7 +98,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
     let body: unknown;
@@ -142,6 +143,7 @@ export async function POST(request: Request) {
         .insert(products)
         .values({
           organizationId,
+          livemode,
           name: data.name,
           description: data.description ?? null,
           type: data.type,
