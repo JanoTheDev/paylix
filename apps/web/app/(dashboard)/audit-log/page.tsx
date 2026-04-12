@@ -22,6 +22,8 @@ import { Button } from "@/components/ui/button";
 interface AuditLogEntry {
   id: string;
   userId: string | null;
+  userName: string | null;
+  userEmail: string | null;
   action: string;
   resourceType: string;
   resourceId: string | null;
@@ -220,7 +222,7 @@ export default function AuditLogPage() {
                       )}
                     </div>
                     <p className="mt-0.5 text-xs text-foreground-muted">
-                      {log.userId ? `User ${log.userId.slice(0, 8)}...` : "System"}
+                      {log.userName ?? (log.userId ? `User ${log.userId.slice(0, 8)}...` : "System")}
                       {" · "}
                       {formatRelativeTime(log.createdAt)}
                     </p>
@@ -267,9 +269,14 @@ export default function AuditLogPage() {
                       {log.userId && (
                         <div>
                           <p className="text-foreground-muted">User</p>
-                          <p className="mt-0.5 font-mono text-foreground">
-                            {log.userId}
+                          <p className="mt-0.5 text-foreground">
+                            {log.userName ?? log.userId.slice(0, 12) + "..."}
                           </p>
+                          {log.userEmail && (
+                            <p className="font-mono text-foreground-muted">
+                              {log.userEmail}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
