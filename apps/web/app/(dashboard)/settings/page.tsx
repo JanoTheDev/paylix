@@ -19,6 +19,50 @@ import {
   type BusinessProfile,
 } from "@/components/settings/business-profile-section";
 import { TeamTabContent } from "@/components/settings/team-tab-content";
+import {
+  NOTIFICATION_KINDS,
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationKind,
+  type NotificationPreferences,
+} from "@paylix/db/schema";
+
+const NOTIFICATION_LABELS: Record<
+  NotificationKind,
+  { label: string; description: string }
+> = {
+  invoice: {
+    label: "Invoice receipts",
+    description: "Sent after every confirmed payment — one-time and subscription charges.",
+  },
+  trialStarted: {
+    label: "Trial started",
+    description: "Sent when a customer starts a free trial.",
+  },
+  trialEndingSoon: {
+    label: "Trial ending soon",
+    description: "Sent a few days before a trial converts to a paid subscription.",
+  },
+  trialFailed: {
+    label: "Trial conversion failed",
+    description: "Sent when we can't charge the first payment after a trial ends.",
+  },
+  subscriptionCreated: {
+    label: "Subscription activated",
+    description: "Sent when a subscription successfully starts.",
+  },
+  subscriptionCancelled: {
+    label: "Subscription cancelled",
+    description: "Sent when a subscription is cancelled by either party.",
+  },
+  paymentReceipt: {
+    label: "Recurring charge receipt",
+    description: "Sent after each successful subscription renewal charge.",
+  },
+  pastDue: {
+    label: "Past-due reminder",
+    description: "Sent when a recurring charge fails and the subscription needs attention.",
+  },
+};
 
 interface UserSettings {
   id: string;
@@ -76,6 +120,8 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
   const [notificationsSaving, setNotificationsSaving] = useState(false);
   const [notificationsSuccess, setNotificationsSuccess] = useState(false);
 
@@ -98,6 +144,12 @@ export default function SettingsPage() {
         if (data.businessProfile) setProfile(data.businessProfile);
         if (typeof data.notificationsEnabled === "boolean") {
           setNotificationsEnabled(data.notificationsEnabled);
+        }
+        if (data.notificationPreferences) {
+          setNotificationPreferences({
+            ...DEFAULT_NOTIFICATION_PREFERENCES,
+            ...data.notificationPreferences,
+          });
         }
       }
     } catch {
@@ -184,7 +236,7 @@ export default function SettingsPage() {
     );
   }
 
-  async function saveNotifications(next: boolean) {
+  async function saveMasterNotifications(next: boolean) {
     setNotificationsSaving(true);
     setNotificationsSuccess(false);
     const previous = notificationsEnabled;
@@ -203,6 +255,59 @@ export default function SettingsPage() {
       }
     } catch {
       setNotificationsEnabled(previous);
+    } finally {
+      setNotificationsSaving(false);
+    }
+  }
+
+  async function savePreference(kind: NotificationKind, next: boolean) {
+    setNotificationsSaving(true);
+    setNotificationsSuccess(false);
+    const previous = notificationPreferences;
+    const optimistic = { ...previous, [kind]: next };
+    setNotificationPreferences(optimistic);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notificationPreferences: { [kind]: next },
+        }),
+      });
+      if (res.ok) {
+        setNotificationsSuccess(true);
+        setTimeout(() => setNotificationsSuccess(false), 2000);
+      } else {
+        setNotificationPreferences(previous);
+      }
+    } catch {
+      setNotificationPreferences(previous);
+    } finally {
+      setNotificationsSaving(false);
+    }
+  }
+
+  async function setAllPreferences(next: boolean) {
+    setNotificationsSaving(true);
+    setNotificationsSuccess(false);
+    const previous = notificationPreferences;
+    const optimistic: NotificationPreferences = { ...previous };
+    for (const k of NOTIFICATION_KINDS) optimistic[k] = next;
+    setNotificationPreferences(optimistic);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationPreferences: optimistic }),
+      });
+      if (res.ok) {
+        setNotificationsSuccess(true);
+        setTimeout(() => setNotificationsSuccess(false), 2000);
+      } else {
+        setNotificationPreferences(previous);
+      }
+    } catch {
+      setNotificationPreferences(previous);
     } finally {
       setNotificationsSaving(false);
     }
@@ -390,35 +495,34 @@ export default function SettingsPage() {
         </TabsContent>
 
         {/* Notifications tab */}
-        <TabsContent value="notifications">
+        <TabsContent value="notifications" className="space-y-6">
           <FormSection
             title="Automatic Email Notifications"
-            description="Paylix sends transactional emails to your customers — invoices, trial reminders, subscription updates, receipts, and past-due alerts. Disable this if you'd rather send your own custom emails from webhooks."
+            description="Paylix sends transactional emails to your customers — invoices, trial reminders, subscription updates, receipts, and past-due alerts. Disable any of them if you'd rather send your own custom emails from webhook events."
           >
             <div className="flex items-center justify-between rounded-lg border border-border bg-surface-1 p-4">
               <div className="pr-4">
                 <div className="text-sm font-medium">
-                  Send automatic emails to customers
+                  Master switch — send any emails at all
                 </div>
                 <div className="mt-1 text-xs leading-relaxed text-foreground-muted">
-                  When off, Paylix stops sending invoice emails, trial
-                  reminders, and all subscription lifecycle emails. Webhook
-                  events still fire so you can trigger your own templated
-                  emails on your side.
+                  When off, Paylix stops sending every email below regardless
+                  of the individual toggles. Webhook events still fire so you
+                  can trigger your own templated emails on your side.
                 </div>
               </div>
               <Switch
                 checked={notificationsEnabled}
                 disabled={notificationsSaving}
-                onCheckedChange={saveNotifications}
+                onCheckedChange={saveMasterNotifications}
               />
             </div>
+
             {!notificationsEnabled && (
               <Alert>
                 <AlertDescription>
-                  Automatic emails are disabled. Customers will not receive
-                  invoices, receipts, trial reminders, or past-due alerts from
-                  Paylix. Subscribe to the relevant webhooks (
+                  Master switch is off. No emails will be sent until it&apos;s
+                  turned back on. Subscribe to{" "}
                   <code className="font-mono text-[12px]">invoice.issued</code>,{" "}
                   <code className="font-mono text-[12px]">
                     subscription.created
@@ -427,14 +531,78 @@ export default function SettingsPage() {
                   <code className="font-mono text-[12px]">
                     subscription.charged
                   </code>
-                  ,{" "}
+                  , and{" "}
                   <code className="font-mono text-[12px]">
                     subscription.past_due
-                  </code>
-                  ) to send your own.
+                  </code>{" "}
+                  webhooks to send your own.
                 </AlertDescription>
               </Alert>
             )}
+          </FormSection>
+
+          <FormSection
+            title="Individual Email Types"
+            description="Turn off specific email types while keeping others on — for example, you might send your own custom welcome email but still let Paylix send receipts."
+          >
+            <div className="flex items-center justify-end gap-2 pb-1">
+              <span className="text-xs text-foreground-muted">Quick:</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={notificationsSaving}
+                onClick={() => setAllPreferences(true)}
+              >
+                Enable all
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={notificationsSaving}
+                onClick={() => setAllPreferences(false)}
+              >
+                Disable all
+              </Button>
+            </div>
+            <div className="flex flex-col gap-3">
+              {NOTIFICATION_KINDS.map((kind) => {
+                const meta = NOTIFICATION_LABELS[kind];
+                const checked = notificationPreferences[kind];
+                const effective = notificationsEnabled && checked;
+                return (
+                  <div
+                    key={kind}
+                    className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface-1 p-4"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {meta.label}
+                        </span>
+                        {!notificationsEnabled && checked && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Blocked by master
+                          </Badge>
+                        )}
+                        {!effective && notificationsEnabled && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Off
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs leading-relaxed text-foreground-muted">
+                        {meta.description}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={checked}
+                      disabled={notificationsSaving}
+                      onCheckedChange={(val) => savePreference(kind, val)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
             {notificationsSuccess && (
               <span className="text-sm font-medium text-success">Saved</span>
             )}

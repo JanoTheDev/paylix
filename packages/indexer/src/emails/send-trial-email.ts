@@ -6,7 +6,21 @@ import { subscriptions, products, customers } from "@paylix/db/schema";
 import { getToken, type NetworkKey } from "@paylix/config/networks";
 import { config } from "../config";
 import type { TrialConversionFailureReason } from "./trial-conversion-failed";
-import { notificationsEnabled } from "./notifications-enabled";
+import { isNotificationEnabled } from "./notifications-enabled";
+import type { NotificationKind } from "@paylix/db/schema";
+
+function kindToNotification(
+  kind: SendTrialEmailArgs["kind"],
+): NotificationKind {
+  switch (kind) {
+    case "trial-started":
+      return "trialStarted";
+    case "trial-ending-soon":
+      return "trialEndingSoon";
+    case "trial-conversion-failed":
+      return "trialFailed";
+  }
+}
 
 export type SendTrialEmailArgs =
   | { kind: "trial-started"; subscriptionId: string }
@@ -85,7 +99,12 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
       return;
     }
 
-    if (!(await notificationsEnabled(subscription.organizationId))) {
+    if (
+      !(await isNotificationEnabled(
+        subscription.organizationId,
+        kindToNotification(args.kind),
+      ))
+    ) {
       console.log(
         `[sendTrialEmail] notifications disabled, skipping ${args.kind} for ${args.subscriptionId}`,
       );

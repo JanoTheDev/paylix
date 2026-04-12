@@ -4,7 +4,23 @@ import { sendMail } from "@paylix/mailer";
 import { createDb } from "@paylix/db/client";
 import { subscriptions, products, customers, payments } from "@paylix/db/schema";
 import { config } from "../config";
-import { notificationsEnabled } from "./notifications-enabled";
+import { isNotificationEnabled } from "./notifications-enabled";
+import type { NotificationKind } from "@paylix/db/schema";
+
+function kindToNotification(
+  kind: SendSubscriptionEmailArgs["kind"],
+): NotificationKind {
+  switch (kind) {
+    case "subscription-created":
+      return "subscriptionCreated";
+    case "subscription-cancelled":
+      return "subscriptionCancelled";
+    case "payment-receipt":
+      return "paymentReceipt";
+    case "past-due-reminder":
+      return "pastDue";
+  }
+}
 
 export type SendSubscriptionEmailArgs =
   | { kind: "subscription-created"; subscriptionId: string }
@@ -61,7 +77,12 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
       return;
     }
 
-    if (!(await notificationsEnabled(subscription.organizationId))) {
+    if (
+      !(await isNotificationEnabled(
+        subscription.organizationId,
+        kindToNotification(args.kind),
+      ))
+    ) {
       console.log(
         `[sendSubscriptionEmail] notifications disabled, skipping ${args.kind} for ${args.subscriptionId}`,
       );

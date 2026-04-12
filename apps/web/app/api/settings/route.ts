@@ -3,6 +3,9 @@ import {
   users,
   merchantPayoutWallets,
   merchantProfiles,
+  NOTIFICATION_KINDS,
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationPreferences,
 } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -76,6 +79,10 @@ export async function GET() {
   };
 
   const notificationsEnabled = profile.notificationsEnabled;
+  const notificationPreferences: NotificationPreferences = {
+    ...DEFAULT_NOTIFICATION_PREFERENCES,
+    ...(profile.notificationPreferences ?? {}),
+  };
 
   // Build the response: every available network gets an entry, with defaults
   // if there's no row yet
@@ -104,6 +111,7 @@ export async function GET() {
     networks,
     businessProfile,
     notificationsEnabled,
+    notificationPreferences,
   });
 }
 
@@ -259,13 +267,53 @@ export async function PATCH(request: Request) {
       });
   }
 
-  // If only networks/businessProfile/notificationsEnabled were updated,
+  if (
+    body.notificationPreferences &&
+    typeof body.notificationPreferences === "object"
+  ) {
+    const incoming = body.notificationPreferences as Record<string, unknown>;
+
+    // Load existing row so we can merge partial updates on top of whatever
+    // the merchant has stored today (preserves kinds not in the payload).
+    const [existing] = await db
+      .select({ preferences: merchantProfiles.notificationPreferences })
+      .from(merchantProfiles)
+      .where(eq(merchantProfiles.organizationId, organizationId))
+      .limit(1);
+
+    const merged: NotificationPreferences = {
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      ...(existing?.preferences ?? {}),
+    };
+    for (const kind of NOTIFICATION_KINDS) {
+      if (typeof incoming[kind] === "boolean") {
+        merged[kind] = incoming[kind] as boolean;
+      }
+    }
+
+    await db
+      .insert(merchantProfiles)
+      .values({
+        organizationId,
+        notificationPreferences: merged,
+      })
+      .onConflictDoUpdate({
+        target: merchantProfiles.organizationId,
+        set: {
+          notificationPreferences: merged,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  // If only networks/businessProfile/notifications were updated,
   // skip the users table update
   if (Object.keys(updates).length === 0) {
     if (
       Array.isArray(body.networks) ||
       body.businessProfile ||
-      typeof body.notificationsEnabled === "boolean"
+      typeof body.notificationsEnabled === "boolean" ||
+      body.notificationPreferences
     ) {
       void recordAudit({
         organizationId,
@@ -279,6 +327,7 @@ export async function PATCH(request: Request) {
             typeof body.notificationsEnabled === "boolean"
               ? body.notificationsEnabled
               : undefined,
+          notificationPreferences: body.notificationPreferences ?? undefined,
         },
         ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       });

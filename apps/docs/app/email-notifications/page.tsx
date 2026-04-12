@@ -160,14 +160,29 @@ export default function EmailNotificationsPage() {
 
       <SectionHeading>Disabling automatic emails</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        If you want to send your own custom emails instead of the built-in
-        templates, turn off automatic notifications in{" "}
+        You can control which emails Paylix sends from{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
           Settings → Notifications
         </code>
-        . When disabled, Paylix stops sending every email listed above — but
-        webhook events still fire as normal, so you can trigger your own
-        templated messages from{" "}
+        . There are two layers of control:
+      </p>
+      <ul className="mt-3 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-disc">
+        <li>
+          <strong className="text-foreground">Master switch</strong> — kills
+          every email in one click. Useful when you want to take full
+          ownership of transactional email and send everything yourself.
+        </li>
+        <li>
+          <strong className="text-foreground">Per-type toggles</strong> —
+          turn individual email types on or off independently. For example,
+          send your own custom welcome email but still let Paylix send
+          recurring receipts and past-due reminders. Each of the 8 email
+          types above has its own switch.
+        </li>
+      </ul>
+      <p className="mt-4 text-sm leading-relaxed text-foreground-muted">
+        Webhook events always fire regardless of these settings — disabling
+        an email only skips the delivery, not the event. Subscribe to{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
           invoice.issued
         </code>
@@ -183,7 +198,7 @@ export default function EmailNotificationsPage() {
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
           subscription.past_due
         </code>{" "}
-        on your own server.
+        to drive your own templated messages.
       </p>
       <Callout variant="tip" title="Invoices still generate">
         Disabling notifications only skips <em>email delivery</em>. Invoices,
