@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
-import { DetailDrawer, Section, EmptyState } from "@/components/paykit";
+import { ChevronDown, ChevronRight, Download, Loader2, Trash2 } from "lucide-react";
+import { DetailDrawer, Section, EmptyState, ConfirmDialog } from "@/components/paykit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,6 +92,8 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
   const [profileSaved, setProfileSaved] = useState(false);
 
   // Per-payment expanded / metadata edit state
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
   const [expandedPayment, setExpandedPayment] = useState<string | null>(null);
   const [paymentMetadataDraft, setPaymentMetadataDraft] =
     useState<Record<string, Record<string, string>>>({});
@@ -202,6 +204,19 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
     setProfileDraft({ ...profileDraft, [key]: value });
   }
 
+  async function handleDelete() {
+    if (!data) return;
+    const res = await fetch(`/api/customers/${data.customer.id}/delete`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Delete failed");
+    }
+    onOpenChange(false);
+    router.refresh();
+  }
+
   const open = customerId !== null;
   const c = data?.customer;
   const title =
@@ -218,8 +233,17 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
       footer={
         profileDraft && (
           <>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete customer
+            </Button>
+            <div className="flex-1" />
             {profileSaved && (
-              <span className="mr-auto text-xs font-medium text-success">
+              <span className="mr-2 text-xs font-medium text-success">
                 Saved
               </span>
             )}
@@ -557,6 +581,15 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
           </Section>
         </div>
       )}
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete customer?"
+        description="This will remove the customer from your dashboard. Their payment history is preserved."
+        confirmLabel="Delete customer"
+        variant="destructive"
+        onConfirm={handleDelete}
+      />
     </DetailDrawer>
   );
 }

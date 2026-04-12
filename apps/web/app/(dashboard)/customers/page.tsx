@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { count, desc, eq, max, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, isNull, max, sql, sum } from "drizzle-orm";
 import { customers, payments, subscriptions } from "@paylix/db/schema";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -33,7 +33,7 @@ export default async function CustomersPage() {
     })
     .from(customers)
     .leftJoin(payments, eq(customers.id, payments.customerId))
-    .where(eq(customers.organizationId, organizationId))
+    .where(and(eq(customers.organizationId, organizationId), isNull(customers.deletedAt)))
     .groupBy(customers.id)
     .orderBy(desc(customers.createdAt));
 

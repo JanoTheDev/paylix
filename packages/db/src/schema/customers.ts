@@ -16,6 +16,7 @@ export const customers = pgTable("customers", {
   metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [
   uniqueIndex("customers_org_customer_idx").on(table.organizationId, table.customerId),
 ]);
