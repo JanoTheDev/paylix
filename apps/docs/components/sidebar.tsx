@@ -13,11 +13,23 @@ const navGroups: (NavItem | NavGroup)[] = [
     group: "API Reference",
     items: [
       { href: "/sdk-reference", label: "SDK Reference" },
-      { href: "/framework-examples", label: "Framework Examples" },
       { href: "/products", label: "Products" },
       { href: "/customers", label: "Customers" },
       { href: "/error-codes", label: "Error Codes" },
       { href: "/rate-limits", label: "Rate Limits" },
+    ],
+  },
+  {
+    group: "Frameworks",
+    items: [
+      { href: "/frameworks", label: "Overview" },
+      { href: "/frameworks/nextjs-app-router", label: "Next.js (App Router)" },
+      { href: "/frameworks/nextjs-pages-router", label: "Next.js (Pages Router)" },
+      { href: "/frameworks/react-vite", label: "React (Vite)" },
+      { href: "/frameworks/sveltekit", label: "SvelteKit" },
+      { href: "/frameworks/nuxt", label: "Nuxt 3" },
+      { href: "/frameworks/remix", label: "Remix" },
+      { href: "/frameworks/express", label: "Express / Fastify" },
     ],
   },
   {
