@@ -6,6 +6,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
+import { withIdempotency } from "@/lib/idempotency";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -98,80 +99,82 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId } = ctx;
 
-  const body = await request.json();
-  const parsed = createProductSchema.safeParse(body);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => i.message).join("; ");
-    return apiError("validation_failed", issues);
-  }
-
-  const data = parsed.data;
-
-  // Trial products MUST collect email — it's required for the anti-abuse
-  // dedup to work. Force email = true regardless of what the merchant sent.
-  const hasTrial =
-    (data.trialDays ?? 0) > 0 || (data.trialMinutes ?? 0) > 0;
-  if (hasTrial && data.type === "subscription") {
-    data.checkoutFields = {
-      ...(data.checkoutFields ?? {}),
-      email: true,
-    };
-  }
-
-  for (const price of data.prices) {
-    try {
-      assertValidNetworkKey(price.networkKey);
-      assertValidTokenSymbol(
-        NETWORKS[price.networkKey as NetworkKey],
-        price.tokenSymbol,
-      );
-    } catch (err) {
-      return apiError("invalid_price", err instanceof Error ? err.message : "Invalid price entry");
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    const body = JSON.parse(rawBody);
+    const parsed = createProductSchema.safeParse(body);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => i.message).join("; ");
+      return apiError("validation_failed", issues);
     }
-  }
 
-  const created = await db.transaction(async (tx) => {
-    const [product] = await tx
-      .insert(products)
-      .values({
-        organizationId,
-        name: data.name,
-        description: data.description ?? null,
-        type: data.type,
-        billingInterval:
-          data.type === "subscription" ? (data.billingInterval ?? null) : null,
-        metadata: data.metadata ?? {},
-        checkoutFields: data.checkoutFields ?? {},
-        taxRateBps: data.taxRateBps ?? null,
-        taxLabel: data.taxLabel ?? null,
-        reverseChargeEligible: data.reverseChargeEligible ?? false,
-        trialDays: data.type === "subscription" ? (data.trialDays ?? null) : null,
-        trialMinutes: data.type === "subscription" ? (data.trialMinutes ?? null) : null,
-      })
-      .returning();
+    const data = parsed.data;
 
-    await tx.insert(productPrices).values(
-      data.prices.map((p) => ({
-        productId: product.id,
-        networkKey: p.networkKey,
-        tokenSymbol: p.tokenSymbol,
-        amount: BigInt(p.amount),
-        isActive: true,
-      })),
-    );
+    // Trial products MUST collect email — it's required for the anti-abuse
+    // dedup to work. Force email = true regardless of what the merchant sent.
+    const hasTrial =
+      (data.trialDays ?? 0) > 0 || (data.trialMinutes ?? 0) > 0;
+    if (hasTrial && data.type === "subscription") {
+      data.checkoutFields = {
+        ...(data.checkoutFields ?? {}),
+        email: true,
+      };
+    }
 
-    return product;
+    for (const price of data.prices) {
+      try {
+        assertValidNetworkKey(price.networkKey);
+        assertValidTokenSymbol(
+          NETWORKS[price.networkKey as NetworkKey],
+          price.tokenSymbol,
+        );
+      } catch (err) {
+        return apiError("invalid_price", err instanceof Error ? err.message : "Invalid price entry");
+      }
+    }
+
+    const created = await db.transaction(async (tx) => {
+      const [product] = await tx
+        .insert(products)
+        .values({
+          organizationId,
+          name: data.name,
+          description: data.description ?? null,
+          type: data.type,
+          billingInterval:
+            data.type === "subscription" ? (data.billingInterval ?? null) : null,
+          metadata: data.metadata ?? {},
+          checkoutFields: data.checkoutFields ?? {},
+          taxRateBps: data.taxRateBps ?? null,
+          taxLabel: data.taxLabel ?? null,
+          reverseChargeEligible: data.reverseChargeEligible ?? false,
+          trialDays: data.type === "subscription" ? (data.trialDays ?? null) : null,
+          trialMinutes: data.type === "subscription" ? (data.trialMinutes ?? null) : null,
+        })
+        .returning();
+
+      await tx.insert(productPrices).values(
+        data.prices.map((p) => ({
+          productId: product.id,
+          networkKey: p.networkKey,
+          tokenSymbol: p.tokenSymbol,
+          amount: BigInt(p.amount),
+          isActive: true,
+        })),
+      );
+
+      return product;
+    });
+
+    void recordAudit({
+      organizationId,
+      userId,
+      action: "product.created",
+      resourceType: "product",
+      resourceId: created.id,
+      details: { name: created.name, type: created.type },
+      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    });
+
+    return NextResponse.json(created, { status: 201 });
   });
-
-  void recordAudit({
-    organizationId,
-    userId,
-    action: "product.created",
-    resourceType: "product",
-    resourceId: created.id,
-    details: { name: created.name, type: created.type },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-  });
-
-  return NextResponse.json(created, { status: 201 });
 }

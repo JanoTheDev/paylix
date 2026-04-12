@@ -8,6 +8,7 @@ import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { withIdempotency } from "@/lib/idempotency";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -52,41 +53,43 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId } = ctx;
 
-  const body = await request.json();
-  const parsed = createWebhookSchema.safeParse(body);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => i.message).join("; ");
-    return apiError("validation_failed", issues);
-  }
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    const body = JSON.parse(rawBody);
+    const parsed = createWebhookSchema.safeParse(body);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => i.message).join("; ");
+      return apiError("validation_failed", issues);
+    }
 
-  const { url, events } = parsed.data;
+    const { url, events } = parsed.data;
 
-  const urlError = await validateWebhookUrl(url);
-  if (urlError) {
-    return apiError("invalid_url", urlError);
-  }
+    const urlError = await validateWebhookUrl(url);
+    if (urlError) {
+      return apiError("invalid_url", urlError);
+    }
 
-  const secret = `whsec_${randomBytes(32).toString("hex")}`;
+    const secret = `whsec_${randomBytes(32).toString("hex")}`;
 
-  const [row] = await db
-    .insert(webhooks)
-    .values({
+    const [row] = await db
+      .insert(webhooks)
+      .values({
+        organizationId,
+        url,
+        secret,
+        events,
+      })
+      .returning();
+
+    void recordAudit({
       organizationId,
-      url,
-      secret,
-      events,
-    })
-    .returning();
+      userId,
+      action: "webhook.created",
+      resourceType: "webhook",
+      resourceId: row.id,
+      details: { url: row.url, events: row.events },
+      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    });
 
-  void recordAudit({
-    organizationId,
-    userId,
-    action: "webhook.created",
-    resourceType: "webhook",
-    resourceId: row.id,
-    details: { url: row.url, events: row.events },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    return NextResponse.json(row, { status: 201 });
   });
-
-  return NextResponse.json(row, { status: 201 });
 }

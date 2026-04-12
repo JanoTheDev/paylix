@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { z } from "zod";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { withIdempotency } from "@/lib/idempotency";
 
 const createSchema = z.object({
   firstName: z.string().trim().max(100).nullish(),
@@ -20,44 +21,51 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId } = ctx;
 
-  const body = await request.json().catch(() => null);
-  const parsed = createSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
-      { status: 400 },
-    );
-  }
-  const data = parsed.data;
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      body = null;
+    }
+    const parsed = createSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
+        { status: 400 },
+      );
+    }
+    const data = parsed.data;
 
-  if (!data.firstName && !data.lastName && !data.email && !data.walletAddress) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "validation_failed",
-          message: "At least one of firstName, lastName, email, or walletAddress is required",
+    if (!data.firstName && !data.lastName && !data.email && !data.walletAddress) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "validation_failed",
+            message: "At least one of firstName, lastName, email, or walletAddress is required",
+          },
         },
-      },
-      { status: 400 },
-    );
-  }
+        { status: 400 },
+      );
+    }
 
-  const customerId = `manual_${randomBytes(6).toString("hex")}`;
-  const [inserted] = await db
-    .insert(customers)
-    .values({
-      organizationId,
-      customerId,
-      firstName: data.firstName ?? null,
-      lastName: data.lastName ?? null,
-      email: data.email ?? null,
-      walletAddress: data.walletAddress ?? null,
-      country: data.country ? data.country.toUpperCase() : null,
-      taxId: data.taxId ?? null,
-      source: "manual",
-      metadata: data.metadata,
-    })
-    .returning();
+    const customerId = `manual_${randomBytes(6).toString("hex")}`;
+    const [inserted] = await db
+      .insert(customers)
+      .values({
+        organizationId,
+        customerId,
+        firstName: data.firstName ?? null,
+        lastName: data.lastName ?? null,
+        email: data.email ?? null,
+        walletAddress: data.walletAddress ?? null,
+        country: data.country ? data.country.toUpperCase() : null,
+        taxId: data.taxId ?? null,
+        source: "manual",
+        metadata: data.metadata,
+      })
+      .returning();
 
-  return NextResponse.json({ customer: inserted });
+    return NextResponse.json({ customer: inserted });
+  });
 }
