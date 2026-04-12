@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, jsonb, timestamp, bigint, integer } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, jsonb, timestamp, bigint, integer } from "drizzle-orm/pg-core";
 
 export const unmatchedEvents = pgTable("unmatched_events", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -8,6 +8,7 @@ export const unmatchedEvents = pgTable("unmatched_events", {
   logIndex: integer("log_index"),
   payload: jsonb("payload").notNull(),
   attempts: integer("attempts").notNull().default(0),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

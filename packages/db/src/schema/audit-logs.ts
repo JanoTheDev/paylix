@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 
 export const auditLogs = pgTable("audit_logs", {
@@ -12,6 +12,7 @@ export const auditLogs = pgTable("audit_logs", {
   resourceId: text("resource_id"),
   details: jsonb("details").$type<Record<string, unknown>>().default({}),
   ipAddress: text("ip_address"),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

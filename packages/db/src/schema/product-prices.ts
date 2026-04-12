@@ -32,6 +32,7 @@ export const productPrices = pgTable(
     tokenSymbol: text("token_symbol").notNull(),
     amount: bigint("amount", { mode: "bigint" }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
+    livemode: boolean("livemode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

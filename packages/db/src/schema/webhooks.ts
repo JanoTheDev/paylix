@@ -8,6 +8,7 @@ export const webhooks = pgTable("webhooks", {
   secret: text("secret").notNull(),
   events: text("events").array().notNull(),
   isActive: boolean("is_active").notNull().default(true),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

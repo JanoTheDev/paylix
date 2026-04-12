@@ -70,6 +70,7 @@ export const invoices = pgTable(
     emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
     emailError: text("email_error"),
 
+    livemode: boolean("livemode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

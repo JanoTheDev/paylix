@@ -49,6 +49,7 @@ export const products = pgTable("products", {
     .default(false),
   trialDays: integer("trial_days"),
   trialMinutes: integer("trial_minutes"),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

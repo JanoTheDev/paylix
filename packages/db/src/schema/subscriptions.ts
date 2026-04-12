@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, pgEnum, integer, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, pgEnum, integer, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 import { products } from "./products";
 import { customers } from "./customers";
@@ -71,6 +71,7 @@ export const subscriptions = pgTable(
     trialConversionLastError: text("trial_conversion_last_error"),
     trialReminderSentAt: timestamp("trial_reminder_sent_at", { withTimezone: true }),
     trialConversionSubmittedAt: timestamp("trial_conversion_submitted_at", { withTimezone: true }),
+    livemode: boolean("livemode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },

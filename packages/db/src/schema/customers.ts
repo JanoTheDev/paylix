@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 
 export const customers = pgTable("customers", {
@@ -14,6 +14,7 @@ export const customers = pgTable("customers", {
   taxId: text("tax_id"),
   source: text("source").notNull().default("checkout"),
   metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),

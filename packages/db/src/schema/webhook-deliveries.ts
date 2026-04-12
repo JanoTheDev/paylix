@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, boolean, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
 import { webhooks } from "./webhooks";
 
 export const deliveryStatusEnum = pgEnum("delivery_status", ["pending", "delivered", "failed"]);
@@ -12,6 +12,7 @@ export const webhookDeliveries = pgTable("webhook_deliveries", {
   httpStatus: integer("http_status"),
   attempts: integer("attempts").notNull().default(0),
   nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+  livemode: boolean("livemode").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

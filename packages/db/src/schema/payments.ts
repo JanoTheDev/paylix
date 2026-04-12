@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, bigint, pgEnum, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, boolean, timestamp, bigint, pgEnum, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 import { products } from "./products";
 import { customers } from "./customers";
@@ -22,6 +22,7 @@ export const payments = pgTable(
     toAddress: text("to_address"),
     blockNumber: bigint("block_number", { mode: "number" }),
     metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
+    livemode: boolean("livemode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("payments_chain_tx_idx").on(table.chain, table.txHash)]
