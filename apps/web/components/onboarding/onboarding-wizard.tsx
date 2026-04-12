@@ -48,10 +48,9 @@ export function OnboardingWizard({
   const [productName, setProductName] = useState("");
   const [productType, setProductType] = useState<"one_time" | "subscription">("one_time");
   const [billingInterval, setBillingInterval] = useState("");
-  const [amount, setAmount] = useState("");
+  type PriceEntry = { networkKey: string; tokenSymbol: string; amount: string };
+  const [prices, setPrices] = useState<PriceEntry[]>([{ networkKey: "", tokenSymbol: "", amount: "" }]);
   const [trialDays, setTrialDays] = useState("");
-  const [networkKey, setNetworkKey] = useState("");
-  const [tokenSymbol, setTokenSymbol] = useState("");
   const [enabledNetworks, setEnabledNetworks] = useState<NetworkInfo[]>([]);
 
   // Step 3 — wallet
@@ -91,8 +90,8 @@ export function OnboardingWizard({
       setError("Product name is required");
       return;
     }
-    if (!networkKey || !tokenSymbol || !amount.trim()) {
-      setError("Network, token, and amount are required");
+    if (prices.every((p) => !p.networkKey || !p.tokenSymbol || !p.amount.trim())) {
+      setError("At least one price with network, token, and amount is required");
       return;
     }
     if (productType === "subscription" && !billingInterval) {
@@ -105,20 +104,28 @@ export function OnboardingWizard({
       const { NETWORKS } = await import("@paylix/config/networks");
       const { toNativeUnits } = await import("@/lib/amounts");
 
-      const network = NETWORKS[networkKey as keyof typeof NETWORKS];
-      const token = (network.tokens as Record<string, (typeof network.tokens)[keyof typeof network.tokens]>)[tokenSymbol];
-      if (!token) {
-        setError(`Unknown token ${tokenSymbol}`);
+      const pricePayload = prices
+        .filter((p) => p.networkKey && p.tokenSymbol && p.amount.trim())
+        .map((p) => {
+          const network = NETWORKS[p.networkKey as keyof typeof NETWORKS];
+          const token = (network.tokens as Record<string, { decimals: number }>)[p.tokenSymbol];
+          return {
+            networkKey: p.networkKey,
+            tokenSymbol: p.tokenSymbol,
+            amount: toNativeUnits(p.amount, token.decimals).toString(),
+          };
+        });
+
+      if (pricePayload.length === 0) {
+        setError("At least one price is required");
         setSubmitting(false);
         return;
       }
 
-      const nativeAmount = toNativeUnits(amount, token.decimals).toString();
-
       const payload: Record<string, unknown> = {
         name: productName,
         type: productType,
-        prices: [{ networkKey, tokenSymbol, amount: nativeAmount }],
+        prices: pricePayload,
         checkoutFields: { email: true },
       };
       if (productType === "subscription" && billingInterval) {
@@ -329,65 +336,87 @@ export function OnboardingWizard({
               </div>
             )}
 
-            <div className="space-y-1">
-              <Label>Network</Label>
+            <div className="space-y-2">
+              <Label>Prices</Label>
               {enabledNetworks.length === 0 ? (
                 <p className="text-xs text-destructive">
                   No networks enabled. Go to Settings and enable at least one
                   network first.
                 </p>
               ) : (
-                <Select
-                  value={networkKey}
-                  onValueChange={(v) => {
-                    setNetworkKey(v);
-                    setTokenSymbol("");
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select network" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {enabledNetworks.map((n) => (
-                      <SelectItem key={n.networkKey} value={n.networkKey}>
-                        {n.displayLabel}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <>
+                  {prices.map((price, idx) => (
+                    <div key={idx} className="rounded-lg border border-border p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground-muted">Price {idx + 1}</span>
+                        {prices.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setPrices((p) => p.filter((_, i) => i !== idx))}
+                            className="text-xs text-destructive hover:underline"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Select
+                          value={price.networkKey}
+                          onValueChange={(v) => {
+                            const next = [...prices];
+                            next[idx] = { ...next[idx], networkKey: v, tokenSymbol: "" };
+                            setPrices(next);
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Network" /></SelectTrigger>
+                          <SelectContent>
+                            {enabledNetworks.map((n) => (
+                              <SelectItem key={n.networkKey} value={n.networkKey}>{n.displayLabel}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={price.tokenSymbol}
+                          onValueChange={(v) => {
+                            const next = [...prices];
+                            next[idx] = { ...next[idx], tokenSymbol: v };
+                            setPrices(next);
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Token" /></SelectTrigger>
+                          <SelectContent>
+                            {enabledNetworks
+                              .find((n) => n.networkKey === price.networkKey)
+                              ?.tokens.map((t) => (
+                                <SelectItem key={t} value={t}>{t}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="10.00"
+                          className="font-mono"
+                          value={price.amount}
+                          onChange={(e) => {
+                            const next = [...prices];
+                            next[idx] = { ...next[idx], amount: e.target.value };
+                            setPrices(next);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPrices((p) => [...p, { networkKey: "", tokenSymbol: "", amount: "" }])}
+                  >
+                    + Add price
+                  </Button>
+                </>
               )}
-            </div>
-
-            {networkKey && (
-              <div className="space-y-1">
-                <Label>Token</Label>
-                <Select value={tokenSymbol} onValueChange={setTokenSymbol}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select token" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {enabledNetworks
-                      .find((n) => n.networkKey === networkKey)
-                      ?.tokens.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {t}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <Label htmlFor="onb-amount">Amount</Label>
-              <Input
-                id="onb-amount"
-                type="text"
-                inputMode="decimal"
-                placeholder="10.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
               <p className="text-xs text-foreground-muted">
                 In token units (e.g. 10.00 USDC).
               </p>
