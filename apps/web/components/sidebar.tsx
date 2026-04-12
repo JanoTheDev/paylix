@@ -14,8 +14,10 @@ import {
   Settings,
   Shield,
   LogOut,
+  ChevronUp,
+  User,
 } from "lucide-react";
-import { signOut } from "@/lib/auth-client";
+import { signOut, useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "@/components/team-switcher";
@@ -159,57 +161,124 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
 
-      <div className="border-t border-sidebar-border px-2 py-2">
-        <div className="flex h-9 items-center gap-2.5 px-3 text-xs text-foreground-dim">
-          <span
-            className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              indexerOnline === null
-                ? "bg-foreground-dim"
-                : indexerOnline
-                  ? "bg-success"
-                  : "bg-destructive",
-            )}
-          />
-          <span>
-            {indexerOnline === null
-              ? "Checking indexer…"
-              : indexerOnline
-                ? "Indexer online"
-                : "Indexer offline"}
+      {/* System status — compact inline */}
+      <div className="border-t border-sidebar-border px-4 py-2">
+        <div className="flex items-center gap-3 text-[11px] text-foreground-dim">
+          <span className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "inline-block h-1.5 w-1.5 rounded-full",
+                indexerOnline === null
+                  ? "bg-foreground-dim"
+                  : indexerOnline
+                    ? "bg-success"
+                    : "bg-destructive",
+              )}
+            />
+            Indexer
           </span>
+          {relayerStatus?.configured && (
+            <span className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full",
+                  relayerStatus.low ? "bg-warning" : "bg-success",
+                )}
+              />
+              Relayer
+            </span>
+          )}
+          {keeperStatus?.configured && (
+            <span className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full",
+                  keeperStatus.low ? "bg-warning" : "bg-success",
+                )}
+              />
+              Keeper
+            </span>
+          )}
         </div>
-        {relayerStatus && relayerStatus.configured && (
-          <div className="flex h-9 items-center gap-2.5 px-3 text-xs text-foreground-dim">
-            <span
-              className={cn(
-                "inline-block h-2 w-2 rounded-full",
-                relayerStatus.low ? "bg-warning" : "bg-success",
-              )}
-            />
-            <span>Relayer {relayerStatus.low ? "low" : "ok"}</span>
-          </div>
-        )}
-        {keeperStatus && keeperStatus.configured && (
-          <div className="flex h-9 items-center gap-2.5 px-3 text-xs text-foreground-dim">
-            <span
-              className={cn(
-                "inline-block h-2 w-2 rounded-full",
-                keeperStatus.low ? "bg-warning" : "bg-success",
-              )}
-            />
-            <span>Keeper {keeperStatus.low ? "low" : "ok"}</span>
-          </div>
-        )}
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-3 px-3 text-foreground-muted hover:text-foreground"
-          onClick={handleSignOut}
-        >
-          <LogOut size={16} strokeWidth={1.75} />
-          Sign out
-        </Button>
       </div>
+
+      {/* User profile */}
+      <UserProfileMenu onSignOut={handleSignOut} onNavigate={onNavigate} />
+    </div>
+  );
+}
+
+function UserProfileMenu({
+  onSignOut,
+  onNavigate,
+}: {
+  onSignOut: () => void;
+  onNavigate?: () => void;
+}) {
+  const { data: session } = useSession();
+  const [open, setOpen] = useState(false);
+
+  const userName = session?.user?.name ?? "Account";
+  const userEmail = session?.user?.email ?? "";
+  const initials = userName
+    .split(" ")
+    .map((w: string) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div className="relative border-t border-sidebar-border">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
+      >
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+          {initials || <User size={14} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">
+            {userName}
+          </p>
+          <p className="truncate text-[11px] text-foreground-muted">{userEmail}</p>
+        </div>
+        <ChevronUp
+          size={14}
+          className={cn(
+            "flex-shrink-0 text-foreground-muted transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-lg border border-border bg-surface-1 shadow-xl">
+          <Link
+            href="/settings"
+            onClick={() => {
+              setOpen(false);
+              onNavigate?.();
+            }}
+            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <Settings size={14} strokeWidth={1.75} />
+            Settings
+          </Link>
+          <div className="border-t border-border" />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onSignOut();
+            }}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-400 transition-colors hover:bg-surface-2"
+          >
+            <LogOut size={14} strokeWidth={1.75} />
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 }
