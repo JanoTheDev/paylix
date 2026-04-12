@@ -848,11 +848,6 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
             </Alert>
           )}
 
-          <div className="mt-8">
-            <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
-              Powered by Paylix
-            </span>
-          </div>
         </div>
 
         {/* Right: Action area */}
@@ -1078,6 +1073,12 @@ export function CheckoutClient({ session, availablePrices }: CheckoutClientProps
               : "the active network"}
           </p>
         </div>
+      </div>
+
+      <div className="border-t border-border px-8 py-3 text-center">
+        <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
+          Powered by Paylix
+        </span>
       </div>
 
       {(isPolling || status === "viewed") && (
