@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   }
 
   const [sub] = await db
-    .select({ status: subscriptions.status, customerId: subscriptions.customerId })
+    .select({ status: subscriptions.status, customerId: subscriptions.customerId, pausedBy: subscriptions.pausedBy })
     .from(subscriptions)
     .where(eq(subscriptions.id, subscriptionId))
     .limit(1);
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "forbidden", message: "Not your subscription" } }, { status: 403 });
   }
 
-  const result = computePauseUpdate(sub, new Date());
+  const result = computePauseUpdate(sub, "customer", new Date());
   if (!result.ok) {
     return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
   }

@@ -16,7 +16,7 @@ export async function POST(
   const { id } = await params;
 
   const [existing] = await db
-    .select({ status: subscriptions.status })
+    .select({ status: subscriptions.status, pausedBy: subscriptions.pausedBy })
     .from(subscriptions)
     .where(and(eq(subscriptions.id, id), eq(subscriptions.organizationId, organizationId)));
 
@@ -24,7 +24,7 @@ export async function POST(
     return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
   }
 
-  const result = computePauseUpdate(existing, new Date());
+  const result = computePauseUpdate(existing, "merchant", new Date());
   if (!result.ok) {
     return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
   }

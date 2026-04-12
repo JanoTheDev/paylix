@@ -32,6 +32,7 @@ export async function POST(request: Request) {
       status: subscriptions.status,
       customerId: subscriptions.customerId,
       pausedAt: subscriptions.pausedAt,
+      pausedBy: subscriptions.pausedBy,
       nextChargeDate: subscriptions.nextChargeDate,
     })
     .from(subscriptions)
@@ -46,8 +47,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "forbidden", message: "Not your subscription" } }, { status: 403 });
   }
 
-  const result = computeResumeUpdate(sub, new Date());
+  const result = computeResumeUpdate(sub, "customer", new Date());
   if (!result.ok) {
+    if (result.code === "paused_by_other_party") {
+      return NextResponse.json({ error: { code: "paused_by_other_party", message: result.reason } }, { status: 403 });
+    }
     return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
   }
 

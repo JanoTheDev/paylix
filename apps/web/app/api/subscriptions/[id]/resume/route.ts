@@ -19,6 +19,7 @@ export async function POST(
     .select({
       status: subscriptions.status,
       pausedAt: subscriptions.pausedAt,
+      pausedBy: subscriptions.pausedBy,
       nextChargeDate: subscriptions.nextChargeDate,
     })
     .from(subscriptions)
@@ -28,8 +29,11 @@ export async function POST(
     return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
   }
 
-  const result = computeResumeUpdate(existing, new Date());
+  const result = computeResumeUpdate(existing, "merchant", new Date());
   if (!result.ok) {
+    if (result.code === "paused_by_other_party") {
+      return NextResponse.json({ error: { code: "paused_by_other_party", message: result.reason } }, { status: 403 });
+    }
     return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
   }
 
