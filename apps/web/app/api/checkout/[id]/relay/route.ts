@@ -18,7 +18,7 @@ import {
 } from "./validation";
 import { acquireRelayLock, releaseRelayLock } from "./lock";
 import { checkExistingSubscription } from "./dedup";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimitAsync } from "@/lib/rate-limit";
 import { signPortalToken } from "@/lib/portal-tokens";
 import { normalizeEmail, isDisposableEmail } from "@/lib/email-normalize";
 import { checkWalletActivity } from "@/lib/wallet-activity";
@@ -67,7 +67,7 @@ export async function POST(
   // Per-session dedup is handled by the relay_in_flight_at lock below.
   const forwardedFor = request.headers.get("x-forwarded-for");
   const ip = forwardedFor?.split(",")[0]?.trim() || "unknown";
-  const rl = checkRateLimit(`relay:${ip}`, 10, 60_000);
+  const rl = await checkRateLimitAsync(`relay:${ip}`, 10, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
       {

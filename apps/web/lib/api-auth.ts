@@ -2,7 +2,7 @@ import { db } from "./db";
 import { apiKeys } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hashApiKey } from "./api-key-utils";
-import { checkRateLimit } from "./rate-limit";
+import { checkRateLimitAsync } from "./rate-limit";
 import { NextResponse } from "next/server";
 
 export type ApiKeyAuth = {
@@ -37,7 +37,7 @@ export async function authenticateApiKey(
   if (requiredType && found.type !== requiredType) return null;
 
   const maxPerMinute = found.type === "publishable" ? 200 : 100;
-  const rl = checkRateLimit(`api:${found.id}`, maxPerMinute, 60_000);
+  const rl = await checkRateLimitAsync(`api:${found.id}`, maxPerMinute, 60_000);
   if (!rl.ok) {
     const retryAfter = String(Math.ceil((rl.retryAfterMs ?? 0) / 1000));
     return {

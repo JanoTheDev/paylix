@@ -1,14 +1,14 @@
 /**
- * Simple in-memory token-bucket rate limiter.
+ * Rate limiter with Redis support for multi-instance deployments.
  *
- * Caveats:
- * - Process-local. Doesn't scale across multiple web instances — if you run
- *   a load balancer with >1 replica, swap this for a Redis-backed limiter.
- *   For single-instance self-hosters, this is sufficient and avoids a
- *   dependency on Redis.
- * - Memory-bounded via periodic cleanup. Keys older than 2x the window are
- *   evicted lazily on access.
+ * When REDIS_URL is set, `checkRateLimitAsync` uses atomic Redis INCR+EXPIRE
+ * for distributed rate limiting. Falls back to in-memory on Redis failure.
+ *
+ * The synchronous `checkRateLimit` always uses the in-memory path and is kept
+ * for callers that can't await.
  */
+
+import { getRedis } from "./redis";
 
 interface Bucket {
   count: number;
@@ -57,6 +57,36 @@ export function checkRateLimit(
  */
 export function resetRateLimit(key: string): void {
   buckets.delete(key);
+}
+
+/**
+ * Async rate limiter that tries Redis first (when REDIS_URL is set),
+ * falling back to in-memory on any error or when Redis is unavailable.
+ */
+export async function checkRateLimitAsync(
+  key: string,
+  limit: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const windowSec = Math.ceil(windowMs / 1000);
+      const redisKey = `rl:${key}`;
+      const count = await redis.incr(redisKey);
+      if (count === 1) {
+        await redis.expire(redisKey, windowSec);
+      }
+      if (count > limit) {
+        const ttl = await redis.ttl(redisKey);
+        return { ok: false, retryAfterMs: ttl * 1000, remaining: 0 };
+      }
+      return { ok: true, remaining: limit - count };
+    } catch {
+      // Redis failed — fall through to in-memory
+    }
+  }
+  return checkRateLimit(key, limit, windowMs);
 }
 
 /**

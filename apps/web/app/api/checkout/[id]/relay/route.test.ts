@@ -15,6 +15,7 @@ vi.mock("@/lib/relayer", () => ({
 }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: () => ({ ok: true }),
+  checkRateLimitAsync: () => Promise.resolve({ ok: true }),
 }));
 vi.mock("@/lib/contracts", () => ({
   CONTRACTS: {
