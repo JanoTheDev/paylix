@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import { SidebarContent } from "./sidebar";
 
-export function MobileNav() {
+export function MobileNav({ mode = "test" }: { mode?: "test" | "live" }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -27,7 +27,7 @@ export function MobileNav() {
           className="w-60 border-sidebar-border bg-sidebar p-0"
         >
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <SidebarContent onNavigate={() => setOpen(false)} />
+          <SidebarContent onNavigate={() => setOpen(false)} mode={mode} />
         </SheetContent>
       </Sheet>
       <span className="text-sm font-semibold tracking-tight">Paylix</span>

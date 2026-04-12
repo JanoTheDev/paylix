@@ -21,6 +21,7 @@ import { signOut, useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "@/components/team-switcher";
+import { ModeToggle } from "@/components/mode-toggle";
 
 const navItems = [
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
@@ -34,7 +35,13 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarContent({
+  onNavigate,
+  mode = "test",
+}: {
+  onNavigate?: () => void;
+  mode?: "test" | "live";
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [indexerOnline, setIndexerOnline] = useState<boolean | null>(null);
@@ -137,6 +144,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="px-2 py-2">
         <TeamSwitcher />
+      </div>
+
+      <div className="px-2 pb-2">
+        <ModeToggle mode={mode} />
       </div>
 
       <nav className="flex-1 space-y-0.5 px-2 py-3">
@@ -283,10 +294,10 @@ function UserProfileMenu({
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ mode = "test" }: { mode?: "test" | "live" }) {
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-sidebar-border lg:block">
-      <SidebarContent />
+      <SidebarContent mode={mode} />
     </aside>
   );
 }
