@@ -6,6 +6,7 @@ import { subscriptions, products, customers } from "@paylix/db/schema";
 import { getToken, type NetworkKey } from "@paylix/config/networks";
 import { config } from "../config";
 import type { TrialConversionFailureReason } from "./trial-conversion-failed";
+import { notificationsEnabled } from "./notifications-enabled";
 
 export type SendTrialEmailArgs =
   | { kind: "trial-started"; subscriptionId: string }
@@ -81,6 +82,13 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
     const { subscription, product, customer } = row;
     if (!customer.email) {
       console.log("[sendTrialEmail] customer has no email, skipping:", args.subscriptionId);
+      return;
+    }
+
+    if (!(await notificationsEnabled(subscription.organizationId))) {
+      console.log(
+        `[sendTrialEmail] notifications disabled, skipping ${args.kind} for ${args.subscriptionId}`,
+      );
       return;
     }
 

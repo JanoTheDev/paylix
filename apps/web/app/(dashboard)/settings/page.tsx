@@ -26,6 +26,7 @@ interface UserSettings {
   email: string;
   walletAddress: string | null;
   businessProfile?: BusinessProfile;
+  notificationsEnabled?: boolean;
 }
 
 interface NetworkConfigUI {
@@ -74,6 +75,10 @@ export default function SettingsPage() {
 
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
 
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [notificationsSaving, setNotificationsSaving] = useState(false);
+  const [notificationsSuccess, setNotificationsSuccess] = useState(false);
+
   const network = process.env.NEXT_PUBLIC_NETWORK || "base-sepolia";
   const isMainnet = network === "base";
 
@@ -91,6 +96,9 @@ export default function SettingsPage() {
           setNetworks(data.networks);
         }
         if (data.businessProfile) setProfile(data.businessProfile);
+        if (typeof data.notificationsEnabled === "boolean") {
+          setNotificationsEnabled(data.notificationsEnabled);
+        }
       }
     } catch {
       // ignore
@@ -176,6 +184,30 @@ export default function SettingsPage() {
     );
   }
 
+  async function saveNotifications(next: boolean) {
+    setNotificationsSaving(true);
+    setNotificationsSuccess(false);
+    const previous = notificationsEnabled;
+    setNotificationsEnabled(next);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationsEnabled: next }),
+      });
+      if (res.ok) {
+        setNotificationsSuccess(true);
+        setTimeout(() => setNotificationsSuccess(false), 2000);
+      } else {
+        setNotificationsEnabled(previous);
+      }
+    } catch {
+      setNotificationsEnabled(previous);
+    } finally {
+      setNotificationsSaving(false);
+    }
+  }
+
   async function saveNetworks() {
     setNetworksSaving(true);
     setNetworksSuccess(false);
@@ -219,6 +251,7 @@ export default function SettingsPage() {
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="business">Business Profile</TabsTrigger>
           <TabsTrigger value="checkout">Checkout Defaults</TabsTrigger>
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
 
         {/* Payments tab: wallet + networks */}
@@ -354,6 +387,58 @@ export default function SettingsPage() {
           ) : (
             <p className="text-sm text-foreground-muted">Loading…</p>
           )}
+        </TabsContent>
+
+        {/* Notifications tab */}
+        <TabsContent value="notifications">
+          <FormSection
+            title="Automatic Email Notifications"
+            description="Paylix sends transactional emails to your customers — invoices, trial reminders, subscription updates, receipts, and past-due alerts. Disable this if you'd rather send your own custom emails from webhooks."
+          >
+            <div className="flex items-center justify-between rounded-lg border border-border bg-surface-1 p-4">
+              <div className="pr-4">
+                <div className="text-sm font-medium">
+                  Send automatic emails to customers
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-foreground-muted">
+                  When off, Paylix stops sending invoice emails, trial
+                  reminders, and all subscription lifecycle emails. Webhook
+                  events still fire so you can trigger your own templated
+                  emails on your side.
+                </div>
+              </div>
+              <Switch
+                checked={notificationsEnabled}
+                disabled={notificationsSaving}
+                onCheckedChange={saveNotifications}
+              />
+            </div>
+            {!notificationsEnabled && (
+              <Alert>
+                <AlertDescription>
+                  Automatic emails are disabled. Customers will not receive
+                  invoices, receipts, trial reminders, or past-due alerts from
+                  Paylix. Subscribe to the relevant webhooks (
+                  <code className="font-mono text-[12px]">invoice.issued</code>,{" "}
+                  <code className="font-mono text-[12px]">
+                    subscription.created
+                  </code>
+                  ,{" "}
+                  <code className="font-mono text-[12px]">
+                    subscription.charged
+                  </code>
+                  ,{" "}
+                  <code className="font-mono text-[12px]">
+                    subscription.past_due
+                  </code>
+                  ) to send your own.
+                </AlertDescription>
+              </Alert>
+            )}
+            {notificationsSuccess && (
+              <span className="text-sm font-medium text-success">Saved</span>
+            )}
+          </FormSection>
         </TabsContent>
 
         {/* Checkout Defaults tab */}

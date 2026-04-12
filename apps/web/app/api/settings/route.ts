@@ -75,6 +75,8 @@ export async function GET() {
     invoiceFooter: profile.invoiceFooter,
   };
 
+  const notificationsEnabled = profile.notificationsEnabled;
+
   // Build the response: every available network gets an entry, with defaults
   // if there's no row yet
   const available = getAvailableNetworks();
@@ -101,6 +103,7 @@ export async function GET() {
     checkoutFieldDefaults: defaults,
     networks,
     businessProfile,
+    notificationsEnabled,
   });
 }
 
@@ -240,9 +243,30 @@ export async function PATCH(request: Request) {
       });
   }
 
-  // If only networks/businessProfile were updated, skip the users table update
+  if (typeof body.notificationsEnabled === "boolean") {
+    await db
+      .insert(merchantProfiles)
+      .values({
+        organizationId,
+        notificationsEnabled: body.notificationsEnabled,
+      })
+      .onConflictDoUpdate({
+        target: merchantProfiles.organizationId,
+        set: {
+          notificationsEnabled: body.notificationsEnabled,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  // If only networks/businessProfile/notificationsEnabled were updated,
+  // skip the users table update
   if (Object.keys(updates).length === 0) {
-    if (Array.isArray(body.networks) || body.businessProfile) {
+    if (
+      Array.isArray(body.networks) ||
+      body.businessProfile ||
+      typeof body.notificationsEnabled === "boolean"
+    ) {
       void recordAudit({
         organizationId,
         userId,
@@ -251,6 +275,10 @@ export async function PATCH(request: Request) {
         details: {
           networks: Array.isArray(body.networks),
           businessProfile: !!body.businessProfile,
+          notificationsEnabled:
+            typeof body.notificationsEnabled === "boolean"
+              ? body.notificationsEnabled
+              : undefined,
         },
         ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       });

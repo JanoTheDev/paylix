@@ -158,6 +158,43 @@ export default function EmailNotificationsPage() {
         without an email address silently skip all notifications.
       </p>
 
+      <SectionHeading>Disabling automatic emails</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        If you want to send your own custom emails instead of the built-in
+        templates, turn off automatic notifications in{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          Settings → Notifications
+        </code>
+        . When disabled, Paylix stops sending every email listed above — but
+        webhook events still fire as normal, so you can trigger your own
+        templated messages from{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          invoice.issued
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          subscription.created
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          subscription.charged
+        </code>
+        , and{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          subscription.past_due
+        </code>{" "}
+        on your own server.
+      </p>
+      <Callout variant="tip" title="Invoices still generate">
+        Disabling notifications only skips <em>email delivery</em>. Invoices,
+        receipts, and hosted/PDF URLs are still generated for every payment so
+        your customers can always fetch them from the{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          invoice.issued
+        </code>{" "}
+        webhook payload or the customer portal.
+      </Callout>
+
       <SectionHeading>Mailer configuration</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Set the{" "}

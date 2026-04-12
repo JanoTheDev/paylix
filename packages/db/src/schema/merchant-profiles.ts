@@ -3,6 +3,7 @@ import {
   text,
   integer,
   timestamp,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 
@@ -22,6 +23,9 @@ export const merchantProfiles = pgTable("merchant_profiles", {
   invoicePrefix: text("invoice_prefix").notNull().default("INV-"),
   invoiceFooter: text("invoice_footer"),
   invoiceSequence: integer("invoice_sequence").notNull().default(0),
+  notificationsEnabled: boolean("notifications_enabled")
+    .notNull()
+    .default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

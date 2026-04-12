@@ -4,6 +4,7 @@ import { sendMail } from "@paylix/mailer";
 import { createDb } from "@paylix/db/client";
 import { subscriptions, products, customers, payments } from "@paylix/db/schema";
 import { config } from "../config";
+import { notificationsEnabled } from "./notifications-enabled";
 
 export type SendSubscriptionEmailArgs =
   | { kind: "subscription-created"; subscriptionId: string }
@@ -57,6 +58,13 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
     const { subscription, product, customer } = row;
     if (!customer.email) {
       console.log("[sendSubscriptionEmail] customer has no email, skipping:", args.subscriptionId);
+      return;
+    }
+
+    if (!(await notificationsEnabled(subscription.organizationId))) {
+      console.log(
+        `[sendSubscriptionEmail] notifications disabled, skipping ${args.kind} for ${args.subscriptionId}`,
+      );
       return;
     }
 

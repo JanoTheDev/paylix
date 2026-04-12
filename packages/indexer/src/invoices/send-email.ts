@@ -5,6 +5,7 @@ import { sendMail } from "@paylix/mailer";
 import { createElement } from "react";
 import { config } from "../config";
 import { dispatchWebhooks } from "../webhook-dispatch";
+import { notificationsEnabled } from "../emails/notifications-enabled";
 
 const db = createDb(config.databaseUrl);
 
@@ -21,6 +22,18 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
     .limit(1);
   if (!invoice) return;
   if (invoice.emailStatus !== "pending") return;
+
+  if (!(await notificationsEnabled(args.organizationId))) {
+    await db
+      .update(invoices)
+      .set({
+        emailStatus: "skipped",
+        emailError: "notifications disabled by merchant",
+      })
+      .where(eq(invoices.id, invoice.id));
+    return;
+  }
+
   if (!invoice.customerEmail) {
     await db
       .update(invoices)
