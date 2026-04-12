@@ -20,7 +20,7 @@ export async function GET(
     .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
 
   if (!hook) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Webhook not found" } }, { status: 404 });
   }
 
   const rows = await db

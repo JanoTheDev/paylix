@@ -22,14 +22,14 @@ export async function POST(request: Request) {
 
   if (!subscriptionId || !customerId || !token) {
     return NextResponse.json(
-      { error: "Missing subscriptionId, customerId, or token" },
+      { error: { code: "invalid_body", message: "Missing subscriptionId, customerId, or token" } },
       { status: 400 },
     );
   }
 
   if (!verifyPortalToken(token, customerId)) {
     return NextResponse.json(
-      { error: "Invalid or expired portal token" },
+      { error: { code: "invalid_token", message: "Invalid or expired portal token" } },
       { status: 401 },
     );
   }
@@ -42,23 +42,23 @@ export async function POST(request: Request) {
     .limit(1);
 
   if (!sub) {
-    return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
   }
 
   if (sub.customerId !== customerId) {
-    return NextResponse.json({ error: "Not your subscription" }, { status: 403 });
+    return NextResponse.json({ error: { code: "forbidden", message: "Not your subscription" } }, { status: 403 });
   }
 
   if (sub.status !== "active" && sub.status !== "past_due") {
     return NextResponse.json(
-      { error: "Subscription is not active" },
+      { error: { code: "invalid_status", message: "Subscription is not active" } },
       { status: 409 },
     );
   }
 
   if (!sub.onChainId) {
     return NextResponse.json(
-      { error: "Subscription has no on-chain id" },
+      { error: { code: "missing_on_chain_id", message: "Subscription has no on-chain id" } },
       { status: 409 },
     );
   }
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 
   if (!customer?.walletAddress) {
     return NextResponse.json(
-      { error: "Customer has no wallet address" },
+      { error: { code: "missing_wallet", message: "Customer has no wallet address" } },
       { status: 409 },
     );
   }
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
     console.error("[PortalCancel] submit failed:", err);
     const message = err instanceof Error ? err.message : "Cancel failed";
     return NextResponse.json(
-      { error: message.slice(0, 400) },
+      { error: { code: "cancel_failed", message: message.slice(0, 400) } },
       { status: 502 },
     );
   }

@@ -27,7 +27,7 @@ export async function GET(
     .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
     .limit(1);
 
-  if (!customer) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!customer) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
 
   const [customerPayments, customerSubscriptions, customerInvoices] =
     await Promise.all([
@@ -115,7 +115,7 @@ export async function PATCH(
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
       { status: 400 },
     );
   }
@@ -134,7 +134,7 @@ export async function PATCH(
   if (data.metadata !== undefined) updates.metadata = data.metadata;
 
   if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    return NextResponse.json({ error: { code: "invalid_request", message: "No fields to update" } }, { status: 400 });
   }
 
   const [updated] = await db
@@ -143,7 +143,7 @@ export async function PATCH(
     .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
     .returning();
 
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
 
   return NextResponse.json({ customer: updated });
 }

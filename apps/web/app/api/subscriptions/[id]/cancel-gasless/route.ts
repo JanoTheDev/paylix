@@ -35,13 +35,13 @@ export async function POST(
         merchantOrgId = requireActiveOrg(session);
         merchantUserId = session.user.id;
       } catch {
-        return NextResponse.json({ error: "No active team selected" }, { status: 400 });
+        return NextResponse.json({ error: { code: "no_active_org", message: "No active team selected" } }, { status: 400 });
       }
     }
   }
 
   if (!merchantOrgId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
   }
 
   const { id } = await params;
@@ -58,19 +58,19 @@ export async function POST(
     .limit(1);
 
   if (!sub) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
   }
 
   if (sub.status !== "active" && sub.status !== "past_due") {
     return NextResponse.json(
-      { error: "Subscription is not active" },
+      { error: { code: "invalid_status", message: "Subscription is not active" } },
       { status: 409 },
     );
   }
 
   if (!sub.onChainId) {
     return NextResponse.json(
-      { error: "Subscription has no on-chain id" },
+      { error: { code: "missing_on_chain_id", message: "Subscription has no on-chain id" } },
       { status: 409 },
     );
   }
@@ -92,7 +92,7 @@ export async function POST(
   } catch {
     if (!merchantUserId) {
       return NextResponse.json(
-        { error: "Merchant wallet not configured in settings" },
+        { error: { code: "missing_wallet", message: "Merchant wallet not configured in settings" } },
         { status: 400 },
       );
     }
@@ -104,7 +104,7 @@ export async function POST(
 
     if (!merchantRow?.walletAddress) {
       return NextResponse.json(
-        { error: "Merchant wallet not configured in settings" },
+        { error: { code: "missing_wallet", message: "Merchant wallet not configured in settings" } },
         { status: 400 },
       );
     }
@@ -138,7 +138,7 @@ export async function POST(
     console.error("[CancelGasless] submit failed:", err);
     const message = err instanceof Error ? err.message : "Cancel failed";
     return NextResponse.json(
-      { error: message.slice(0, 400) },
+      { error: { code: "cancel_failed", message: message.slice(0, 400) } },
       { status: 502 },
     );
   }

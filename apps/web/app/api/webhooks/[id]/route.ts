@@ -6,6 +6,7 @@ import { z } from "zod";
 import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
+import { apiError } from "@/lib/api-error";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -40,7 +41,7 @@ export async function GET(
     .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
 
   if (!row) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   return NextResponse.json(row);
@@ -58,10 +59,8 @@ export async function PATCH(
   const body = await request.json();
   const parsed = updateWebhookSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const data = parsed.data;
@@ -69,7 +68,7 @@ export async function PATCH(
   if (data.url) {
     const urlError = await validateWebhookUrl(data.url);
     if (urlError) {
-      return NextResponse.json({ error: urlError }, { status: 400 });
+      return apiError("invalid_url", urlError);
     }
   }
 
@@ -88,7 +87,7 @@ export async function PATCH(
     });
 
   if (!updated) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   void recordAudit({
@@ -119,7 +118,7 @@ export async function DELETE(
     .returning();
 
   if (!deleted) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   void recordAudit({

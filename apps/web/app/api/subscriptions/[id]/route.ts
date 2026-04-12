@@ -22,7 +22,7 @@ export async function PATCH(
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
       { status: 400 },
     );
   }
@@ -38,7 +38,7 @@ export async function PATCH(
     )
     .returning();
 
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
 
   return NextResponse.json({ subscription: updated });
 }

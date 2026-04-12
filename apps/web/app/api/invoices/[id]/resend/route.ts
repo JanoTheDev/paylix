@@ -23,11 +23,11 @@ export async function POST(_req: Request, ctx: Ctx) {
     .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
     .limit(1);
   if (!invoice) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Invoice not found" } }, { status: 404 });
   }
   if (!invoice.customerEmail) {
     return NextResponse.json(
-      { error: "Customer has no email" },
+      { error: { code: "missing_email", message: "Customer has no email address" } },
       { status: 400 },
     );
   }

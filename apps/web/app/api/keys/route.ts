@@ -6,6 +6,7 @@ import { z } from "zod";
 import { generateApiKey } from "@/lib/api-key-utils";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
+import { apiError } from "@/lib/api-error";
 
 const createKeySchema = z.object({
   name: z.string().min(1).max(100),
@@ -42,10 +43,8 @@ export async function POST(request: Request) {
   const body = await request.json();
   const parsed = createKeySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const { name, type } = parsed.data;

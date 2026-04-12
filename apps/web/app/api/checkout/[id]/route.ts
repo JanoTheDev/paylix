@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { signPortalToken } from "@/lib/portal-tokens";
 import { normalizeEmail } from "@/lib/email-normalize";
+import { apiError } from "@/lib/api-error";
 
 interface CustomerFormPayload {
   firstName?: unknown;
@@ -70,7 +71,7 @@ export async function GET(
     .leftJoin(payments, eq(checkoutSessions.paymentId, payments.id))
     .where(eq(checkoutSessions.id, id));
 
-  if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!session) return apiError("not_found", "Not found", 404);
 
   // Check if expired
   // session.amount is a bigint (native token units) — JSON.stringify can't
@@ -181,7 +182,7 @@ export async function PATCH(
     if (customerUpserted) {
       return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ error: "No valid updates" }, { status: 400 });
+    return apiError("invalid_request", "No valid fields to update");
   }
 
   const [updated] = await db
@@ -190,7 +191,7 @@ export async function PATCH(
     .where(eq(checkoutSessions.id, id))
     .returning();
 
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!updated) return apiError("not_found", "Not found", 404);
   return NextResponse.json({
     ...updated,
     amount: updated.amount?.toString() ?? null,

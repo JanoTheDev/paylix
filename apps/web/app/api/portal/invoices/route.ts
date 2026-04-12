@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   const customerId = url.searchParams.get("customerId");
   const token = url.searchParams.get("token");
   if (!customerId || !token || !verifyPortalToken(token, customerId)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
   }
   const [customer] = await db
     .select()
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     .where(eq(customers.id, customerId))
     .limit(1);
   if (!customer) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
   }
   const rows = await db
     .select({

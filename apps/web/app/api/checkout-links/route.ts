@@ -58,7 +58,7 @@ export async function POST(request: Request) {
   const parsed = createCheckoutLinkSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
+      { error: { code: "validation_failed", message: "Validation failed", details: parsed.error.flatten() } },
       { status: 400 }
     );
   }
@@ -71,11 +71,11 @@ export async function POST(request: Request) {
     .where(eq(products.id, data.productId));
 
   if (!product) {
-    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Product not found" } }, { status: 404 });
   }
 
   if (product.organizationId !== organizationId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    return NextResponse.json({ error: { code: "forbidden", message: "Unauthorized" } }, { status: 403 });
   }
 
   const prices = await db
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
 
   if (prices.length === 0) {
     return NextResponse.json(
-      { error: "Product has no active prices. Add a price before generating a link." },
+      { error: { code: "no_active_prices", message: "Product has no active prices. Add a price before generating a link." } },
       { status: 400 },
     );
   }
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Payout wallet error" },
+      { error: { code: "payout_wallet_error", message: err instanceof Error ? err.message : "Payout wallet error" } },
       { status: 400 },
     );
   }

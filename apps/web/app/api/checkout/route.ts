@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolvePayoutWallet } from "@/lib/payout-wallets";
 import type { NetworkKey } from "@paylix/config/networks";
+import { apiError } from "@/lib/api-error";
 
 const createCheckoutSchema = z.object({
   productId: z.string().uuid(),
@@ -20,12 +21,13 @@ const createCheckoutSchema = z.object({
 
 export async function POST(request: Request) {
   const auth = await authenticateApiKey(request, "secret");
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!auth) return apiError("unauthorized", "Authentication required", 401);
 
   const body = await request.json();
   const parsed = createCheckoutSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const [product] = await db
@@ -34,11 +36,11 @@ export async function POST(request: Request) {
     .where(eq(products.id, parsed.data.productId));
 
   if (!product || product.organizationId !== auth.organizationId) {
-    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    return apiError("not_found", "Product not found", 404);
   }
 
   if (!product.isActive) {
-    return NextResponse.json({ error: "Product is inactive" }, { status: 400 });
+    return apiError("product_inactive", "Product is inactive");
   }
 
   const data = parsed.data;
@@ -55,23 +57,14 @@ export async function POST(request: Request) {
     );
 
   if (prices.length === 0) {
-    return NextResponse.json(
-      { error: "Product has no active prices" },
-      { status: 400 },
-    );
+    return apiError("no_active_prices", "Product has no active prices");
   }
 
   // Path A: merchant pre-specified a currency
   let lockedPrice: typeof prices[number] | null = null;
   if (data.networkKey || data.tokenSymbol) {
     if (!data.networkKey || !data.tokenSymbol) {
-      return NextResponse.json(
-        {
-          error:
-            "networkKey and tokenSymbol must both be provided when pre-locking",
-        },
-        { status: 400 },
-      );
+      return apiError("invalid_request", "networkKey and tokenSymbol must both be provided when pre-locking");
     }
     lockedPrice =
       prices.find(
@@ -80,12 +73,7 @@ export async function POST(request: Request) {
           p.tokenSymbol === data.tokenSymbol,
       ) ?? null;
     if (!lockedPrice) {
-      return NextResponse.json(
-        {
-          error: `Product does not accept ${data.tokenSymbol} on ${data.networkKey}`,
-        },
-        { status: 400 },
-      );
+      return apiError("price_not_available", `Product does not accept ${data.tokenSymbol} on ${data.networkKey}`);
     }
   }
 
@@ -98,10 +86,7 @@ export async function POST(request: Request) {
         lockedPrice.networkKey as NetworkKey,
       );
     } catch (err) {
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Payout wallet error" },
-        { status: 400 },
-      );
+      return apiError("payout_wallet_error", err instanceof Error ? err.message : "Payout wallet error");
     }
   } else {
     // Path B: awaiting_currency — merchant wallet resolved later when buyer picks

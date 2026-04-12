@@ -4,6 +4,7 @@ import { apiKeys } from "@paylix/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
+import { apiError } from "@/lib/api-error";
 
 export async function DELETE(
   request: Request,
@@ -22,7 +23,7 @@ export async function DELETE(
     .returning();
 
   if (!updated) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   void recordAudit({

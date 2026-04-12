@@ -5,6 +5,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
+import { apiError } from "@/lib/api-error";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -100,10 +101,8 @@ export async function POST(request: Request) {
   const body = await request.json();
   const parsed = createProductSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const data = parsed.data;
@@ -127,10 +126,7 @@ export async function POST(request: Request) {
         price.tokenSymbol,
       );
     } catch (err) {
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Invalid price entry" },
-        { status: 400 },
-      );
+      return apiError("invalid_price", err instanceof Error ? err.message : "Invalid price entry");
     }
   }
 

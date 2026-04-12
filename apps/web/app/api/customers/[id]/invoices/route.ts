@@ -17,20 +17,20 @@ export async function GET(
     try {
       organizationId = requireActiveOrg(session);
     } catch {
-      return NextResponse.json({ error: "No active team selected" }, { status: 400 });
+      return NextResponse.json({ error: { code: "no_active_org", message: "No active team selected" } }, { status: 400 });
     }
   } else {
     const apiAuth = await authenticateApiKey(request, "secret");
     if (apiAuth) organizationId = apiAuth.organizationId;
   }
-  if (!organizationId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!organizationId) return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
 
   const { id } = await params;
   const [customer] = await db
     .select()
     .from(customers)
     .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)));
-  if (!customer) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!customer) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
 
   const baseUrl = process.env.BETTER_AUTH_URL || "http://localhost:3000";
 

@@ -16,22 +16,22 @@ const MAX_BYTES = 512 * 1024;
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
   }
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "No file" }, { status: 400 });
+    return NextResponse.json({ error: { code: "missing_file", message: "No file provided" } }, { status: 400 });
   }
   if (!ALLOWED.has(file.type)) {
     return NextResponse.json(
-      { error: "Unsupported file type" },
+      { error: { code: "unsupported_file_type", message: "Unsupported file type" } },
       { status: 415 },
     );
   }
   if (file.size > MAX_BYTES) {
     return NextResponse.json(
-      { error: "File too large (max 512KB)" },
+      { error: { code: "file_too_large", message: "File too large (max 512KB)" } },
       { status: 413 },
     );
   }

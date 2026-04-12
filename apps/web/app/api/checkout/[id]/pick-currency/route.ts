@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { apiError } from "@/lib/api-error";
 import { checkoutSessions, productPrices } from "@paylix/db/schema";
 import {
   assertValidNetworkKey,
@@ -35,18 +36,12 @@ export async function POST(
   };
 
   if (typeof networkKey !== "string" || typeof tokenSymbol !== "string") {
-    return NextResponse.json(
-      { error: "networkKey and tokenSymbol are required strings" },
-      { status: 400 },
-    );
+    return apiError("invalid_request", "networkKey and tokenSymbol are required strings");
   }
   try {
     assertValidNetworkKey(networkKey);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Invalid networkKey" },
-      { status: 400 },
-    );
+    return apiError("invalid_network_key", err instanceof Error ? err.message : "Invalid networkKey");
   }
   try {
     assertValidTokenSymbol(
@@ -54,10 +49,7 @@ export async function POST(
       tokenSymbol,
     );
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Invalid tokenSymbol" },
-      { status: 400 },
-    );
+    return apiError("invalid_token_symbol", err instanceof Error ? err.message : "Invalid tokenSymbol");
   }
 
   // Look up the session + verify it's in awaiting_currency state
@@ -67,7 +59,7 @@ export async function POST(
     .where(eq(checkoutSessions.id, sessionId));
 
   if (!session) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    return apiError("not_found", "Session not found", 404);
   }
   // Allow picking from awaiting_currency (first-time selection) AND active
   // (buyer changing their mind before signing). Once the session reaches
@@ -84,10 +76,7 @@ export async function POST(
     );
   }
   if (new Date(session.expiresAt) < new Date()) {
-    return NextResponse.json(
-      { error: "Session has expired" },
-      { status: 410 },
-    );
+    return apiError("session_expired", "Session has expired", 410);
   }
 
   // Find the matching price row for this product

@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { auth } from "./auth";
+import { apiError } from "./api-error";
 
 type SessionLike = Awaited<ReturnType<typeof auth.api.getSession>>;
 
@@ -47,9 +48,10 @@ export async function resolveActiveOrg(): Promise<
     };
   } catch (e) {
     if (e instanceof AuthError) {
+      const code = e.status === 401 ? "unauthorized" : "no_active_team";
       return {
         ok: false,
-        response: NextResponse.json({ error: e.message }, { status: e.status }),
+        response: apiError(code, e.message, e.status),
       };
     }
     throw e;

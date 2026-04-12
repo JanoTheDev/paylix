@@ -23,7 +23,7 @@ export async function PATCH(
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
       { status: 400 },
     );
   }
@@ -34,7 +34,7 @@ export async function PATCH(
     .where(and(eq(payments.id, id), eq(payments.organizationId, organizationId)))
     .returning();
 
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Payment not found" } }, { status: 404 });
 
   return NextResponse.json({ payment: updated });
 }
@@ -44,7 +44,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const apiAuth = await authenticateApiKey(request, "secret");
-  if (!apiAuth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!apiAuth) return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
 
   const { id } = await params;
 
@@ -65,7 +65,7 @@ export async function GET(
     .leftJoin(checkoutSessions, eq(checkoutSessions.paymentId, payments.id))
     .where(and(eq(payments.id, id), eq(payments.organizationId, apiAuth.organizationId)));
 
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!row) return NextResponse.json({ error: { code: "not_found", message: "Payment not found" } }, { status: 404 });
 
   return NextResponse.json({
     verified: row.status === "confirmed" && !!row.txHash,

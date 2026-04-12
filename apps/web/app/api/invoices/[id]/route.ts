@@ -20,7 +20,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
     .limit(1);
   if (!invoice) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Invoice not found" } }, { status: 404 });
   }
   const lineItems = await db
     .select()

@@ -21,7 +21,7 @@ export async function GET(
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
   if (!token || !verifyPortalToken(token, customerId)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
   }
 
   const [customer] = await db
@@ -36,7 +36,7 @@ export async function GET(
     .where(eq(customers.id, customerId));
 
   if (!customer) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
   }
 
   const subs = await db

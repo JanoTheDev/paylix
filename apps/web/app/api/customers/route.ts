@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: { code: "validation_failed", message: "Invalid input", details: parsed.error.flatten() } },
       { status: 400 },
     );
   }
@@ -33,8 +33,10 @@ export async function POST(request: Request) {
   if (!data.firstName && !data.lastName && !data.email && !data.walletAddress) {
     return NextResponse.json(
       {
-        error:
-          "At least one of firstName, lastName, email, or walletAddress is required",
+        error: {
+          code: "validation_failed",
+          message: "At least one of firstName, lastName, email, or walletAddress is required",
+        },
       },
       { status: 400 },
     );

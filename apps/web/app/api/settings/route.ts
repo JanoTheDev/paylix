@@ -30,7 +30,7 @@ export async function GET() {
     .where(eq(users.id, userId));
 
   if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "User not found" } }, { status: 404 });
   }
 
   // Normalize jsonb shape so the client can rely on all four keys being present.
@@ -131,7 +131,7 @@ export async function PATCH(request: Request) {
       updates.walletAddress = "";
     } else if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
       return NextResponse.json(
-        { error: "Invalid wallet address. Must start with 0x and be 42 characters." },
+        { error: { code: "invalid_wallet", message: "Invalid wallet address. Must start with 0x and be 42 characters." } },
         { status: 400 }
       );
     } else {
@@ -156,7 +156,7 @@ export async function PATCH(request: Request) {
         typeof entry.enabled !== "boolean"
       ) {
         return NextResponse.json(
-          { error: "Invalid network entry" },
+          { error: { code: "invalid_request", message: "Invalid network entry" } },
           { status: 400 },
         );
       }
@@ -164,7 +164,7 @@ export async function PATCH(request: Request) {
         assertValidNetworkKey(entry.networkKey);
       } catch (err) {
         return NextResponse.json(
-          { error: err instanceof Error ? err.message : "Unknown networkKey" },
+          { error: { code: "invalid_network_key", message: err instanceof Error ? err.message : "Unknown networkKey" } },
           { status: 400 },
         );
       }
@@ -177,7 +177,7 @@ export async function PATCH(request: Request) {
         !/^0x[a-fA-F0-9]{40}$/.test(addr)
       ) {
         return NextResponse.json(
-          { error: `Invalid override address for ${entry.networkKey}` },
+          { error: { code: "invalid_wallet", message: `Invalid override address for ${entry.networkKey}` } },
           { status: 400 },
         );
       }
@@ -256,7 +256,7 @@ export async function PATCH(request: Request) {
       });
       return NextResponse.json({ success: true });
     }
-    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+    return NextResponse.json({ error: { code: "invalid_request", message: "No valid fields to update" } }, { status: 400 });
   }
 
   const [updated] = await db

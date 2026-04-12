@@ -7,6 +7,7 @@ import { randomBytes } from "crypto";
 import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
+import { apiError } from "@/lib/api-error";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -54,17 +55,15 @@ export async function POST(request: Request) {
   const body = await request.json();
   const parsed = createWebhookSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const { url, events } = parsed.data;
 
   const urlError = await validateWebhookUrl(url);
   if (urlError) {
-    return NextResponse.json({ error: urlError }, { status: 400 });
+    return apiError("invalid_url", urlError);
   }
 
   const secret = `whsec_${randomBytes(32).toString("hex")}`;

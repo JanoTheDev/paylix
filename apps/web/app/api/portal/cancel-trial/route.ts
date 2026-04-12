@@ -20,14 +20,14 @@ export async function POST(request: Request) {
 
   if (!subscriptionId || !customerId || !token) {
     return NextResponse.json(
-      { error: "Missing subscriptionId, customerId, or token" },
+      { error: { code: "invalid_body", message: "Missing subscriptionId, customerId, or token" } },
       { status: 400 },
     );
   }
 
   if (!verifyPortalToken(token, customerId)) {
     return NextResponse.json(
-      { error: "Invalid or expired portal token" },
+      { error: { code: "invalid_token", message: "Invalid or expired portal token" } },
       { status: 401 },
     );
   }
@@ -40,21 +40,21 @@ export async function POST(request: Request) {
 
   if (!sub) {
     return NextResponse.json(
-      { error: "Subscription not found" },
+      { error: { code: "not_found", message: "Subscription not found" } },
       { status: 404 },
     );
   }
 
   if (sub.customerId !== customerId) {
     return NextResponse.json(
-      { error: "Not your subscription" },
+      { error: { code: "forbidden", message: "Not your subscription" } },
       { status: 403 },
     );
   }
 
   if (sub.status !== "trialing") {
     return NextResponse.json(
-      { error: "Subscription is not trialing" },
+      { error: { code: "invalid_status", message: "Subscription is not trialing" } },
       { status: 409 },
     );
   }

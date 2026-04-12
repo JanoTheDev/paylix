@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
+import { apiError } from "@/lib/api-error";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -56,10 +57,8 @@ export async function PATCH(
   const body = await request.json();
   const parsed = updateProductSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const issues = parsed.error.issues.map((i) => i.message).join("; ");
+    return apiError("validation_failed", issues);
   }
 
   const data = parsed.data;
@@ -146,7 +145,7 @@ export async function PATCH(
   });
 
   if (!updated) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   void recordAudit({
@@ -179,7 +178,7 @@ export async function DELETE(
     .returning();
 
   if (!updated) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return apiError("not_found", "Not found", 404);
   }
 
   return NextResponse.json({ success: true });

@@ -21,7 +21,7 @@ export async function POST(
     .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
     .returning({ id: customers.id });
 
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
 
   void recordAudit({
     organizationId,

@@ -30,7 +30,7 @@ export async function POST(
     .returning();
 
   if (!updated) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
   }
 
   void recordAudit({
