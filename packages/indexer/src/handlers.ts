@@ -18,6 +18,7 @@ import { config } from "./config";
 import { dispatchWebhooks } from "./webhook-dispatch";
 import { buildInvoice } from "./invoices/create";
 import { sendInvoiceEmail } from "./invoices/send-email";
+import { sendSubscriptionEmail } from "./emails/send-subscription-email";
 
 function currentSubscriptionManagerAddress(): string {
   return config.subscriptionManagerAddress.toLowerCase();
@@ -918,6 +919,10 @@ export async function handleSubscriptionCreated(log: Log, args: {
       console.error("[Handler] sendInvoiceEmail failed:", err);
     });
   }
+  void sendSubscriptionEmail({
+    kind: "subscription-created",
+    subscriptionId: result.subscription.id,
+  }).catch((err) => console.error("[Handler] subscription-created email failed:", err));
 }
 
 export async function handleSubscriptionPaymentReceived(log: Log, args: {
@@ -1160,6 +1165,11 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
       console.error("[Handler] sendInvoiceEmail failed:", err);
     });
   }
+  void sendSubscriptionEmail({
+    kind: "payment-receipt",
+    subscriptionId: subscription.id,
+    paymentId: result.payment.id,
+  }).catch((err) => console.error("[Handler] payment-receipt email failed:", err));
 }
 
 export async function handleSubscriptionPastDue(log: Log, args: {
@@ -1195,6 +1205,10 @@ export async function handleSubscriptionPastDue(log: Log, args: {
       status: "past_due",
       metadata: updated.metadata ?? {},
     });
+    void sendSubscriptionEmail({
+      kind: "past-due-reminder",
+      subscriptionId: updated.id,
+    }).catch((err) => console.error("[Handler] past-due-reminder email failed:", err));
   }
 }
 
@@ -1231,6 +1245,10 @@ export async function handleSubscriptionCancelled(log: Log, args: {
       status: "cancelled",
       metadata: updated.metadata ?? {},
     });
+    void sendSubscriptionEmail({
+      kind: "subscription-cancelled",
+      subscriptionId: updated.id,
+    }).catch((err) => console.error("[Handler] subscription-cancelled email failed:", err));
   }
 }
 
