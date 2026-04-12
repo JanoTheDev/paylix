@@ -6,6 +6,7 @@ import { payments } from "./payments";
 
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",
+  "paused",
   "past_due",
   "cancelled",
   "expired",
@@ -59,6 +60,7 @@ export const subscriptions = pgTable(
     intervalSeconds: integer("interval_seconds"),
     metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
     trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
     pendingPermitSignature: jsonb("pending_permit_signature").$type<PendingPermitSignature>(),
     trialConversionAttempts: integer("trial_conversion_attempts").notNull().default(0),
     trialConversionLastError: text("trial_conversion_last_error"),

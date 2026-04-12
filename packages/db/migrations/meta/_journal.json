@@ -57,6 +57,13 @@
       "when": 1776026139900,
       "tag": "0007_add_idempotency_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1776096000000,
+      "tag": "0009_add_paused_subscription_status",
+      "breakpoints": true
     }
   ]
 }
