@@ -16,7 +16,7 @@ describe("resolveDeploymentForMode", () => {
     process.env.BASE_SEPOLIA_RPC_URL = "https://sepolia.base.example";
     process.env.BASE_SEPOLIA_PAYMENT_VAULT = "0x1111111111111111111111111111111111111111";
     process.env.BASE_SEPOLIA_SUBSCRIPTION_MANAGER = "0x2222222222222222222222222222222222222222";
-    process.env.BASE_SEPOLIA_MOCK_USDC = "0x3333333333333333333333333333333333333333";
+    process.env.BASE_SEPOLIA_MOCK_USDC_ADDRESS = "0x3333333333333333333333333333333333333333";
 
     const result = resolveDeploymentForMode(false);
 
@@ -48,7 +48,7 @@ describe("resolveDeploymentForMode", () => {
     delete process.env.BASE_SEPOLIA_RPC_URL;
     delete process.env.BASE_SEPOLIA_PAYMENT_VAULT;
     delete process.env.BASE_SEPOLIA_SUBSCRIPTION_MANAGER;
-    delete process.env.BASE_SEPOLIA_MOCK_USDC;
+    delete process.env.BASE_SEPOLIA_MOCK_USDC_ADDRESS;
 
     expect(() => resolveDeploymentForMode(false)).toThrow(/BASE_SEPOLIA_/);
   });
