@@ -30,8 +30,8 @@ export interface HandlerContext {
   subscriptionManager: `0x${string}`;
 }
 
-function currentSubscriptionManagerAddress(): string {
-  return config.subscriptionManagerAddress.toLowerCase();
+function subscriptionManagerAddressFromCtx(ctx: HandlerContext): string {
+  return ctx.subscriptionManager.toLowerCase();
 }
 
 /**
@@ -85,7 +85,8 @@ function symbolForTokenAddress(
 async function recordUnmatched(
   eventType: string,
   log: Log,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  ctx: HandlerContext,
 ) {
   if (!log.transactionHash) return;
   try {
@@ -94,7 +95,8 @@ async function recordUnmatched(
       txHash: log.transactionHash,
       blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
       logIndex: typeof log.logIndex === "number" ? log.logIndex : null,
-      payload,
+      payload: { ...payload, _ctx: ctx },
+      livemode: ctx.livemode,
     });
     console.warn(
       `[Handler] Recorded unmatched ${eventType} event tx=${log.transactionHash} for retry`
@@ -123,7 +125,7 @@ export async function handlePaymentReceived(log: Log, args: {
   productId: `0x${string}`;
   customerId: `0x${string}`;
   timestamp: bigint;
-}, ctx?: HandlerContext) {
+}, ctx: HandlerContext) {
   console.log("[Handler] PaymentReceived:", {
     txHash: log.transactionHash,
     payer: args.payer,
@@ -153,7 +155,7 @@ export async function handlePaymentReceived(log: Log, args: {
   // Convert on-chain amount back to cents using registry decimals.
   // Formula: cents = on_chain / 10^(decimals - 2)
   // For USDC (decimals=6): 10^4 = 10,000 → 1,000,000 units = 100 cents.
-  const paymentToken = getToken(config.networkKey, symbolForTokenAddress(config.networkKey as NetworkKey, args.token));
+  const paymentToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
   const amountCents = Number(args.amount) / 10 ** (paymentToken.decimals - 2);
 
   // Match by reversing the customerId hash: the checkout-client encodes
@@ -184,7 +186,7 @@ export async function handlePaymentReceived(log: Log, args: {
     console.log(
       `[Handler] No matching checkout session for merchant=${args.merchant} customerId=${args.customerId}`
     );
-    await recordUnmatched("PaymentReceived", log, serializeArgs(args));
+    await recordUnmatched("PaymentReceived", log, serializeArgs(args), ctx);
     return;
   }
 
@@ -219,6 +221,7 @@ export async function handlePaymentReceived(log: Log, args: {
           lastName: session.buyerLastName,
           email: normalizeEmailOrNull(session.buyerEmail),
           phone: session.buyerPhone,
+          livemode: ctx.livemode,
         })
         .returning();
       customer = created;
@@ -246,8 +249,8 @@ export async function handlePaymentReceived(log: Log, args: {
     }
 
     // Create payment record
-    const sessionNetworkKey = session.networkKey ?? config.networkKey;
-    const sessionTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(config.networkKey as NetworkKey, args.token);
+    const sessionNetworkKey = session.networkKey ?? ctx.networkKey;
+    const sessionTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
     const [payment] = await tx
       .insert(payments)
       .values({
@@ -263,6 +266,7 @@ export async function handlePaymentReceived(log: Log, args: {
         fromAddress: args.payer,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -352,6 +356,7 @@ export async function handlePaymentReceived(log: Log, args: {
       .values({
         ...built.invoice,
         emailStatus: hasProfile ? "pending" : "skipped",
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -362,6 +367,7 @@ export async function handlePaymentReceived(log: Log, args: {
         quantity: li.quantity,
         unitAmountCents: li.unitAmountCents,
         amountCents: li.amountCents,
+        livemode: ctx.livemode,
       })),
     );
 
@@ -419,7 +425,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
   interval: bigint;
   productId: `0x${string}`;
   customerId: `0x${string}`;
-}, ctx?: HandlerContext) {
+}, ctx: HandlerContext) {
   console.log("[Handler] SubscriptionCreated:", {
     txHash: log.transactionHash,
     subscriptionId: args.subscriptionId.toString(),
@@ -437,7 +443,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
   const onChainId = args.subscriptionId.toString();
 
   // Idempotency: if we already have a subscription for this onChainId, skip
-  const contractAddr = currentSubscriptionManagerAddress();
+  const contractAddr = subscriptionManagerAddressFromCtx(ctx);
   const [existing] = await db
     .select()
     .from(subscriptions)
@@ -495,7 +501,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
 
     console.log(`[Handler] Activated trial subscription ${trialRow.id} (onChainId: ${onChainId})`);
 
-    const trialSubToken = getToken(config.networkKey, symbolForTokenAddress(config.networkKey as NetworkKey, args.token));
+    const trialSubToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
     const trialAmountCents = Number(args.amount) / 10 ** (trialSubToken.decimals - 2);
 
     const [trialPayment] = await db
@@ -513,6 +519,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
         fromAddress: args.subscriber,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -598,6 +605,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
               .values({
                 ...trialBuilt.invoice,
                 emailStatus: trialHasProfile ? "pending" : "skipped",
+                livemode: ctx.livemode,
               })
               .returning();
 
@@ -608,6 +616,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
                 quantity: li.quantity,
                 unitAmountCents: li.unitAmountCents,
                 amountCents: li.amountCents,
+                livemode: ctx.livemode,
               })),
             );
 
@@ -672,7 +681,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     return;
   }
 
-  const subToken = getToken(config.networkKey, symbolForTokenAddress(config.networkKey as NetworkKey, args.token));
+  const subToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
   const amountCents = Number(args.amount) / 10 ** (subToken.decimals - 2);
   const intervalSeconds = Number(args.interval);
 
@@ -703,7 +712,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     console.log(
       `[Handler] No matching subscription checkout session for merchant=${args.merchant} customerId=${args.customerId}`
     );
-    await recordUnmatched("SubscriptionCreated", log, serializeArgs(args));
+    await recordUnmatched("SubscriptionCreated", log, serializeArgs(args), ctx);
     return;
   }
 
@@ -737,6 +746,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
           lastName: session.buyerLastName,
           email: normalizeEmailOrNull(session.buyerEmail),
           phone: session.buyerPhone,
+          livemode: ctx.livemode,
         })
         .returning();
       customer = created;
@@ -764,8 +774,8 @@ export async function handleSubscriptionCreated(log: Log, args: {
     }
 
     // Create first payment (the initial charge happens atomically with createSubscription)
-    const subNetworkKey = session.networkKey ?? config.networkKey;
-    const subTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(config.networkKey as NetworkKey, args.token);
+    const subNetworkKey = session.networkKey ?? ctx.networkKey;
+    const subTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
     const [payment] = await tx
       .insert(payments)
       .values({
@@ -781,6 +791,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
         fromAddress: args.subscriber,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -854,6 +865,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       .values({
         ...subBuilt.invoice,
         emailStatus: subHasProfile ? "pending" : "skipped",
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -864,6 +876,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
         quantity: li.quantity,
         unitAmountCents: li.unitAmountCents,
         amountCents: li.amountCents,
+        livemode: ctx.livemode,
       })),
     );
 
@@ -889,6 +902,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
         tokenSymbol: subTokenSymbol,
         intervalSeconds,
         metadata: session.metadata ?? {},
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -964,7 +978,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
   amount: bigint;
   fee: bigint;
   timestamp: bigint;
-}, ctx?: HandlerContext) {
+}, ctx: HandlerContext) {
   console.log("[Handler] Subscription PaymentReceived:", {
     txHash: log.transactionHash,
     subscriptionId: args.subscriptionId.toString(),
@@ -975,7 +989,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
 
   const onChainId = args.subscriptionId.toString();
 
-  const contractAddr = currentSubscriptionManagerAddress();
+  const contractAddr = subscriptionManagerAddressFromCtx(ctx);
   const [subscription] = await db
     .select()
     .from(subscriptions)
@@ -994,7 +1008,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     console.log(
       `[Handler] No subscription found for onChainId=${onChainId}; recording unmatched for retry.`,
     );
-    await recordUnmatched("SubscriptionPaymentReceived", log, serializeArgs(args));
+    await recordUnmatched("SubscriptionPaymentReceived", log, serializeArgs(args), ctx);
     return;
   }
 
@@ -1039,6 +1053,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
         fromAddress: args.subscriber,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -1119,6 +1134,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
       .values({
         ...recurringBuilt.invoice,
         emailStatus: recurringHasProfile ? "pending" : "skipped",
+        livemode: ctx.livemode,
       })
       .returning();
 
@@ -1129,6 +1145,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
         quantity: li.quantity,
         unitAmountCents: li.unitAmountCents,
         amountCents: li.amountCents,
+        livemode: ctx.livemode,
       })),
     );
 
@@ -1212,14 +1229,14 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
 
 export async function handleSubscriptionPastDue(log: Log, args: {
   subscriptionId: bigint;
-}, ctx?: HandlerContext) {
+}, ctx: HandlerContext) {
   console.log("[Handler] SubscriptionPastDue:", {
     txHash: log.transactionHash,
     subscriptionId: args.subscriptionId.toString(),
   });
 
   const onChainId = args.subscriptionId.toString();
-  const contractAddr = currentSubscriptionManagerAddress();
+  const contractAddr = subscriptionManagerAddressFromCtx(ctx);
 
   const updated = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -1252,14 +1269,14 @@ export async function handleSubscriptionPastDue(log: Log, args: {
 
 export async function handleSubscriptionCancelled(log: Log, args: {
   subscriptionId: bigint;
-}, ctx?: HandlerContext) {
+}, ctx: HandlerContext) {
   console.log("[Handler] SubscriptionCancelled:", {
     txHash: log.transactionHash,
     subscriptionId: args.subscriptionId.toString(),
   });
 
   const onChainId = args.subscriptionId.toString();
-  const contractAddr = currentSubscriptionManagerAddress();
+  const contractAddr = subscriptionManagerAddressFromCtx(ctx);
 
   const updated = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -1365,6 +1382,16 @@ export async function retryUnmatchedEvents() {
       const log = rehydrateLog(row);
       const payload = row.payload as Record<string, unknown>;
 
+      const storedCtx = payload._ctx as HandlerContext | undefined;
+      if (!storedCtx) {
+        console.warn(`[Unmatched Retry] Row ${row.id} has no stored ctx; skipping`);
+        await db
+          .update(unmatchedEvents)
+          .set({ attempts: row.attempts + 1 })
+          .where(eq(unmatchedEvents.id, row.id));
+        continue;
+      }
+
       if (row.eventType === "PaymentReceived") {
         // Delete first to avoid the handler re-recording itself as unmatched,
         // then attempt. On failure, re-record is fine because txHash
@@ -1372,12 +1399,12 @@ export async function retryUnmatchedEvents() {
         await db
           .delete(unmatchedEvents)
           .where(eq(unmatchedEvents.id, row.id));
-        await handlePaymentReceived(log, rehydratePaymentArgs(payload));
+        await handlePaymentReceived(log, rehydratePaymentArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionCreated") {
         await db
           .delete(unmatchedEvents)
           .where(eq(unmatchedEvents.id, row.id));
-        await handleSubscriptionCreated(log, rehydrateSubCreatedArgs(payload));
+        await handleSubscriptionCreated(log, rehydrateSubCreatedArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionPaymentReceived") {
         await db
           .delete(unmatchedEvents)
@@ -1385,6 +1412,7 @@ export async function retryUnmatchedEvents() {
         await handleSubscriptionPaymentReceived(
           log,
           rehydrateSubPaymentReceivedArgs(payload),
+          storedCtx,
         );
       } else {
         // Unknown type: just bump attempts

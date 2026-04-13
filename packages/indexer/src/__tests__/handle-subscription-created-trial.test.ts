@@ -148,6 +148,14 @@ vi.mock("@paylix/db/client", () => ({
 
 // Now import the handler under test. Must be after mocks.
 const { handleSubscriptionCreated } = await import("../handlers");
+import type { HandlerContext } from "../handlers";
+
+const testCtx: HandlerContext = {
+  livemode: false,
+  networkKey: "base-sepolia",
+  paymentVault: "0x0000000000000000000000000000000000000001",
+  subscriptionManager: "0xCONTRACT",
+};
 
 const TRIAL_ROW = {
   id: "sub_trial_1",
@@ -213,7 +221,7 @@ describe("handleSubscriptionCreated trial activation", () => {
     insertResults.push([{ id: "inv_1", number: "INV-000001", totalCents: 100, currency: "USDC", hostedToken: "tok_hosted" }]);
     insertResults.push([]); // invoice line items
 
-    await handleSubscriptionCreated(baseLog, baseArgs);
+    await handleSubscriptionCreated(baseLog, baseArgs, testCtx);
 
     // First update: set subscription to active
     expect(updateCalls[0].set).toMatchObject({
@@ -269,7 +277,7 @@ describe("handleSubscriptionCreated trial activation", () => {
     // 3rd select: checkout session candidates -> empty (no match)
     selectResults.push([]);
 
-    await handleSubscriptionCreated(baseLog, baseArgs);
+    await handleSubscriptionCreated(baseLog, baseArgs, testCtx);
 
     // The early-return trial path did NOT fire: no update was issued.
     expect(updateCalls).toHaveLength(0);
