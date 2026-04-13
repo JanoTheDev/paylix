@@ -22,7 +22,7 @@ pnpm install
 4. Start the development database and services:
 
 ```bash
-cp .env.testnet.example .env
+cp .env.example .env
 # Fill in required values
 docker compose up -d postgres
 pnpm --filter @paylix/db db:push

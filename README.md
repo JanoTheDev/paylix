@@ -80,9 +80,7 @@ packages/
 1) Create environment file:
 
 ```bash
-cp .env.testnet.example .env
-# or
-# cp .env.mainnet.example .env
+cp .env.example .env
 ```
 
 2) Fill required values in `.env` (RPC, keys, contract addresses, auth secrets).

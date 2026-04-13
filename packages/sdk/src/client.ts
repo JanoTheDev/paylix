@@ -21,6 +21,13 @@ import type {
   CreateProductParams,
   UpdateProductParams,
   Product,
+  PaymentSummary,
+  ListPaymentsParams,
+  SubscriptionSummary,
+  ListSubscriptionsParams,
+  Webhook,
+  CreateWebhookParams,
+  UpdateWebhookParams,
 } from "./types";
 import { NETWORKS } from "./networks";
 import { createCheckout } from "./checkout";
@@ -42,6 +49,15 @@ import {
   updateProduct,
   listProducts,
 } from "./products";
+import { listPayments, getPayment } from "./payments";
+import { listSubscriptions, getSubscription } from "./subscriptions";
+import {
+  listWebhooks,
+  createWebhook,
+  getWebhook,
+  updateWebhook,
+  deleteWebhook,
+} from "./webhook-management";
 import { faucet } from "./test";
 
 export class Paylix {
@@ -137,6 +153,42 @@ export class Paylix {
 
   async listProducts(): Promise<Product[]> {
     return listProducts(this.config);
+  }
+
+  async listPayments(params?: ListPaymentsParams): Promise<PaymentSummary[]> {
+    return listPayments(this.config, params);
+  }
+
+  async getPayment(id: string): Promise<PaymentSummary> {
+    return getPayment(this.config, id);
+  }
+
+  async listSubscriptions(params?: ListSubscriptionsParams): Promise<SubscriptionSummary[]> {
+    return listSubscriptions(this.config, params);
+  }
+
+  async getSubscription(id: string): Promise<SubscriptionSummary> {
+    return getSubscription(this.config, id);
+  }
+
+  async listWebhooks(): Promise<Webhook[]> {
+    return listWebhooks(this.config);
+  }
+
+  async createWebhook(params: CreateWebhookParams): Promise<Webhook> {
+    return createWebhook(this.config, params);
+  }
+
+  async getWebhook(id: string): Promise<Webhook> {
+    return getWebhook(this.config, id);
+  }
+
+  async updateWebhook(id: string, params: UpdateWebhookParams): Promise<Webhook> {
+    return updateWebhook(this.config, id, params);
+  }
+
+  async deleteWebhook(id: string): Promise<{ success: true }> {
+    return deleteWebhook(this.config, id);
   }
 
   async testFaucet(req: { address: string; amount?: number }): Promise<{ success: true; txHash: string; amountMinted: number }> {

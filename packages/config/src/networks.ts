@@ -4,8 +4,7 @@ import { base, baseSepolia } from "viem/chains";
 /**
  * Single source of truth for Paylix's supported networks and tokens.
  * Every file that previously hardcoded `baseSepolia` / `"USDC"` / `84532`
- * should now read from this module. See
- * docs/superpowers/specs/2026-04-11-multi-chain-multi-token-design.md.
+ * should now read from this module.
  */
 
 export type NetworkKey = "base" | "base-sepolia";

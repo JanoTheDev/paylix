@@ -49,6 +49,23 @@ const trial = await paylix.createSubscription({
 // Verify payment (server-side)
 const payment = await paylix.verifyPayment({ paymentId: 'pay_abc' })
 
+// List payments — filter by customer, status, or metadata
+const payments = await paylix.listPayments({
+  customerId: 'cust_xyz',
+  metadata: { userId: 'user_123' },
+})
+// Each result includes customer info:
+// payments[0].customer.email, payments[0].customer.walletAddress
+
+// List subscriptions with the same filters
+const subs = await paylix.listSubscriptions({ status: 'active' })
+
+// Manage webhooks programmatically
+const hook = await paylix.createWebhook({
+  url: 'https://myapp.com/webhooks',
+  events: ['payment.confirmed', 'subscription.created'],
+})
+
 // Verify webhook (server-side)
 import { webhooks } from '@paylix/sdk'
 const valid = webhooks.verify({

@@ -5,8 +5,7 @@ out/
 .turbo/
 .env
 .env.*
-!.env.testnet.example
-!.env.mainnet.example
+!.env.example
 *.log
 *.tsbuildinfo
 .DS_Store

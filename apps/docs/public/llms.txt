@@ -4,6 +4,15 @@
 ## Docs
 - Getting Started: /
 - SDK Reference: /sdk-reference
+  - Checkout & Verification: /sdk-reference/checkout
+  - Payments: /sdk-reference/payments
+  - Subscriptions: /sdk-reference/subscriptions
+  - Portal & Invoices: /sdk-reference/portal
+  - Webhook Management: /sdk-reference/webhooks
 - Webhooks: /webhooks
+- Subscriptions: /subscriptions
+- Customers: /customers
+- Products: /products
+- Invoices: /invoices
 - Self-Hosting: /self-hosting
 - Full reference for LLMs: /llms-full.txt

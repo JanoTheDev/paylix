@@ -1,6 +1,6 @@
 # Paylix SDK — Complete Reference
-# Version: 0.1.0
-# Last updated: 2026-04-09
+# Version: 0.2.0
+# Last updated: 2026-04-13
 #
 # Paylix is an open-source, self-hostable crypto payment platform.
 # Accept USDC payments and subscriptions on Base with TypeScript.
@@ -41,6 +41,8 @@ const { checkoutUrl, checkoutId } = await paylix.createCheckout({
   successUrl: "https://example.com/ok",  // optional — redirect after payment
   cancelUrl: "https://example.com/cancel", // optional — redirect on cancel
   metadata: { orderId: "42" },           // optional — arbitrary key-value pairs
+  networkKey: "base-sepolia",            // optional — pre-lock network
+  tokenSymbol: "USDC",                   // optional — pre-lock token
 });
 // Returns: { checkoutUrl: string; checkoutId: string }
 // Redirect user to checkoutUrl to complete payment.
@@ -51,14 +53,16 @@ const { checkoutUrl, checkoutId } = await paylix.createCheckout({
 Creates a recurring subscription checkout session.
 
 ```typescript
-const { checkoutUrl, subscriptionId } = await paylix.createSubscription({
+const { checkoutUrl, checkoutId, trialEndsAt } = await paylix.createSubscription({
   productId: "prod_monthly_pro",         // required — subscription product ID
   customerId: "cust_xyz",                // optional
   successUrl: "https://example.com/welcome", // optional
   cancelUrl: "https://example.com/pricing",  // optional
   metadata: { plan: "pro" },             // optional
+  networkKey: "base-sepolia",            // optional — pre-lock network
+  tokenSymbol: "USDC",                   // optional — pre-lock token
 });
-// Returns: { checkoutUrl: string; subscriptionId: string }
+// Returns: { checkoutUrl: string; checkoutId: string; trialEndsAt: string | null }
 ```
 
 ### paylix.cancelSubscription(params)
@@ -78,11 +82,14 @@ await paylix.cancelSubscription({
 
 ### paylix.updateSubscriptionWallet(params)
 
-Prompts the subscriber to update the wallet used for recurring charges.
+Requests a wallet migration for a subscription. The new wallet owner
+must call acceptSubscriptionWalletUpdate on the SubscriptionManager
+contract to complete the migration.
 
 ```typescript
 await paylix.updateSubscriptionWallet({
-  subscriptionId: "sub_abc123", // required
+  subscriptionId: "sub_abc123",                              // required
+  newWallet: "0x1234567890abcdef1234567890abcdef12345678",   // required — new paying wallet
 });
 // Returns: void
 ```
@@ -105,7 +112,153 @@ const result = await paylix.verifyPayment({
 //   customerId: string;
 //   productId: string;
 //   status: "confirmed" | "pending" | "failed";
+//   metadata: Record<string, string>;
+//   livemode: boolean;
 // }
+```
+
+### paylix.listPayments(params?)
+
+Lists payments for the authenticated organization. Supports filtering by
+customer ID, payment status, and metadata key-value pairs. Every result
+includes an embedded `customer` object with the customer's email, name,
+and wallet address.
+
+```typescript
+// All payments (most recent 100)
+const payments = await paylix.listPayments();
+
+// Filter by customer ID
+const customerPayments = await paylix.listPayments({
+  customerId: "cust_xyz",
+});
+
+// Filter by metadata — find payments for a specific user in your system
+const userPayments = await paylix.listPayments({
+  metadata: { userId: "user_123" },
+});
+
+// Combine filters
+const confirmed = await paylix.listPayments({
+  customerId: "cust_xyz",
+  status: "confirmed",
+  metadata: { orderId: "42" },
+  limit: 25,
+});
+
+// Access customer info
+for (const p of payments) {
+  console.log(p.id, p.amount, p.customer.email, p.customer.walletAddress);
+}
+
+// Filter params:
+// {
+//   customerId?: string;    — filter by Paylix customer ID
+//   status?: "pending" | "confirmed" | "failed";
+//   metadata?: Record<string, string>;  — AND match on metadata keys
+//   limit?: number;         — 1-100 (default 100)
+// }
+//
+// Returns: PaymentSummary[]
+// Each entry:
+// {
+//   id: string;
+//   amount: number;
+//   fee: number;
+//   status: "pending" | "confirmed" | "failed";
+//   txHash: string | null;
+//   chain: string;
+//   token: string;
+//   productId: string;
+//   fromAddress: string | null;
+//   toAddress: string | null;
+//   metadata: Record<string, string>;
+//   livemode: boolean;
+//   createdAt: string;
+//   customer: {
+//     id: string;
+//     email: string | null;
+//     firstName: string | null;
+//     lastName: string | null;
+//     walletAddress: string | null;
+//   };
+// }
+```
+
+### paylix.getPayment(id)
+
+Retrieves a single payment by ID, including the embedded customer object.
+
+```typescript
+const payment = await paylix.getPayment("pay_abc123");
+console.log(payment.status, payment.customer.email);
+// Returns: PaymentSummary (same shape as listPayments entries)
+```
+
+### paylix.listSubscriptions(params?)
+
+Lists subscriptions for the authenticated organization. Same filtering
+as listPayments: customer ID, status, and metadata. Every result includes
+an embedded `customer` object.
+
+```typescript
+// Active subscriptions only
+const active = await paylix.listSubscriptions({ status: "active" });
+
+// Find subscriptions by your own user ID stored in metadata
+const userSubs = await paylix.listSubscriptions({
+  metadata: { userId: "user_123" },
+});
+
+// Access customer info
+for (const sub of active) {
+  console.log(sub.productName, sub.customer.email, sub.nextChargeDate);
+}
+
+// Filter params:
+// {
+//   customerId?: string;
+//   status?: SubscriptionStatus;
+//   metadata?: Record<string, string>;
+//   limit?: number;
+// }
+//
+// Returns: SubscriptionSummary[]
+// Each entry:
+// {
+//   id: string;
+//   status: SubscriptionStatus;
+//   subscriberAddress: string;
+//   networkKey: string;
+//   tokenSymbol: string;
+//   onChainId: string | null;
+//   intervalSeconds: number | null;
+//   nextChargeDate: string | null;
+//   trialEndsAt: string | null;
+//   pausedAt: string | null;
+//   productId: string;
+//   productName: string;
+//   metadata: Record<string, string>;
+//   livemode: boolean;
+//   createdAt: string;
+//   customer: {
+//     id: string;
+//     email: string | null;
+//     firstName: string | null;
+//     lastName: string | null;
+//     walletAddress: string | null;
+//   };
+// }
+```
+
+### paylix.getSubscription(id)
+
+Retrieves a single subscription by ID, including the embedded customer object.
+
+```typescript
+const sub = await paylix.getSubscription("sub_abc123");
+console.log(sub.status, sub.customer.email);
+// Returns: SubscriptionSummary (same shape as listSubscriptions entries)
 ```
 
 ### paylix.getCustomerPortal(params)
@@ -124,6 +277,125 @@ const portal = await paylix.getCustomerPortal({
 // }
 ```
 
+### paylix.createPortalSession(params)
+
+Creates a signed, time-limited URL to the hosted customer portal.
+
+```typescript
+const { url } = await paylix.createPortalSession({
+  customerId: "cust_xyz", // required
+});
+// Redirect your user to `url`
+```
+
+### paylix.listCustomerInvoices(params)
+
+Lists all invoices issued to a customer, with hosted URLs and PDF download links.
+
+```typescript
+const { invoices } = await paylix.listCustomerInvoices({
+  customerId: "cust_xyz", // required
+});
+// Returns: { invoices: CustomerInvoice[] }
+// Each invoice:
+// {
+//   id: string;
+//   number: string;           — e.g. "INV-000042"
+//   totalCents: number;
+//   subtotalCents: number;
+//   taxCents: number;
+//   taxLabel: string | null;  — e.g. "VAT 20%"
+//   currency: string;
+//   issuedAt: string;
+//   emailStatus: "pending" | "sent" | "failed" | "skipped";
+//   hostedUrl: string;        — public HTML page
+//   invoicePdfUrl: string;    — on-demand PDF download
+//   receiptPdfUrl: string;    — on-demand receipt PDF
+// }
+```
+
+### Customer Management
+
+```typescript
+// Create a customer
+const customer = await paylix.createCustomer({
+  email: "alice@example.com",         // optional
+  firstName: "Alice",                  // optional
+  lastName: "Smith",                   // optional
+  walletAddress: "0xabcd...",          // optional
+  country: "US",                       // optional
+  taxId: "US123456",                   // optional
+  metadata: { plan: "pro" },           // optional
+});
+
+// Get customer with payments, subscriptions, invoices
+const detail = await paylix.getCustomer("cust_xyz");
+// Returns: { customer, payments, subscriptions, invoices }
+
+// Update customer
+const updated = await paylix.updateCustomer("cust_xyz", {
+  email: "newemail@example.com",
+});
+
+// List all customers
+const customers = await paylix.listCustomers();
+
+// Soft-delete a customer
+await paylix.deleteCustomer("cust_xyz");
+```
+
+### Product Management
+
+```typescript
+// Create a product
+const product = await paylix.createProduct({
+  name: "Pro Plan",                    // required
+  type: "subscription",                // required — "one_time" | "subscription"
+  billingInterval: "monthly",          // for subscriptions — "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly"
+  prices: [{                           // required — at least one price
+    networkKey: "base-sepolia",
+    tokenSymbol: "USDC",
+    amount: "1000",                    // in token units (1000 = 10.00 USDC)
+  }],
+  trialDays: 14,                       // optional — free trial
+  taxRateBps: 2000,                    // optional — 20% tax
+  taxLabel: "VAT 20%",                 // optional
+  metadata: {},                        // optional
+});
+
+// Get, update, list
+const product = await paylix.getProduct("prod_abc123");
+const updated = await paylix.updateProduct("prod_abc123", { name: "Pro Plan v2" });
+const products = await paylix.listProducts();
+```
+
+### Webhook Management
+
+```typescript
+// Create a webhook endpoint (secret is only returned once)
+const hook = await paylix.createWebhook({
+  url: "https://example.com/webhooks/paylix",  // required
+  events: ["payment.confirmed", "subscription.created"], // required
+});
+console.log("Secret:", hook.secret); // Save this!
+
+// List all webhooks
+const hooks = await paylix.listWebhooks();
+
+// Get a single webhook
+const hook = await paylix.getWebhook("wh_abc123");
+
+// Update webhook (all fields optional)
+await paylix.updateWebhook("wh_abc123", {
+  url: "https://example.com/v2/webhooks",
+  events: ["payment.confirmed"],
+  isActive: false,
+});
+
+// Delete a webhook
+await paylix.deleteWebhook("wh_abc123");
+```
+
 ### webhooks.verify(params)
 
 Verifies a webhook signature. Returns true if the signature is valid.
@@ -139,9 +411,20 @@ const isValid = webhooks.verify({
 // Returns: boolean
 ```
 
+### Test Faucet
+
+```typescript
+// Mint test USDC on Base Sepolia (test mode only)
+const { txHash, amountMinted } = await paylix.testFaucet({
+  address: "0xabcd...",  // required — wallet to mint to
+  amount: 10000,         // optional — amount in token units (default varies)
+});
+```
+
 ## Webhook Events
 
 All webhooks are POST requests with JSON body and an `x-paylix-signature` header.
+The body envelope uses `event` (not `type`) as the event name key.
 
 ### payment.confirmed
 
@@ -149,20 +432,22 @@ Sent when a one-time payment is confirmed on-chain.
 
 ```json
 {
-  "type": "payment.confirmed",
+  "event": "payment.confirmed",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "livemode": true,
   "data": {
-    "paymentId": "pay_abc123",
-    "checkoutId": "chk_xyz789",
-    "productId": "prod_abc123",
-    "customerId": "cust_xyz",
+    "paymentId": "1f23991d-...",
+    "checkoutId": "d2a27cbf-...",
+    "productId": "911da752-...",
+    "customerId": "anon_0x82A9...a2de",
     "amount": 1000,
-    "fee": 30,
+    "fee": 5,
     "currency": "USDC",
     "chain": "base",
-    "txHash": "0xabc...def",
-    "merchantWallet": "0x1234...abcd",
-    "metadata": { "orderId": "42" },
-    "confirmedAt": "2026-01-15T10:30:00Z"
+    "txHash": "0xfea3...d4c2",
+    "fromAddress": "0x82A9...a2de",
+    "toAddress": "0xAeB3...8934",
+    "metadata": { "orderId": "42" }
   }
 }
 ```
@@ -173,23 +458,29 @@ Sent when a subscription is created and first payment confirmed.
 
 ```json
 {
-  "type": "subscription.created",
+  "event": "subscription.created",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "livemode": true,
   "data": {
-    "subscriptionId": "sub_abc123",
-    "productId": "prod_monthly_pro",
-    "customerId": "cust_xyz",
+    "subscriptionId": "3a1f...",
+    "onChainId": "17",
+    "checkoutId": "d2a2...",
+    "productId": "911d...",
+    "customerId": "anon_0x82A9...a2de",
     "amount": 2000,
     "currency": "USDC",
     "chain": "base",
-    "interval": "monthly",
-    "subscriberWallet": "0xabcd...1234",
-    "merchantWallet": "0x1234...abcd",
-    "metadata": {},
-    "createdAt": "2026-01-15T10:30:00Z",
-    "nextChargeAt": "2026-02-15T10:30:00Z"
+    "interval": 2592000,
+    "subscriberAddress": "0x82A9...a2de",
+    "merchantAddress": "0xAeB3...8934",
+    "txHash": "0xfea3...d4c2",
+    "metadata": { "orderId": "42", "plan": "pro" }
   }
 }
 ```
+
+Note: `interval` is the charge period in **seconds**, not a string like "monthly".
+A 30-day subscription is `2592000`.
 
 ### subscription.charged
 
@@ -197,37 +488,36 @@ Sent when a recurring charge is processed.
 
 ```json
 {
-  "type": "subscription.charged",
+  "event": "subscription.charged",
+  "timestamp": "2026-05-10T18:23:05.166Z",
+  "livemode": true,
   "data": {
-    "subscriptionId": "sub_abc123",
-    "paymentId": "pay_def456",
-    "productId": "prod_monthly_pro",
-    "customerId": "cust_xyz",
+    "subscriptionId": "3a1f...",
+    "onChainId": "17",
+    "paymentId": "8c44...",
     "amount": 2000,
-    "fee": 60,
-    "currency": "USDC",
-    "chain": "base",
-    "txHash": "0xdef...789",
-    "chargedAt": "2026-02-15T10:30:00Z",
-    "nextChargeAt": "2026-03-15T10:30:00Z"
+    "fee": 10,
+    "txHash": "0xabc1...ef02",
+    "nextChargeDate": "2026-06-09T18:23:05.166Z",
+    "metadata": { "orderId": "42", "plan": "pro" }
   }
 }
 ```
 
 ### subscription.past_due
 
-Sent when a recurring charge fails.
+Sent when a recurring charge fails (insufficient balance, allowance exhausted, etc.).
 
 ```json
 {
-  "type": "subscription.past_due",
+  "event": "subscription.past_due",
+  "timestamp": "2026-05-10T18:23:05.166Z",
+  "livemode": true,
   "data": {
-    "subscriptionId": "sub_abc123",
-    "productId": "prod_monthly_pro",
-    "customerId": "cust_xyz",
-    "reason": "insufficient_balance",
-    "failedAt": "2026-02-15T10:30:00Z",
-    "retryAt": "2026-02-16T10:30:00Z"
+    "subscriptionId": "3a1f...",
+    "onChainId": "17",
+    "status": "past_due",
+    "metadata": { "orderId": "42", "plan": "pro" }
   }
 }
 ```
@@ -238,84 +528,111 @@ Sent when a subscription is cancelled.
 
 ```json
 {
-  "type": "subscription.cancelled",
+  "event": "subscription.cancelled",
+  "timestamp": "2026-05-10T18:23:05.166Z",
+  "livemode": true,
   "data": {
-    "subscriptionId": "sub_abc123",
-    "productId": "prod_monthly_pro",
-    "customerId": "cust_xyz",
-    "cancelledBy": "merchant",
-    "cancelledAt": "2026-03-01T12:00:00Z"
+    "subscriptionId": "3a1f...",
+    "onChainId": "17",
+    "status": "cancelled",
+    "metadata": { "orderId": "42", "plan": "pro" }
   }
 }
 ```
 
-## Subscription Cancellation
+### invoice.issued
 
-Paylix subscriptions are a two-layer system:
+Sent when an invoice is created.
 
-1. A row in the Paylix database (status, next charge date, metadata).
-2. An on-chain record inside the SubscriptionManager smart contract on Base
-   that authorizes the keeper to pull USDC from the subscriber's wallet on
-   a schedule.
+```json
+{
+  "event": "invoice.issued",
+  "timestamp": "2026-04-11T18:23:05.166Z",
+  "livemode": true,
+  "data": {
+    "invoiceId": "8b2c...",
+    "invoiceNumber": "INV-000042",
+    "paymentId": "1f23...",
+    "customerId": "cust_xyz",
+    "totalCents": 1200,
+    "subtotalCents": 1000,
+    "taxCents": 200,
+    "taxLabel": "VAT 20%",
+    "currency": "USDC",
+    "hostedUrl": "https://paylix.example.com/i/abc...",
+    "invoicePdfUrl": "https://paylix.example.com/i/abc.../pdf",
+    "receiptPdfUrl": "https://paylix.example.com/i/abc.../receipt",
+    "metadata": { "orderId": "42" }
+  }
+}
+```
 
-Both layers must be cancelled. The keeper will keep calling the contract
-until the on-chain record is terminated.
+### invoice.email_sent
 
-### Who can cancel on-chain
+Sent after the invoice email is delivered successfully.
 
-The SubscriptionManager contract enforces a strict access check on
-`cancelSubscription(subscriptionId)`. Only two principals are authorised
-for any given subscription:
+```json
+{
+  "event": "invoice.email_sent",
+  "timestamp": "2026-04-11T18:23:08.011Z",
+  "data": {
+    "invoiceId": "8b2c...",
+    "invoiceNumber": "INV-000042",
+    "to": "customer@example.com"
+  }
+}
+```
 
-- The subscriber (the wallet that signed the original approval).
-- The merchant (the wallet configured to receive charges).
+### invoice.email_failed
 
-The Paylix backend owns a dedicated relayer key. The contract exposes
-`cancelSubscriptionByRelayerForMerchant(onChainId, merchantWallet)` and
-`cancelSubscriptionByRelayerForSubscriber(onChainId, subscriberWallet)`,
-which let the relayer submit the transaction on the caller's behalf
-while still enforcing that the subscription belongs to that wallet.
-This is how gasless cancellation works end-to-end — the merchant or
-subscriber never signs a transaction, and the relayer can never cancel
-a subscription it doesn't own.
+Sent when the mailer fails to deliver an invoice email.
 
-### Cancellation flow
+```json
+{
+  "event": "invoice.email_failed",
+  "timestamp": "2026-04-11T18:23:08.011Z",
+  "data": {
+    "invoiceId": "8b2c...",
+    "invoiceNumber": "INV-000042",
+    "to": "customer@example.com",
+    "error": "SMTP 550: mailbox full"
+  }
+}
+```
 
-1. User clicks Cancel in the merchant dashboard, calls
-   `paylix.cancelSubscription()`, or clicks Cancel in the customer portal.
-2. The Paylix backend authenticates the caller (session, API key, or
-   signed portal token) and verifies ownership of the subscription.
-3. The relayer submits the matching gasless cancel function on
-   SubscriptionManager and waits for the receipt.
-4. The contract emits a `SubscriptionCancelled` event.
-5. The Paylix indexer picks up the event and updates the DB row to
-   status `cancelled` (the backend also writes it optimistically).
-6. The keeper skips the subscription on its next tick.
-7. A `subscription.cancelled` webhook is delivered.
+### system.relayer_balance_low
 
-### Three cancellation paths in the product
+Sent when the gasless relayer wallet ETH balance drops below threshold.
 
-- Merchant dashboard → Subscribers → Cancel. Authenticated by session,
-  cancelled on-chain via the relayer as the merchant.
-- SDK → `paylix.cancelSubscription()`. Authenticated by secret API key,
-  cancelled on-chain via the relayer as the merchant.
-- Customer portal → Cancel on an active subscription. Authenticated by
-  a signed portal token, cancelled on-chain via the relayer as the
-  subscriber.
+```json
+{
+  "event": "system.relayer_balance_low",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "data": {
+    "address": "0xC7beA00CfCFb3f93AE8555d1a9E1Ec3018F281F9",
+    "balanceWei": "800000000000000",
+    "balanceEth": "0.0008",
+    "thresholdWei": "1000000000000000"
+  }
+}
+```
 
-### Billing intervals
+### system.keeper_balance_low
 
-Subscription products support these intervals:
-`minutely` (testing only), `weekly`, `biweekly`, `monthly`, `quarterly`,
-`yearly`.
+Sent when the subscription keeper wallet ETH balance drops below threshold.
 
-### Past due
-
-If a recurring charge reverts (insufficient USDC balance or the subscriber
-revoked the approval), the subscription becomes `past_due` and a
-`subscription.past_due` webhook fires. The keeper retries on the next
-tick. A past-due subscription still has an active on-chain record, so to
-fully end it someone must still sign an on-chain cancel.
+```json
+{
+  "event": "system.keeper_balance_low",
+  "timestamp": "2026-04-10T18:23:05.166Z",
+  "data": {
+    "address": "0x950d809e392FA0f080318d896c80472531f01907",
+    "balanceWei": "750000000000000",
+    "balanceEth": "0.00075",
+    "thresholdWei": "1000000000000000"
+  }
+}
+```
 
 ## Webhook Handler Examples
 
@@ -340,23 +657,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const event = JSON.parse(payload);
+  const webhook = JSON.parse(payload);
 
-  switch (event.type) {
+  switch (webhook.event) {
     case "payment.confirmed":
-      await fulfillOrder(event.data.productId, event.data.customerId);
+      await fulfillOrder(webhook.data.productId, webhook.data.customerId);
       break;
     case "subscription.created":
-      await activateSubscription(event.data.subscriptionId);
+      await activateSubscription(webhook.data.subscriptionId);
       break;
     case "subscription.charged":
-      await recordCharge(event.data.subscriptionId, event.data.amount);
+      await recordCharge(webhook.data.subscriptionId, webhook.data.amount);
       break;
     case "subscription.past_due":
-      await handlePastDue(event.data.subscriptionId);
+      await handlePastDue(webhook.data.subscriptionId);
       break;
     case "subscription.cancelled":
-      await revokeAccess(event.data.subscriptionId);
+      await revokeAccess(webhook.data.subscriptionId);
       break;
   }
 
@@ -389,8 +706,8 @@ app.post(
       return res.status(401).json({ error: "Invalid signature" });
     }
 
-    const event = JSON.parse(payload);
-    // Handle event...
+    const webhook = JSON.parse(payload);
+    // Handle webhook.event ...
     res.json({ received: true });
   }
 );
@@ -426,14 +743,12 @@ export async function buyProduct(productId: string, customerId: string) {
 
 ```typescript
 export async function subscribe(productId: string, customerId: string) {
-  const { checkoutUrl, subscriptionId } = await paylix.createSubscription({
+  const { checkoutUrl } = await paylix.createSubscription({
     productId,
     customerId,
     successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/welcome`,
     cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
   });
-  // Store subscriptionId in your database
-  await db.update(users).set({ subscriptionId }).where(eq(users.id, customerId));
   redirect(checkoutUrl);
 }
 ```
@@ -456,7 +771,6 @@ export async function GET(req: NextRequest) {
   const result = await paylix.verifyPayment({ paymentId });
 
   if (result.verified) {
-    // Mark order as fulfilled in your database
     return NextResponse.json({ status: "confirmed", txHash: result.txHash });
   }
 
@@ -467,27 +781,37 @@ export async function GET(req: NextRequest) {
 ### Gate Content Behind Payment
 
 ```typescript
-// middleware.ts or server component
 import { Paylix } from "@paylix/sdk";
 
 const paylix = new Paylix({ /* config */ });
 
 export async function hasActiveSubscription(customerId: string): Promise<boolean> {
-  const portal = await paylix.getCustomerPortal({ customerId });
-  return portal.subscriptions.some((sub) => sub.status === "active");
+  const subs = await paylix.listSubscriptions();
+  return subs.some(
+    (sub) => sub.customerId === customerId && sub.status === "active"
+  );
 }
+```
 
-// In your page:
-export default async function PremiumPage() {
-  const user = await getCurrentUser();
-  const hasAccess = await hasActiveSubscription(user.id);
+### Programmatic Webhook Setup
 
-  if (!hasAccess) {
-    redirect("/pricing");
-  }
+```typescript
+const paylix = new Paylix({ /* config */ });
 
-  return <div>Premium content here</div>;
-}
+// Create webhook endpoint
+const hook = await paylix.createWebhook({
+  url: "https://example.com/webhooks/paylix",
+  events: ["payment.confirmed", "subscription.created", "subscription.cancelled"],
+});
+
+// Store the secret securely — it's only returned on creation
+await saveToVault("PAYLIX_WEBHOOK_SECRET", hook.secret);
+
+// Later: disable during maintenance
+await paylix.updateWebhook(hook.id, { isActive: false });
+
+// Re-enable
+await paylix.updateWebhook(hook.id, { isActive: true });
 ```
 
 ## Network Configurations
@@ -531,6 +855,8 @@ interface CreateCheckoutParams {
   successUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
+  networkKey?: string;
+  tokenSymbol?: string;
 }
 
 interface CreateCheckoutResult {
@@ -545,11 +871,94 @@ interface CreateSubscriptionParams {
   successUrl?: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
+  networkKey?: string;
+  tokenSymbol?: string;
 }
 
 interface CreateSubscriptionResult {
   checkoutUrl: string;
+  checkoutId: string;
+  trialEndsAt: string | null;
+}
+
+interface CancelSubscriptionParams {
   subscriptionId: string;
+}
+
+interface UpdateSubscriptionWalletParams {
+  subscriptionId: string;
+  newWallet: string;
+}
+
+type SubscriptionStatus =
+  | "active"
+  | "past_due"
+  | "cancelled"
+  | "expired"
+  | "trialing"
+  | "trial_conversion_failed";
+
+// Embedded customer info on list results
+interface CustomerInfo {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  walletAddress: string | null;
+}
+
+// Payment list filters
+interface ListPaymentsParams {
+  customerId?: string;
+  status?: "pending" | "confirmed" | "failed";
+  metadata?: Record<string, string>;  // AND match: metadata[key]=value
+  limit?: number;                     // 1-100 (default 100)
+}
+
+// Payment
+interface PaymentSummary {
+  id: string;
+  amount: number;
+  fee: number;
+  status: "pending" | "confirmed" | "failed";
+  txHash: string | null;
+  chain: string;
+  token: string;
+  productId: string;
+  fromAddress: string | null;
+  toAddress: string | null;
+  metadata: Record<string, string>;
+  livemode: boolean;
+  createdAt: string;
+  customer: CustomerInfo;
+}
+
+// Subscription list filters
+interface ListSubscriptionsParams {
+  customerId?: string;
+  status?: SubscriptionStatus;
+  metadata?: Record<string, string>;
+  limit?: number;
+}
+
+// Subscription
+interface SubscriptionSummary {
+  id: string;
+  status: SubscriptionStatus;
+  subscriberAddress: string;
+  networkKey: string;
+  tokenSymbol: string;
+  onChainId: string | null;
+  intervalSeconds: number | null;
+  nextChargeDate: string | null;
+  trialEndsAt: string | null;
+  pausedAt: string | null;
+  productId: string;
+  productName: string;
+  metadata: Record<string, string>;
+  livemode: boolean;
+  createdAt: string;
+  customer: CustomerInfo;
 }
 
 // Payment Verification
@@ -559,21 +968,105 @@ interface VerifyPaymentParams {
 
 interface VerifyPaymentResult {
   verified: boolean;
-  amount: number;       // USDC cents (1000 = $10.00)
-  fee: number;          // USDC cents
+  amount: number;
+  fee: number;
   txHash: string;
   chain: string;
   customerId: string;
   productId: string;
   status: "confirmed" | "pending" | "failed";
+  metadata: Record<string, string>;
+  livemode: boolean;
+}
+
+// Customer
+interface CreateCustomerParams {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  walletAddress?: string;
+  country?: string;
+  taxId?: string;
+  metadata?: Record<string, string>;
+}
+
+interface Customer {
+  id: string;
+  customerId: string;
+  organizationId: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  walletAddress: string | null;
+  country: string | null;
+  taxId: string | null;
+  source: string;
+  metadata: Record<string, string>;
+  deletedAt: string | null;
+  createdAt: string;
+}
+
+// Product
+interface CreateProductParams {
+  name: string;
+  description?: string;
+  type: "one_time" | "subscription";
+  billingInterval?: "minutely" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";
+  prices: Array<{
+    networkKey: string;
+    tokenSymbol: string;
+    amount: string;
+  }>;
+  trialDays?: number;
+  trialMinutes?: number;
+  taxRateBps?: number | null;
+  taxLabel?: string | null;
+  reverseChargeEligible?: boolean;
+  metadata?: Record<string, string>;
+}
+
+// Webhook Management
+interface Webhook {
+  id: string;
+  organizationId: string;
+  url: string;
+  events: string[];
+  isActive: boolean;
+  livemode: boolean;
+  createdAt: string;
+  secret?: string;   // only returned on creation
+}
+
+interface CreateWebhookParams {
+  url: string;
+  events: string[];
+}
+
+interface UpdateWebhookParams {
+  url?: string;
+  events?: string[];
+  isActive?: boolean;
+}
+
+// Invoice
+interface CustomerInvoice {
+  id: string;
+  number: string;
+  totalCents: number;
+  subtotalCents: number;
+  taxCents: number;
+  taxLabel: string | null;
+  currency: string;
+  issuedAt: string;
+  emailStatus: "pending" | "sent" | "failed" | "skipped";
+  hostedUrl: string;
+  invoicePdfUrl: string;
+  receiptPdfUrl: string;
 }
 
 // Customer Portal
-interface CustomerPortalParams {
-  customerId: string;
-}
-
-interface CustomerPortal {
+interface CustomerPortalResult {
   customer: Customer;
   payments: Payment[];
   subscriptions: Subscription[];
@@ -586,27 +1079,35 @@ interface WebhookVerifyParams {
   secret: string;
 }
 
+// Webhook Event Envelope
+interface WebhookEvent {
+  event: string;      // e.g. "payment.confirmed"
+  timestamp: string;
+  livemode?: boolean;
+  data: Record<string, unknown>;
+}
+
 // Network
 interface NetworkConfig {
   chainId: number;
-  name: string;
   rpcUrl: string;
+  paymentVaultAddress: string;
+  subscriptionManagerAddress: string;
   usdcAddress: string;
-  explorerUrl: string;
+  basescanUrl: string;
 }
 
-// Webhook Event
 type WebhookEventType =
   | "payment.confirmed"
   | "subscription.created"
   | "subscription.charged"
   | "subscription.past_due"
-  | "subscription.cancelled";
-
-interface WebhookEvent {
-  type: WebhookEventType;
-  data: Record<string, unknown>;
-}
+  | "subscription.cancelled"
+  | "invoice.issued"
+  | "invoice.email_sent"
+  | "invoice.email_failed"
+  | "system.relayer_balance_low"
+  | "system.keeper_balance_low";
 ```
 
 ## Key Concepts
@@ -614,6 +1115,9 @@ interface WebhookEvent {
 - **Amounts**: All amounts are in USDC cents (integer). 1000 = $10.00 USDC.
 - **API Keys**: `pk_` prefix for publishable (client-side), `sk_` prefix for secret (server-side).
 - **Networks**: `"base"` for mainnet, `"base-sepolia"` for testnet.
-- **Non-custodial**: Payments go directly to the merchant wallet configured on your dashboard profile. Paylix never holds funds.
+- **Non-custodial**: Payments go directly to the merchant wallet. Paylix never holds funds.
 - **Webhook secrets**: `whsec_` prefix. Always verify signatures server-side.
+- **Webhook envelope**: Uses `event` (not `type`) as the event name key, plus `timestamp`, `livemode`, and `data`.
 - **Subscriptions**: Use ERC-20 `approve` + on-chain keeper pattern. No off-chain card storage.
+- **Gasless**: Merchants and subscribers pay no gas. The Paylix relayer submits transactions on their behalf.
+- **Test mode**: Use `sk_test_` keys. Test-mode data is isolated. Higher rate limits for development.

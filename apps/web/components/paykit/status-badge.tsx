@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type PaymentStatus = "confirmed" | "pending" | "failed" | "refunded";
+type PaymentStatus = "confirmed" | "pending" | "failed";
 type SubscriptionStatus =
   | "active"
   | "past_due"

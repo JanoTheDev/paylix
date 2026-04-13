@@ -23,16 +23,23 @@ export function Toc() {
       main.querySelectorAll("h2, h3"),
     ) as HTMLElement[];
 
-    // Auto-assign ids if missing
+    const usedIds = new Set<string>();
     headings.forEach((h) => {
       if (!h.id) {
-        const text = h.textContent ?? "";
-        h.id = text
+        h.id = (h.textContent ?? "")
           .toLowerCase()
           .replace(/[^\w\s-]/g, "")
           .replace(/\s+/g, "-")
           .slice(0, 60);
       }
+      let slug = h.id;
+      if (usedIds.has(slug)) {
+        let i = 2;
+        while (usedIds.has(`${slug}-${i}`)) i++;
+        slug = `${slug}-${i}`;
+        h.id = slug;
+      }
+      usedIds.add(slug);
     });
 
     const tocItems: TocItem[] = headings

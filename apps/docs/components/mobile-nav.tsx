@@ -14,7 +14,12 @@ const navGroups: (NavItem | NavGroup)[] = [
   {
     group: "API Reference",
     items: [
-      { href: "/sdk-reference", label: "SDK Reference" },
+      { href: "/sdk-reference", label: "SDK Overview" },
+      { href: "/sdk-reference/checkout", label: "Checkout & Verification" },
+      { href: "/sdk-reference/payments", label: "Payments" },
+      { href: "/sdk-reference/subscriptions", label: "Subscriptions" },
+      { href: "/sdk-reference/portal", label: "Portal & Invoices" },
+      { href: "/sdk-reference/webhooks", label: "Webhook Management" },
       { href: "/products", label: "Products" },
       { href: "/customers", label: "Customers" },
       { href: "/error-codes", label: "Error Codes" },

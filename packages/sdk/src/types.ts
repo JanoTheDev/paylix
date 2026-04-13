@@ -161,6 +161,95 @@ export interface CustomerPortalResult {
   }>;
 }
 
+export interface CustomerInfo {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  walletAddress: string | null;
+}
+
+export interface ListPaymentsParams {
+  /** Filter by customer ID (the Paylix-generated customer identifier). */
+  customerId?: string;
+  /** Filter by payment status. */
+  status?: "pending" | "confirmed" | "failed";
+  /** Filter by metadata key-value pairs. Only payments whose metadata
+   *  contains all specified entries are returned (AND logic). */
+  metadata?: Record<string, string>;
+  /** Max results (1-100, default 100). */
+  limit?: number;
+}
+
+export interface PaymentSummary {
+  id: string;
+  amount: number;
+  fee: number;
+  status: "pending" | "confirmed" | "failed";
+  txHash: string | null;
+  chain: string;
+  token: string;
+  productId: string;
+  fromAddress: string | null;
+  toAddress: string | null;
+  metadata: Record<string, string>;
+  livemode: boolean;
+  createdAt: string;
+  customer: CustomerInfo;
+}
+
+export interface ListSubscriptionsParams {
+  /** Filter by customer ID (the Paylix-generated customer identifier). */
+  customerId?: string;
+  /** Filter by subscription status. */
+  status?: SubscriptionStatus;
+  /** Filter by metadata key-value pairs (AND logic). */
+  metadata?: Record<string, string>;
+  /** Max results (1-100, default 100). */
+  limit?: number;
+}
+
+export interface SubscriptionSummary {
+  id: string;
+  status: SubscriptionStatus;
+  subscriberAddress: string;
+  networkKey: string;
+  tokenSymbol: string;
+  onChainId: string | null;
+  intervalSeconds: number | null;
+  nextChargeDate: string | null;
+  trialEndsAt: string | null;
+  pausedAt: string | null;
+  productId: string;
+  productName: string;
+  metadata: Record<string, string>;
+  livemode: boolean;
+  createdAt: string;
+  customer: CustomerInfo;
+}
+
+export interface Webhook {
+  id: string;
+  organizationId: string;
+  url: string;
+  events: string[];
+  isActive: boolean;
+  livemode: boolean;
+  createdAt: string;
+  secret?: string;
+}
+
+export interface CreateWebhookParams {
+  url: string;
+  events: string[];
+}
+
+export interface UpdateWebhookParams {
+  url?: string;
+  events?: string[];
+  isActive?: boolean;
+}
+
 export interface WebhookVerifyParams {
   payload: string | Buffer;
   signature: string;

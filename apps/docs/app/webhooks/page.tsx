@@ -39,6 +39,35 @@ export default function Webhooks() {
         </code>
         ) used to verify signatures.
       </p>
+      <p className="mt-3 text-sm leading-relaxed text-foreground-muted">
+        You can also manage webhooks programmatically via the SDK — create,
+        list, update, and delete endpoints without touching the dashboard.
+        See the{" "}
+        <a
+          href="/sdk-reference#paylix-createwebhook"
+          className="font-medium text-primary underline underline-offset-2"
+        >
+          SDK Reference
+        </a>{" "}
+        for details.
+      </p>
+
+      <SubsectionHeading>Programmatic Setup</SubsectionHeading>
+      <CodeBlock language="ts">{`import { Paylix } from "@paylix/sdk";
+
+const paylix = new Paylix({
+  apiKey: "sk_test_...",
+  network: "base-sepolia",
+  backendUrl: "https://paylix.example.com",
+});
+
+const hook = await paylix.createWebhook({
+  url: "https://example.com/webhooks/paylix",
+  events: ["payment.confirmed", "subscription.created"],
+});
+
+// Save this — it's only returned once
+console.log("Secret:", hook.secret);`}</CodeBlock>
 
       <SectionHeading>Signature Verification</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">

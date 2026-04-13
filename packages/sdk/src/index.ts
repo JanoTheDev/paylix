@@ -28,4 +28,12 @@ export type {
   CreateProductParams,
   UpdateProductParams,
   Product,
+  PaymentSummary,
+  ListPaymentsParams,
+  SubscriptionSummary,
+  ListSubscriptionsParams,
+  CustomerInfo,
+  Webhook,
+  CreateWebhookParams,
+  UpdateWebhookParams,
 } from "./types";
