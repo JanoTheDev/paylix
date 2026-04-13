@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { products, productPrices } from "@paylix/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
@@ -131,15 +131,25 @@ export async function PATCH(
         .set({ isActive: false })
         .where(eq(productPrices.productId, id));
 
-      await tx.insert(productPrices).values(
-        data.prices.map((p) => ({
-          productId: id,
-          networkKey: p.networkKey,
-          tokenSymbol: p.tokenSymbol,
-          amount: BigInt(p.amount),
-          isActive: true,
-        })),
-      );
+      await tx
+        .insert(productPrices)
+        .values(
+          data.prices.map((p) => ({
+            productId: id,
+            networkKey: p.networkKey,
+            tokenSymbol: p.tokenSymbol,
+            amount: BigInt(p.amount),
+            isActive: true,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [productPrices.productId, productPrices.networkKey, productPrices.tokenSymbol],
+          set: {
+            amount: sql`excluded.amount`,
+            isActive: sql`excluded.is_active`,
+            updatedAt: new Date(),
+          },
+        });
     }
 
     return row;
