@@ -70,6 +70,7 @@ interface UserSettings {
   name: string;
   email: string;
   walletAddress: string | null;
+  livemode?: boolean;
   businessProfile?: BusinessProfile;
   notificationsEnabled?: boolean;
 }
@@ -122,8 +123,7 @@ export default function SettingsPage() {
     useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
   const [notificationsSaving, setNotificationsSaving] = useState(false);
 
-  const network = process.env.NEXT_PUBLIC_NETWORK || "base-sepolia";
-  const isMainnet = network === "base";
+  const [isMainnet, setIsMainnet] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -132,6 +132,9 @@ export default function SettingsPage() {
         const data = await res.json();
         setUser(data);
         setWalletAddress(data.walletAddress || "");
+        if (typeof data.livemode === "boolean") {
+          setIsMainnet(data.livemode);
+        }
         if (data.checkoutFieldDefaults) {
           setCheckoutDefaults(data.checkoutFieldDefaults);
         }

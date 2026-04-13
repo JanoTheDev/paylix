@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { subscriptions, user as userTable } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createRelayerClient } from "@/lib/relayer";
-import { CONTRACTS, SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
+import { SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
 import { resolveDeploymentForMode } from "@/lib/deployment";
 import { authenticateApiKey } from "@/lib/api-auth";
 import { requireActiveOrg } from "@/lib/require-active-org";
@@ -83,10 +83,11 @@ export async function POST(
   }
 
   // Route to whichever SubscriptionManager owns this subscription. Falls
-  // back to the active env address for subs created before sub.contractAddress
-  // was always populated. See spec §Option Z.
+  // back to the mode-resolved deployment address for subs created before
+  // sub.contractAddress was always populated. See spec §Option Z.
+  const deployment = resolveDeploymentForMode(merchantLivemode);
   const contractAddress = (sub.contractAddress ||
-    CONTRACTS.subscriptionManager) as `0x${string}`;
+    deployment.subscriptionManager) as `0x${string}`;
 
   // Resolve merchant wallet: prefer payout-wallet config, fall back to user row.
   let resolvedWallet: `0x${string}`;
@@ -119,7 +120,6 @@ export async function POST(
   }
 
   try {
-    const deployment = resolveDeploymentForMode(merchantLivemode);
     const relayer = createRelayerClient(deployment);
     const txHash = await relayer.writeContract({
       address: contractAddress,

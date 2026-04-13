@@ -1,47 +1,6 @@
-// Contract addresses and ABIs for Paylix smart contracts. Reads the active
-// network from apps/web/lib/chain.ts — no per-network branching lives here.
-// Old hardcoded fallback addresses were removed to prevent an unconfigured
-// deployment from silently talking to a stale Sepolia deployment.
-
-import { USDC_ADDRESS } from "./chain";
-
-function requireEnv(value: string | undefined, name: string): `0x${string}` {
-  if (!value || value === "0x0000000000000000000000000000000000000000") {
-    // During `next build`, Next compiles every route file and collects page
-    // data even though no real requests are happening. CI builds without a
-    // real .env, so throwing here would break builds. Fall back to the zero
-    // address during build phase — route handlers read `CONTRACTS` on each
-    // request and will naturally revert at runtime if the env wasn't set.
-    if (process.env.NEXT_PHASE === "phase-production-build") {
-      return "0x0000000000000000000000000000000000000000" as `0x${string}`;
-    }
-    // Client-side: don't throw, the checkout page will render a config error
-    // banner instead. Server-side runtime: loud 500 from any route that
-    // reads CONTRACTS — the correct failure mode for an unconfigured prod.
-    if (typeof window === "undefined") {
-      throw new Error(`Missing required env var: ${name}`);
-    }
-    return "0x0000000000000000000000000000000000000000" as `0x${string}`;
-  }
-  return value as `0x${string}`;
-}
-
-export const CONTRACTS = {
-  paymentVault: requireEnv(
-    process.env.NEXT_PUBLIC_PAYMENT_VAULT_ADDRESS ||
-      process.env.PAYMENT_VAULT_ADDRESS,
-    "PAYMENT_VAULT_ADDRESS",
-  ),
-  subscriptionManager: requireEnv(
-    process.env.NEXT_PUBLIC_SUBSCRIPTION_MANAGER_ADDRESS ||
-      process.env.SUBSCRIPTION_MANAGER_ADDRESS,
-    "SUBSCRIPTION_MANAGER_ADDRESS",
-  ),
-  // USDC address comes from the active network's registry entry via
-  // resolveTokenAddress(). No hardcoded fallback — if the env isn't set,
-  // resolveTokenAddress throws loudly from chain.ts.
-  usdc: USDC_ADDRESS,
-};
+// ABI definitions for Paylix smart contracts. Contract addresses are resolved
+// per-request via resolveDeploymentForMode() in apps/web/lib/deployment.ts —
+// nothing here depends on env vars or network config.
 
 // ERC20 approve ABI
 export const ERC20_ABI = [

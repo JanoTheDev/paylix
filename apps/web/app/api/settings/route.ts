@@ -19,7 +19,7 @@ import { recordAudit } from "@/lib/audit";
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId, session } = ctx;
+  const { organizationId, userId, livemode, session } = ctx;
 
   const [user] = await db
     .select({
@@ -107,6 +107,7 @@ export async function GET() {
 
   return NextResponse.json({
     ...user,
+    livemode,
     checkoutFieldDefaults: defaults,
     networks,
     businessProfile,

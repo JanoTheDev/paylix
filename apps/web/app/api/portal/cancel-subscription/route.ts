@@ -4,7 +4,7 @@ import { subscriptions, customers } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyPortalToken } from "@/lib/portal-tokens";
 import { createRelayerClient } from "@/lib/relayer";
-import { CONTRACTS, SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
+import { SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
 import { resolveDeploymentForMode } from "@/lib/deployment";
 
 /**
@@ -65,10 +65,11 @@ export async function POST(request: Request) {
   }
 
   // Route to whichever SubscriptionManager owns this subscription. Falls
-  // back to the active env address for subs created before sub.contractAddress
-  // was always populated. See spec §Option Z.
+  // back to the mode-resolved deployment address for subs created before
+  // sub.contractAddress was always populated. See spec §Option Z.
+  const deployment = resolveDeploymentForMode(sub.livemode);
   const contractAddress = (sub.contractAddress ||
-    CONTRACTS.subscriptionManager) as `0x${string}`;
+    deployment.subscriptionManager) as `0x${string}`;
 
   // Fetch the customer's wallet address (subscriber address)
   const [customer] = await db
@@ -85,10 +86,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const deployment = resolveDeploymentForMode(sub.livemode);
     const relayer = createRelayerClient(deployment);
     const txHash = await relayer.writeContract({
-      address: contractAddress, // was: CONTRACTS.subscriptionManager
+      address: contractAddress,
       abi: SUBSCRIPTION_MANAGER_ABI,
       functionName: "cancelSubscriptionByRelayerForSubscriber",
       args: [BigInt(sub.onChainId), customer.walletAddress as `0x${string}`],
