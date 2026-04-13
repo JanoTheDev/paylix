@@ -53,6 +53,6 @@ export function resolveDeploymentForMode(livemode: boolean): WebDeployment {
     rpcUrl: requireEnv("BASE_SEPOLIA_RPC_URL"),
     paymentVault: requireEnvAddress("BASE_SEPOLIA_PAYMENT_VAULT"),
     subscriptionManager: requireEnvAddress("BASE_SEPOLIA_SUBSCRIPTION_MANAGER"),
-    usdcAddress: requireEnvAddress("BASE_SEPOLIA_MOCK_USDC"),
+    usdcAddress: requireEnvAddress("BASE_SEPOLIA_MOCK_USDC_ADDRESS"),
   };
 }
