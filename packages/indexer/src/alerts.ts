@@ -3,7 +3,7 @@ import { systemStatus } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { createPublicClient, http, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { config } from "./config";
+import { config, deployments } from "./config";
 import { dispatchSystemWebhook } from "./webhook-dispatch";
 
 /**
@@ -19,10 +19,6 @@ const LOW_BALANCE_WEI = BigInt("1000000000000000"); // 0.001 ETH
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 type AlertKey = "relayer_balance_low_fired" | "keeper_balance_low_fired";
-
-function getChain() {
-  return config.chain;
-}
 
 function getRelayerAddress(): `0x${string}` | null {
   if (!config.relayerPrivateKey) return null;
@@ -75,31 +71,43 @@ async function checkBalance(
   alertKey: AlertKey,
   eventName: "system.relayer_balance_low" | "system.keeper_balance_low",
 ) {
-  const client = createPublicClient({
-    chain: getChain(),
-    transport: http(config.rpcUrl),
-  });
+  let anyLow = false;
 
-  const balance = await client.getBalance({ address });
-  const isLow = balance < LOW_BALANCE_WEI;
-  const wasFiredAlready = await getFlag(alertKey);
-
-  if (isLow && !wasFiredAlready) {
-    console.warn(
-      `[Alert] ${label} balance low: ${formatEther(balance)} ETH at ${address}`,
-    );
-    await dispatchSystemWebhook(eventName, {
-      address,
-      balanceWei: balance.toString(),
-      balanceEth: formatEther(balance),
-      thresholdWei: LOW_BALANCE_WEI.toString(),
+  for (const d of deployments) {
+    const client = createPublicClient({
+      chain: d.chain,
+      transport: http(d.rpcUrl),
     });
-    await setFlag(alertKey, true);
-  } else if (!isLow && wasFiredAlready) {
-    console.log(
-      `[Alert] ${label} balance recovered: ${formatEther(balance)} ETH`,
-    );
-    await setFlag(alertKey, false);
+
+    const balance = await client.getBalance({ address });
+    const isLow = balance < LOW_BALANCE_WEI;
+
+    if (isLow) {
+      anyLow = true;
+      console.warn(
+        `[Alert] ${label} balance low on ${d.networkKey}: ${formatEther(balance)} ETH at ${address}`,
+      );
+      const wasFiredAlready = await getFlag(alertKey);
+      if (!wasFiredAlready) {
+        await dispatchSystemWebhook(eventName, {
+          address,
+          balanceWei: balance.toString(),
+          balanceEth: formatEther(balance),
+          thresholdWei: LOW_BALANCE_WEI.toString(),
+          networkKey: d.networkKey,
+          livemode: d.livemode,
+        });
+        await setFlag(alertKey, true);
+      }
+    }
+  }
+
+  if (!anyLow) {
+    const wasFiredAlready = await getFlag(alertKey);
+    if (wasFiredAlready) {
+      console.log(`[Alert] ${label} balance recovered across all deployments`);
+      await setFlag(alertKey, false);
+    }
   }
 }
 

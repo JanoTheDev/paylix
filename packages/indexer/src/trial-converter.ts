@@ -150,7 +150,7 @@ export async function runTrialConverterTick() {
   const { and, eq, lte, lt, isNull, or } = await import("drizzle-orm");
   const { getToken } = await import("@paylix/config/networks");
   type NetworkKey = import("@paylix/config/networks").NetworkKey;
-  const { config } = await import("./config");
+  const { config, deployments } = await import("./config");
 
   function resolveUsdcAddressForNetwork(networkKey: string): `0x${string}` {
     const token = getToken(networkKey as NetworkKey, "USDC");
@@ -176,7 +176,14 @@ export async function runTrialConverterTick() {
     );
   }
   const account = privateKeyToAccount(relayerKey);
-  const walletClient = createWalletClient({ account, chain: config.chain, transport: http(config.rpcUrl) });
+
+  const walletClientByManager = new Map<string, ReturnType<typeof createWalletClient>>();
+  for (const d of deployments) {
+    walletClientByManager.set(
+      d.subscriptionManager.toLowerCase(),
+      createWalletClient({ account, chain: d.chain, transport: http(d.rpcUrl) }),
+    );
+  }
 
   const now = new Date();
   const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
@@ -205,7 +212,16 @@ export async function runTrialConverterTick() {
 
   return convertExpiredTrials({
     rows: rows as TrialRow[],
-    writeContract: (args) => walletClient.writeContract(args as never) as Promise<`0x${string}`>,
+    writeContract: (args) => {
+      const managerKey = (args.address as string).toLowerCase();
+      const wc = walletClientByManager.get(managerKey);
+      if (!wc) {
+        return Promise.reject(
+          new Error(`[TrialConverter] No walletClient for contract ${args.address} — not in any configured deployment`),
+        );
+      }
+      return wc.writeContract(args as never) as Promise<`0x${string}`>;
+    },
     updateSub: async (id, patch) => {
       await db.update(subscriptions).set(patch as never).where(eq(subscriptions.id, id));
     },

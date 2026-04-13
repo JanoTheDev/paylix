@@ -3,7 +3,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createDb } from "@paylix/db/client";
 import { subscriptions } from "@paylix/db/schema";
 import { eq, lte, and } from "drizzle-orm";
-import { config } from "./config";
+import { config, deployments } from "./config";
+import type { Deployment } from "@paylix/config/deployments";
 import {
   classifyDunningOutcome,
   computeNextRetryAt,
@@ -22,27 +23,35 @@ const chargeSubscriptionAbi = [{
   stateMutability: "nonpayable",
 }] as const;
 
-function getChain() {
-  return config.chain;
-}
+type KeeperRoute = {
+  deployment: Deployment;
+  walletClient: ReturnType<typeof createWalletClient>;
+  publicClient: ReturnType<typeof createPublicClient>;
+};
 
 export async function runKeeper() {
   console.log("[Keeper] Running subscription charge check...");
 
   const db = createDb(config.databaseUrl);
-  const chain = getChain();
   const account = privateKeyToAccount(config.keeperPrivateKey);
 
-  const walletClient = createWalletClient({
-    account,
-    chain,
-    transport: http(config.rpcUrl),
-  });
-
-  const publicClient = createPublicClient({
-    chain,
-    transport: http(config.rpcUrl),
-  });
+  const routesByManager = new Map<string, KeeperRoute>();
+  for (const d of deployments) {
+    const walletClient = createWalletClient({
+      account,
+      chain: d.chain,
+      transport: http(d.rpcUrl),
+    });
+    const publicClient = createPublicClient({
+      chain: d.chain,
+      transport: http(d.rpcUrl),
+    });
+    routesByManager.set(d.subscriptionManager.toLowerCase(), {
+      deployment: d,
+      walletClient,
+      publicClient,
+    });
+  }
 
   const now = new Date();
 
@@ -115,18 +124,32 @@ export async function runKeeper() {
         continue;
       }
 
+      const managerKey = contractAddress.toLowerCase();
+      const route = routesByManager.get(managerKey);
+      if (!route) {
+        console.warn(
+          `[Keeper] Subscription ${sub.id} has contract ${contractAddress} not in any configured deployment; skipping`,
+        );
+        await db
+          .update(subscriptions)
+          .set({ nextChargeDate: originalNextChargeDate })
+          .where(eq(subscriptions.id, sub.id));
+        continue;
+      }
+
       console.log(`[Keeper] Charging subscription ${sub.id} (onChainId: ${sub.onChainId}) via contract ${contractAddress}`);
 
-      const txHash = await walletClient.writeContract({
+      const txHash = await route.walletClient.writeContract({
         address: contractAddress,
         abi: chargeSubscriptionAbi,
         functionName: "chargeSubscription",
         args: [BigInt(sub.onChainId)],
-      });
+        chain: route.deployment.chain,
+      } as never);
 
       console.log(`[Keeper] Transaction sent: ${txHash}`);
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await route.publicClient.waitForTransactionReceipt({ hash: txHash });
 
       console.log(`[Keeper] Transaction ${receipt.status}: ${txHash} (block ${receipt.blockNumber})`);
 
