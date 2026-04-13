@@ -389,7 +389,7 @@ export async function handlePaymentReceived(log: Log, args: {
     fromAddress: args.payer,
     toAddress: args.merchant,
     metadata: session.metadata ?? {},
-  });
+  }, false);
   void recordAudit({
     organizationId: session.organizationId,
     action: "payment.confirmed",
@@ -405,7 +405,7 @@ export async function handlePaymentReceived(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  });
+  }, false);
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -631,7 +631,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
               totalCents: trialInvoice.totalCents,
               currency: trialInvoice.currency,
               hostedUrl: `/i/${trialInvoice.hostedToken}`,
-            });
+            }, false);
 
             if (trialHasProfile) {
               await sendInvoiceEmail({
@@ -654,7 +654,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       subscriberAddress: args.subscriber,
       merchantAddress: args.merchant,
       txHash: log.transactionHash,
-    });
+    }, false);
     void recordAudit({
       organizationId: trialRow.organizationId,
       action: "subscription.trial_converted",
@@ -676,7 +676,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
       merchantAddress: args.merchant,
       txHash: log.transactionHash,
       metadata: trialRow.metadata ?? {},
-    });
+    }, false);
 
     return;
   }
@@ -938,7 +938,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     merchantAddress: args.merchant,
     txHash: log.transactionHash,
     metadata: result.subscription.metadata ?? {},
-  });
+  }, false);
   void recordAudit({
     organizationId: session.organizationId,
     action: "subscription.created",
@@ -955,7 +955,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  });
+  }, false);
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -1194,7 +1194,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     txHash: log.transactionHash,
     nextChargeDate: result.nextCharge.toISOString(),
     metadata: subscription.metadata ?? {},
-  });
+  }, false);
   void recordAudit({
     organizationId: subscription.organizationId,
     action: "subscription.renewed",
@@ -1211,7 +1211,7 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  });
+  }, false);
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -1259,7 +1259,7 @@ export async function handleSubscriptionPastDue(log: Log, args: {
       onChainId,
       status: "past_due",
       metadata: updated.metadata ?? {},
-    });
+    }, false);
     void sendSubscriptionEmail({
       kind: "past-due-reminder",
       subscriptionId: updated.id,
@@ -1299,7 +1299,7 @@ export async function handleSubscriptionCancelled(log: Log, args: {
       onChainId,
       status: "cancelled",
       metadata: updated.metadata ?? {},
-    });
+    }, false);
     void recordAudit({
       organizationId: updated.organizationId,
       action: "subscription.cancelled_onchain",

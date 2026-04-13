@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "crypto";
+import { buildEnvelope } from "../webhook-envelope";
 
 function generateSignature(secret: string, payload: string): string {
   return `sha256=${createHmac("sha256", secret).update(payload).digest("hex")}`;
@@ -67,5 +68,40 @@ describe("retry scheduling", () => {
     const retry = getNextRetryTime(10);
     const diffSec = (retry.getTime() - now) / 1000;
     expect(Math.round(diffSec)).toBe(43200);
+  });
+});
+
+describe("buildEnvelope", () => {
+  it("includes livemode=true for live-mode events", () => {
+    const envelope = buildEnvelope({
+      eventType: "payment.confirmed",
+      data: { id: "py_1" },
+      livemode: true,
+      createdAt: new Date("2026-04-12T12:00:00Z"),
+    });
+    expect(envelope.livemode).toBe(true);
+    expect(envelope.event).toBe("payment.confirmed");
+    expect(envelope.data).toEqual({ id: "py_1" });
+  });
+
+  it("includes livemode=false for test-mode events", () => {
+    const envelope = buildEnvelope({
+      eventType: "payment.confirmed",
+      data: { id: "py_1" },
+      livemode: false,
+      createdAt: new Date("2026-04-12T12:00:00Z"),
+    });
+    expect(envelope.livemode).toBe(false);
+  });
+
+  it("uses createdAt for the timestamp when provided", () => {
+    const createdAt = new Date("2026-04-12T12:00:00Z");
+    const envelope = buildEnvelope({
+      eventType: "payment.confirmed",
+      data: {},
+      livemode: true,
+      createdAt,
+    });
+    expect(envelope.timestamp).toBe("2026-04-12T12:00:00.000Z");
   });
 });

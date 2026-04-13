@@ -4,6 +4,8 @@ import { eq, and, lte, lt, isNotNull } from "drizzle-orm";
 import { createHmac } from "crypto";
 import { config } from "./config";
 import { validateWebhookUrl } from "./url-safety";
+import { buildEnvelope } from "./webhook-envelope";
+export { buildEnvelope, type EnvelopeInput, type Envelope } from "./webhook-envelope";
 
 const db = createDb(config.databaseUrl);
 
@@ -23,7 +25,8 @@ function isUrlRateLimited(url: string, maxPerMinute = 10): boolean {
 export async function dispatchWebhooks(
   organizationId: string,
   event: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  livemode: boolean
 ) {
   if (!organizationId) return;
 
@@ -36,10 +39,7 @@ export async function dispatchWebhooks(
     wh.events.includes(event)
   );
 
-  // Compute the timestamp once so the signed bytes match the persisted
-  // payload exactly.
-  const timestamp = new Date().toISOString();
-  const eventPayload = { event, timestamp, data };
+  const eventPayload = buildEnvelope({ eventType: event, data, livemode });
   const payload = JSON.stringify(eventPayload);
 
   for (const wh of matchingWebhooks) {

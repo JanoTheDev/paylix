@@ -68,7 +68,7 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
     await dispatchWebhooks(args.organizationId, "invoice.email_sent", {
       invoiceId: invoice.id,
       number: invoice.number,
-    });
+    }, false);
   } else {
     await db
       .update(invoices)
@@ -78,6 +78,6 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
       invoiceId: invoice.id,
       number: invoice.number,
       error: result.error,
-    });
+    }, false);
   }
 }
