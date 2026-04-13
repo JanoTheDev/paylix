@@ -8,6 +8,7 @@
 
 import {
   getActiveNetwork,
+  NETWORKS,
   type NetworkConfig,
   type NetworkKey,
 } from "@paylix/config/networks";
@@ -41,3 +42,23 @@ export const USDC_TOKEN = network.tokens.USDC;
 export const USDC_ADDRESS: `0x${string}` = (USDC_TOKEN.address ??
   process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS ??
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
+/**
+ * Resolves a network config based on the caller's current mode.
+ *
+ * Test mode → base-sepolia
+ * Live mode → base (mainnet)
+ *
+ * This is the per-request equivalent of the module-level `NETWORK` constant,
+ * suitable for server components and API routes where mode is known at
+ * request time. Client components stuck with build-time NEXT_PUBLIC_NETWORK
+ * continue to use the `NETWORK` / `CHAIN` / etc. constants above until
+ * Phase 3's checkout page retrofit lands.
+ *
+ * When additional chains are added, extend this mapping (or grow the signature
+ * to take an optional `networkKey` parameter) so mode + chain pick the right
+ * entry from `NETWORKS`.
+ */
+export function getNetworkForMode(livemode: boolean): NetworkConfig {
+  return livemode ? NETWORKS["base"] : NETWORKS["base-sepolia"];
+}
