@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { NETWORKS } from "@paylix/config/networks";
 import { CheckoutProviders } from "@/components/providers";
 import { CheckoutClient } from "./checkout-client";
+import { resolveDeploymentForMode } from "@/lib/deployment";
 
 interface CheckoutPageProps {
   params: Promise<{ sessionId: string }>;
@@ -55,6 +56,7 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
       billingInterval: products.billingInterval,
       trialDays: products.trialDays,
       trialMinutes: products.trialMinutes,
+      livemode: checkoutSessions.livemode,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -69,6 +71,8 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
       />
     );
   }
+
+  const deployment = resolveDeploymentForMode(session.livemode);
 
   if (session.status === "completed") {
     return (
@@ -136,7 +140,14 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
 
   return (
     <CheckoutProviders>
-      <CheckoutClient session={session} availablePrices={availablePrices} />
+      <CheckoutClient
+        session={session}
+        availablePrices={availablePrices}
+        chainId={deployment.chainId}
+        paymentVaultAddress={deployment.paymentVault}
+        subscriptionManagerAddress={deployment.subscriptionManager}
+        usdcAddress={deployment.usdcAddress}
+      />
     </CheckoutProviders>
   );
 }
