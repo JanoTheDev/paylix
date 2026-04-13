@@ -157,6 +157,10 @@ export function PortalClient({
         ) : (
           <div className="flex flex-col gap-3">
             {subscriptions.map((sub) => {
+              const cancelledInPeriod =
+                sub.status === "cancelled" &&
+                sub.nextChargeDate !== null &&
+                new Date(sub.nextChargeDate) > new Date();
               const canCancel =
                 sub.status === "active" || sub.status === "past_due";
               const canPause = sub.status === "active";
@@ -178,10 +182,11 @@ export function PortalClient({
                         <StatusBadge
                           kind="subscription"
                           status={
-                            sub.status as
+                            (cancelledInPeriod ? "cancelled_in_period" : sub.status) as
                               | "active"
                               | "past_due"
                               | "cancelled"
+                              | "cancelled_in_period"
                               | "expired"
                               | "incomplete"
                               | "trialing"
@@ -191,9 +196,11 @@ export function PortalClient({
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-foreground-muted">
                         <span>
-                          Next charge:{" "}
+                          {cancelledInPeriod ? "Access until:" : "Next charge:"}{" "}
                           <span className="text-foreground">
-                            {canCancel ? formatDate(sub.nextChargeDate) : "—"}
+                            {canCancel || cancelledInPeriod
+                              ? formatDate(sub.nextChargeDate)
+                              : "—"}
                           </span>
                         </span>
                         {sub.billingInterval && (

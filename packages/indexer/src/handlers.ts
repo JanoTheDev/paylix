@@ -1302,6 +1302,8 @@ export async function handleSubscriptionCancelled(log: Log, args: {
       subscriptionId: updated.id,
       onChainId,
       status: "cancelled",
+      currentPeriodEnd: updated.currentPeriodEnd?.toISOString() ?? null,
+      nextChargeDate: updated.nextChargeDate?.toISOString() ?? null,
       metadata: updated.metadata ?? {},
     }, ctx.livemode);
     void recordAudit({

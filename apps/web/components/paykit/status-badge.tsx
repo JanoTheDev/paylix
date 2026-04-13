@@ -5,6 +5,7 @@ type SubscriptionStatus =
   | "active"
   | "past_due"
   | "cancelled"
+  | "cancelled_in_period"
   | "expired"
   | "incomplete"
   | "trialing"
@@ -43,6 +44,7 @@ const STYLES: Record<string, string> = {
   failed: "bg-destructive/10 text-destructive ring-destructive/20",
   revoked: "bg-destructive/10 text-destructive ring-destructive/20",
   cancelled: "bg-surface-2 text-foreground-dim ring-border",
+  cancelled_in_period: "bg-warning/10 text-warning ring-warning/20",
   expired: "bg-surface-2 text-foreground-dim ring-border",
   disabled: "bg-surface-2 text-foreground-dim ring-border",
   refunded: "bg-surface-2 text-foreground-dim ring-border",
@@ -65,6 +67,7 @@ const LABELS: Record<string, string> = {
   active: "Active",
   past_due: "Past due",
   cancelled: "Cancelled",
+  cancelled_in_period: "Cancels at period end",
   expired: "Expired",
   incomplete: "Incomplete",
   revoked: "Revoked",
