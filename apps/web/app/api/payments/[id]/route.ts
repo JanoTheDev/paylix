@@ -62,6 +62,7 @@ export async function GET(
       productId: payments.productId,
       externalCustomerId: customers.customerId,
       metadata: checkoutSessions.metadata,
+      livemode: payments.livemode,
     })
     .from(payments)
     .innerJoin(customers, eq(payments.customerId, customers.id))
@@ -80,5 +81,6 @@ export async function GET(
     productId: row.productId,
     status: row.status,
     metadata: row.metadata ?? {},
+    livemode: row.livemode,
   });
 }

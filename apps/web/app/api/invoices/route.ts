@@ -22,6 +22,7 @@ export async function GET() {
       customerEmail: customers.email,
       customerFirstName: customers.firstName,
       customerLastName: customers.lastName,
+      livemode: invoices.livemode,
     })
     .from(invoices)
     .leftJoin(customers, eq(invoices.customerId, customers.id))

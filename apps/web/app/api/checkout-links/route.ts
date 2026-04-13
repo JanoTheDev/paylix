@@ -41,6 +41,7 @@ export async function GET() {
       completedAt: checkoutSessions.completedAt,
       expiresAt: checkoutSessions.expiresAt,
       createdAt: checkoutSessions.createdAt,
+      livemode: checkoutSessions.livemode,
     })
     .from(checkoutSessions)
     .leftJoin(products, eq(checkoutSessions.productId, products.id))

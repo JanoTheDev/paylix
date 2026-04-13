@@ -84,6 +84,7 @@ export async function PATCH(
       events: webhooks.events,
       isActive: webhooks.isActive,
       createdAt: webhooks.createdAt,
+      livemode: webhooks.livemode,
       // secret intentionally excluded.
     });
 

@@ -43,6 +43,7 @@ export async function GET(
           productName: products.name,
           productType: products.type,
           metadata: payments.metadata,
+          livemode: payments.livemode,
         })
         .from(payments)
         .leftJoin(products, eq(payments.productId, products.id))
@@ -58,6 +59,7 @@ export async function GET(
           productName: products.name,
           metadata: subscriptions.metadata,
           pausedBy: subscriptions.pausedBy,
+          livemode: subscriptions.livemode,
         })
         .from(subscriptions)
         .leftJoin(products, eq(subscriptions.productId, products.id))
@@ -77,6 +79,7 @@ export async function GET(
           issuedAt: invoices.issuedAt,
           emailStatus: invoices.emailStatus,
           hostedToken: invoices.hostedToken,
+          livemode: invoices.livemode,
         })
         .from(invoices)
         .where(

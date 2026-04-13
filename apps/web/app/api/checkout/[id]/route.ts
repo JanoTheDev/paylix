@@ -65,6 +65,7 @@ export async function GET(
       checkoutFields: products.checkoutFields,
       billingInterval: products.billingInterval,
       customerUuid: payments.customerId,
+      livemode: checkoutSessions.livemode,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))

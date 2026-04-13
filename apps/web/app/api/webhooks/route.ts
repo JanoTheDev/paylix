@@ -40,6 +40,7 @@ export async function GET() {
       events: webhooks.events,
       isActive: webhooks.isActive,
       createdAt: webhooks.createdAt,
+      livemode: webhooks.livemode,
       // secret intentionally excluded — only returned once on creation.
     })
     .from(webhooks)
