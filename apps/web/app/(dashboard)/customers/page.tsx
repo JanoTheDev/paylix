@@ -1,21 +1,13 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, count, desc, eq, isNull, max, sql, sum } from "drizzle-orm";
 import { customers, payments, subscriptions } from "@paylix/db/schema";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import CustomersView, { type CustomerRow } from "./customers-view";
 
 export default async function CustomersPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
 
   const raw = await db
     .select({
@@ -33,7 +25,7 @@ export default async function CustomersPage() {
     })
     .from(customers)
     .leftJoin(payments, eq(customers.id, payments.customerId))
-    .where(and(eq(customers.organizationId, organizationId), isNull(customers.deletedAt)))
+    .where(and(orgScope(customers, { organizationId, livemode }), isNull(customers.deletedAt)))
     .groupBy(customers.id)
     .orderBy(desc(customers.createdAt));
 
@@ -43,7 +35,7 @@ export default async function CustomersPage() {
       status: subscriptions.status,
     })
     .from(subscriptions)
-    .where(eq(subscriptions.organizationId, organizationId));
+    .where(orgScope(subscriptions, { organizationId, livemode }));
 
   const subByCustomer = new Map<
     string,

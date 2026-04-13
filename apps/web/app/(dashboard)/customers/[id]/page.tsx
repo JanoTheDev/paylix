@@ -1,5 +1,4 @@
-import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { and, desc, eq } from "drizzle-orm";
 import {
   customers,
@@ -8,9 +7,9 @@ import {
   products,
   subscriptions,
 } from "@paylix/db/schema";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import CustomerDetailView from "./customer-detail-view";
 
 export default async function CustomerDetailPage({
@@ -18,20 +17,13 @@ export default async function CustomerDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
   const { id } = await params;
 
   const [customer] = await db
     .select()
     .from(customers)
-    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
+    .where(and(eq(customers.id, id), orgScope(customers, { organizationId, livemode })))
     .limit(1);
 
   if (!customer) notFound();
@@ -50,7 +42,7 @@ export default async function CustomerDetailPage({
         })
         .from(payments)
         .leftJoin(products, eq(payments.productId, products.id))
-        .where(and(eq(payments.customerId, id), eq(payments.organizationId, organizationId)))
+        .where(and(eq(payments.customerId, id), orgScope(payments, { organizationId, livemode })))
         .orderBy(desc(payments.createdAt)),
       db
         .select({
@@ -68,7 +60,7 @@ export default async function CustomerDetailPage({
         .where(
           and(
             eq(subscriptions.customerId, id),
-            eq(subscriptions.organizationId, organizationId),
+            orgScope(subscriptions, { organizationId, livemode }),
           ),
         )
         .orderBy(desc(subscriptions.createdAt)),
@@ -84,7 +76,7 @@ export default async function CustomerDetailPage({
         })
         .from(invoices)
         .where(
-          and(eq(invoices.customerId, id), eq(invoices.organizationId, organizationId)),
+          and(eq(invoices.customerId, id), orgScope(invoices, { organizationId, livemode })),
         )
         .orderBy(desc(invoices.issuedAt)),
     ]);

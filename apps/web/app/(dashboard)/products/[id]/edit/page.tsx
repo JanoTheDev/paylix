@@ -1,12 +1,11 @@
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { headers } from "next/headers";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import { products, productPrices } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { NETWORKS } from "@paylix/config/networks";
 import { fromNativeUnits } from "@/lib/amounts";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { EditProductClient } from "./edit-client";
 
 export default async function EditProductPage({
@@ -14,21 +13,14 @@ export default async function EditProductPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
 
   const { id } = await params;
 
   const [product] = await db
     .select()
     .from(products)
-    .where(and(eq(products.id, id), eq(products.organizationId, organizationId)))
+    .where(and(eq(products.id, id), orgScope(products, { organizationId, livemode })))
     .limit(1);
 
   if (!product) notFound();

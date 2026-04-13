@@ -2,17 +2,18 @@ import { and, count, eq, gte, lt, lte, sum, sql } from "drizzle-orm";
 import { payments, subscriptions, merchantProfiles, merchantPayoutWallets, products } from "@paylix/db/schema";
 import { db } from "@/lib/db";
 import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { FinishSetupBanner } from "@/components/finish-setup-banner";
 import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
 import OverviewView from "./overview-view";
 
 export default async function OverviewPage() {
-  const { organizationId } = await getActiveOrgOrRedirect();
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
 
   const [productCountResult] = await db
     .select({ total: count() })
     .from(products)
-    .where(eq(products.organizationId, organizationId));
+    .where(orgScope(products, { organizationId, livemode }));
 
   const hasProducts = (productCountResult?.total ?? 0) > 0;
 
@@ -51,14 +52,14 @@ export default async function OverviewPage() {
       .select({ total: sum(payments.amount) })
       .from(payments)
       .where(
-        and(eq(payments.organizationId, organizationId), eq(payments.status, "confirmed")),
+        and(orgScope(payments, { organizationId, livemode }), eq(payments.status, "confirmed")),
       ),
     db
       .select({ total: sum(payments.amount) })
       .from(payments)
       .where(
         and(
-          eq(payments.organizationId, organizationId),
+          orgScope(payments, { organizationId, livemode }),
           eq(payments.status, "confirmed"),
           gte(payments.createdAt, thirtyDaysAgo),
         ),
@@ -66,13 +67,13 @@ export default async function OverviewPage() {
     db
       .select({ count: count() })
       .from(payments)
-      .where(eq(payments.organizationId, organizationId)),
+      .where(orgScope(payments, { organizationId, livemode })),
     db
       .select({ count: count() })
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "active"),
         ),
       ),
@@ -81,7 +82,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "trialing"),
         ),
       ),
@@ -90,7 +91,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "trialing"),
           lte(subscriptions.trialEndsAt, sevenDaysFromNow),
         ),
@@ -104,7 +105,7 @@ export default async function OverviewPage() {
         createdAt: payments.createdAt,
       })
       .from(payments)
-      .where(eq(payments.organizationId, organizationId))
+      .where(orgScope(payments, { organizationId, livemode }))
       .orderBy(sql`${payments.createdAt} desc`)
       .limit(10),
     db
@@ -123,7 +124,7 @@ export default async function OverviewPage() {
       .from(payments)
       .where(
         and(
-          eq(payments.organizationId, organizationId),
+          orgScope(payments, { organizationId, livemode }),
           eq(payments.status, "confirmed"),
           gte(payments.createdAt, thirtyDaysAgo),
         ),
@@ -138,7 +139,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           gte(subscriptions.createdAt, thirtyDaysAgo),
         ),
       )
@@ -149,7 +150,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "active"),
           lt(subscriptions.createdAt, thirtyDaysAgo),
         ),
@@ -160,7 +161,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           sql`${subscriptions.trialEndsAt} IS NOT NULL`,
           sql`${subscriptions.status} IN ('active', 'cancelled', 'expired')`,
         ),
@@ -171,7 +172,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           sql`${subscriptions.trialEndsAt} IS NOT NULL`,
           eq(subscriptions.status, "active"),
         ),
@@ -182,7 +183,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "cancelled"),
           gte(subscriptions.updatedAt, thirtyDaysAgo),
         ),
@@ -193,7 +194,7 @@ export default async function OverviewPage() {
       .from(subscriptions)
       .where(
         and(
-          eq(subscriptions.organizationId, organizationId),
+          orgScope(subscriptions, { organizationId, livemode }),
           eq(subscriptions.status, "past_due"),
         ),
       ),

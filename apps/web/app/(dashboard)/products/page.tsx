@@ -1,26 +1,18 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { desc, eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { products } from "@paylix/db/schema";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import ProductsView, { type ProductRow } from "./products-view";
 
 export default async function ProductsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
 
   const raw = await db
     .select()
     .from(products)
-    .where(eq(products.organizationId, organizationId))
+    .where(orgScope(products, { organizationId, livemode }))
     .orderBy(desc(products.createdAt));
 
   const rows: ProductRow[] = raw.map((p) => ({

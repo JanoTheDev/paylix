@@ -1,32 +1,24 @@
-import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { invoices, invoiceLineItems } from "@paylix/db/schema";
 import { HostedInvoice } from "@/components/invoice/hosted-invoice";
 import { PageShell, PageHeader } from "@/components/paykit";
-import { requireActiveOrg } from "@/lib/require-active-org";
+import { getActiveOrgOrRedirect } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function InvoiceDetailPage({ params }: PageProps) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  let organizationId: string;
-  try {
-    organizationId = requireActiveOrg(session);
-  } catch {
-    redirect("/login");
-  }
+  const { organizationId, livemode } = await getActiveOrgOrRedirect();
   const { id } = await params;
 
   const [invoice] = await db
     .select()
     .from(invoices)
-    .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+    .where(and(eq(invoices.id, id), orgScope(invoices, { organizationId, livemode })))
     .limit(1);
   if (!invoice) notFound();
 
