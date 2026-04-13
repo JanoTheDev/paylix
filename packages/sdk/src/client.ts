@@ -42,6 +42,7 @@ import {
   updateProduct,
   listProducts,
 } from "./products";
+import { faucet } from "./test";
 
 export class Paylix {
   private config: PaylixConfig;
@@ -136,5 +137,9 @@ export class Paylix {
 
   async listProducts(): Promise<Product[]> {
     return listProducts(this.config);
+  }
+
+  async testFaucet(req: { address: string; amount?: number }): Promise<{ success: true; txHash: string; amountMinted: number }> {
+    return faucet(this.config, req);
   }
 }
