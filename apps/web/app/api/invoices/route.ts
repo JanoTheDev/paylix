@@ -3,11 +3,12 @@ import { invoices, customers } from "@paylix/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const rows = await db
     .select({
@@ -24,7 +25,7 @@ export async function GET() {
     })
     .from(invoices)
     .leftJoin(customers, eq(invoices.customerId, customers.id))
-    .where(eq(invoices.organizationId, organizationId))
+    .where(orgScope(invoices, { organizationId, livemode }))
     .orderBy(desc(invoices.issuedAt))
     .limit(500);
   return NextResponse.json({ invoices: rows });

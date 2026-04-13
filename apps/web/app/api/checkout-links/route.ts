@@ -6,6 +6,7 @@ import { z } from "zod";
 import { resolvePayoutWallet } from "@/lib/payout-wallets";
 import type { NetworkKey } from "@paylix/config/networks";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 const createCheckoutLinkSchema = z.object({
   productId: z.string().uuid(),
@@ -17,7 +18,7 @@ const createCheckoutLinkSchema = z.object({
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const rows = await db
     .select({
@@ -43,7 +44,7 @@ export async function GET() {
     })
     .from(checkoutSessions)
     .leftJoin(products, eq(checkoutSessions.productId, products.id))
-    .where(eq(checkoutSessions.organizationId, organizationId))
+    .where(orgScope(checkoutSessions, { organizationId, livemode }))
     .orderBy(desc(checkoutSessions.createdAt));
 
   return NextResponse.json(rows);
@@ -52,7 +53,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, session } = ctx;
+  const { organizationId, session, livemode } = ctx;
 
   const body = await request.json();
   const parsed = createCheckoutLinkSchema.safeParse(body);
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
     .insert(checkoutSessions)
     .values({
       organizationId,
+      livemode,
       productId: product.id,
       customerId: data.customerId ?? null,
       merchantWallet,

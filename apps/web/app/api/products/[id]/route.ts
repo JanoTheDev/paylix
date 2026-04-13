@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { products, productPrices } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
@@ -51,7 +52,7 @@ export async function PATCH(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
   const body = await request.json();
@@ -67,7 +68,7 @@ export async function PATCH(
     const [existing] = await tx
       .select()
       .from(products)
-      .where(and(eq(products.id, id), eq(products.organizationId, organizationId)));
+      .where(and(eq(products.id, id), orgScope(products, { organizationId, livemode })));
     if (!existing) return null;
 
     const effectiveType = data.type ?? existing.type;
@@ -111,7 +112,7 @@ export async function PATCH(
     const [row] = await tx
       .update(products)
       .set(patch)
-      .where(and(eq(products.id, id), eq(products.organizationId, organizationId)))
+      .where(and(eq(products.id, id), orgScope(products, { organizationId, livemode })))
       .returning();
 
     if (!row) return null;
@@ -167,14 +168,14 @@ export async function DELETE(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const { id } = await params;
 
   const [updated] = await db
     .update(products)
     .set({ isActive: false })
-    .where(and(eq(products.id, id), eq(products.organizationId, organizationId)))
+    .where(and(eq(products.id, id), orgScope(products, { organizationId, livemode })))
     .returning();
 
   if (!updated) {

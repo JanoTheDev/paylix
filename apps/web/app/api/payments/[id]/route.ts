@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { payments, customers, checkoutSessions } from "@paylix/db/schema";
 import { authenticateApiKey } from "@/lib/api-auth";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { z } from "zod";
 
 const patchSchema = z.object({
@@ -16,7 +17,7 @@ export async function PATCH(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
@@ -31,7 +32,7 @@ export async function PATCH(
   const [updated] = await db
     .update(payments)
     .set({ metadata: parsed.data.metadata })
-    .where(and(eq(payments.id, id), eq(payments.organizationId, organizationId)))
+    .where(and(eq(payments.id, id), orgScope(payments, { organizationId, livemode })))
     .returning();
 
   if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Payment not found" } }, { status: 404 });
@@ -48,6 +49,7 @@ export async function GET(
   if (!apiAuth) return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
 
   const { id } = await params;
+  const { organizationId: apiOrgId, livemode: apiLivemode } = apiAuth;
 
   const [row] = await db
     .select({
@@ -64,7 +66,7 @@ export async function GET(
     .from(payments)
     .innerJoin(customers, eq(payments.customerId, customers.id))
     .leftJoin(checkoutSessions, eq(checkoutSessions.paymentId, payments.id))
-    .where(and(eq(payments.id, id), eq(payments.organizationId, apiAuth.organizationId)));
+    .where(and(eq(payments.id, id), orgScope(payments, { organizationId: apiOrgId, livemode: apiLivemode })));
 
   if (!row) return NextResponse.json({ error: { code: "not_found", message: "Payment not found" } }, { status: 404 });
 

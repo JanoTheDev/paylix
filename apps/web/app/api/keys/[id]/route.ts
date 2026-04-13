@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { apiKeys } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 
@@ -12,14 +13,14 @@ export async function DELETE(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
 
   const [updated] = await db
     .update(apiKeys)
     .set({ isActive: false })
-    .where(and(eq(apiKeys.id, id), eq(apiKeys.organizationId, organizationId)))
+    .where(and(eq(apiKeys.id, id), orgScope(apiKeys, { organizationId, livemode })))
     .returning();
 
   if (!updated) {

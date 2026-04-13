@@ -1,11 +1,12 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { webhooks } from "@paylix/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { withIdempotency } from "@/lib/idempotency";
@@ -29,7 +30,7 @@ const createWebhookSchema = z.object({
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const rows = await db
     .select({
@@ -42,7 +43,7 @@ export async function GET() {
       // secret intentionally excluded — only returned once on creation.
     })
     .from(webhooks)
-    .where(eq(webhooks.organizationId, organizationId))
+    .where(orgScope(webhooks, { organizationId, livemode }))
     .orderBy(desc(webhooks.createdAt));
 
   return NextResponse.json(rows);
@@ -51,7 +52,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
     let body: unknown;
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
       .insert(webhooks)
       .values({
         organizationId,
+        livemode,
         url,
         secret,
         events,

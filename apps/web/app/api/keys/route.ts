@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { apiKeys } from "@paylix/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { z } from "zod";
 import { generateApiKey } from "@/lib/api-key-utils";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 
@@ -16,7 +17,7 @@ const createKeySchema = z.object({
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const rows = await db
     .select({
@@ -29,7 +30,7 @@ export async function GET() {
       createdAt: apiKeys.createdAt,
     })
     .from(apiKeys)
-    .where(eq(apiKeys.organizationId, organizationId))
+    .where(orgScope(apiKeys, { organizationId, livemode }))
     .orderBy(desc(apiKeys.createdAt));
 
   return NextResponse.json(rows);
@@ -38,7 +39,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const body = await request.json();
   const parsed = createKeySchema.safeParse(body);
@@ -48,12 +49,13 @@ export async function POST(request: Request) {
   }
 
   const { name, type } = parsed.data;
-  const { key, prefix, hash } = generateApiKey(type, "test");
+  const { key, prefix, hash } = generateApiKey(type, livemode ? "live" : "test");
 
   const [row] = await db
     .insert(apiKeys)
     .values({
       organizationId,
+      livemode,
       name,
       keyHash: hash,
       prefix,

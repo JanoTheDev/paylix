@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { eq, desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { auditLogs, user } from "@paylix/db/schema";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 export async function GET() {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const logs = await db
     .select({
@@ -24,7 +25,7 @@ export async function GET() {
     })
     .from(auditLogs)
     .leftJoin(user, eq(auditLogs.userId, user.id))
-    .where(eq(auditLogs.organizationId, organizationId))
+    .where(orgScope(auditLogs, { organizationId, livemode }))
     .orderBy(desc(auditLogs.createdAt))
     .limit(100);
 

@@ -3,6 +3,7 @@ import { invoices, invoiceLineItems } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 interface Ctx {
   params: Promise<{ id: string }>;
@@ -11,13 +12,13 @@ interface Ctx {
 export async function GET(_req: Request, ctx: Ctx) {
   const orgCtx = await resolveActiveOrg();
   if (!orgCtx.ok) return orgCtx.response;
-  const { organizationId } = orgCtx;
+  const { organizationId, livemode } = orgCtx;
 
   const { id } = await ctx.params;
   const [invoice] = await db
     .select()
     .from(invoices)
-    .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+    .where(and(eq(invoices.id, id), orgScope(invoices, { organizationId, livemode })))
     .limit(1);
   if (!invoice) {
     return NextResponse.json({ error: { code: "not_found", message: "Invoice not found" } }, { status: 404 });

@@ -9,6 +9,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { z } from "zod";
 
 export async function GET(
@@ -17,14 +18,14 @@ export async function GET(
 ) {
   const orgCtx = await resolveActiveOrg();
   if (!orgCtx.ok) return orgCtx.response;
-  const { organizationId } = orgCtx;
+  const { organizationId, livemode } = orgCtx;
 
   const { id } = await ctx.params;
 
   const [customer] = await db
     .select()
     .from(customers)
-    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
+    .where(and(eq(customers.id, id), orgScope(customers, { organizationId, livemode })))
     .limit(1);
 
   if (!customer) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
@@ -45,7 +46,7 @@ export async function GET(
         })
         .from(payments)
         .leftJoin(products, eq(payments.productId, products.id))
-        .where(and(eq(payments.customerId, id), eq(payments.organizationId, organizationId)))
+        .where(and(eq(payments.customerId, id), orgScope(payments, { organizationId, livemode })))
         .orderBy(desc(payments.createdAt)),
       db
         .select({
@@ -63,7 +64,7 @@ export async function GET(
         .where(
           and(
             eq(subscriptions.customerId, id),
-            eq(subscriptions.organizationId, organizationId),
+            orgScope(subscriptions, { organizationId, livemode }),
           ),
         )
         .orderBy(desc(subscriptions.createdAt)),
@@ -79,7 +80,7 @@ export async function GET(
         })
         .from(invoices)
         .where(
-          and(eq(invoices.customerId, id), eq(invoices.organizationId, organizationId)),
+          and(eq(invoices.customerId, id), orgScope(invoices, { organizationId, livemode })),
         )
         .orderBy(desc(invoices.issuedAt)),
     ]);
@@ -109,7 +110,7 @@ export async function PATCH(
 ) {
   const orgCtx = await resolveActiveOrg();
   if (!orgCtx.ok) return orgCtx.response;
-  const { organizationId } = orgCtx;
+  const { organizationId, livemode } = orgCtx;
 
   const { id } = await ctx.params;
   const body = await request.json().catch(() => null);
@@ -141,7 +142,7 @@ export async function PATCH(
   const [updated] = await db
     .update(customers)
     .set(updates)
-    .where(and(eq(customers.id, id), eq(customers.organizationId, organizationId)))
+    .where(and(eq(customers.id, id), orgScope(customers, { organizationId, livemode })))
     .returning();
 
   if (!updated) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });

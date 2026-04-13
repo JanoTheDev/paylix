@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { webhooks, webhookDeliveries } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createHmac } from "crypto";
 import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 
 export async function POST(
   _request: Request,
@@ -12,14 +13,14 @@ export async function POST(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const { id } = await params;
 
   const [webhook] = await db
     .select()
     .from(webhooks)
-    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
+    .where(and(eq(webhooks.id, id), orgScope(webhooks, { organizationId, livemode })));
 
   if (!webhook) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

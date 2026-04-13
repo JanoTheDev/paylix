@@ -3,11 +3,13 @@ import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { subscriptions, user as userTable } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createRelayerClient } from "@/lib/relayer";
 import { CONTRACTS, SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
 import { authenticateApiKey } from "@/lib/api-auth";
 import { requireActiveOrg } from "@/lib/require-active-org";
+import { getDashboardLivemode } from "@/lib/request-mode";
+import { orgScope } from "@/lib/org-scope";
 import { resolvePayoutWallet } from "@/lib/payout-wallets";
 import type { NetworkKey } from "@paylix/config/networks";
 
@@ -24,17 +26,20 @@ export async function POST(
 ) {
   let merchantOrgId: string | null = null;
   let merchantUserId: string | null = null;
+  let merchantLivemode = false;
 
   const apiAuth = await authenticateApiKey(request, "secret");
   if (apiAuth?.rateLimitResponse) return apiAuth.rateLimitResponse;
   if (apiAuth) {
     merchantOrgId = apiAuth.organizationId;
+    merchantLivemode = apiAuth.livemode;
   } else {
     const session = await auth.api.getSession({ headers: await headers() });
     if (session) {
       try {
         merchantOrgId = requireActiveOrg(session);
         merchantUserId = session.user.id;
+        merchantLivemode = await getDashboardLivemode();
       } catch {
         return NextResponse.json({ error: { code: "no_active_org", message: "No active team selected" } }, { status: 400 });
       }
@@ -53,7 +58,7 @@ export async function POST(
     .where(
       and(
         eq(subscriptions.id, id),
-        eq(subscriptions.organizationId, merchantOrgId),
+        orgScope(subscriptions, { organizationId: merchantOrgId, livemode: merchantLivemode }),
       ),
     )
     .limit(1);

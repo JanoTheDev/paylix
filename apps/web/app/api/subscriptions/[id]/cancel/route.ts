@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { subscriptions } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 
 // Force-cancel: DB-only update. Used as a manual fallback when the on-chain
@@ -17,7 +18,7 @@ export async function POST(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
 
@@ -25,7 +26,7 @@ export async function POST(
     .update(subscriptions)
     .set({ status: "cancelled" })
     .where(
-      and(eq(subscriptions.id, id), eq(subscriptions.organizationId, organizationId))
+      and(eq(subscriptions.id, id), orgScope(subscriptions, { organizationId, livemode }))
     )
     .returning();
 

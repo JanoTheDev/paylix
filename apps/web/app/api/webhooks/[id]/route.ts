@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { webhooks } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { validateWebhookUrl } from "@/lib/url-safety";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 
@@ -31,14 +32,14 @@ export async function GET(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   const { id } = await params;
 
   const [row] = await db
     .select()
     .from(webhooks)
-    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)));
+    .where(and(eq(webhooks.id, id), orgScope(webhooks, { organizationId, livemode })));
 
   if (!row) {
     return apiError("not_found", "Not found", 404);
@@ -53,7 +54,7 @@ export async function PATCH(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
   const body = await request.json();
@@ -75,7 +76,7 @@ export async function PATCH(
   const [updated] = await db
     .update(webhooks)
     .set(data)
-    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)))
+    .where(and(eq(webhooks.id, id), orgScope(webhooks, { organizationId, livemode })))
     .returning({
       id: webhooks.id,
       organizationId: webhooks.organizationId,
@@ -108,13 +109,13 @@ export async function DELETE(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
 
   const [deleted] = await db
     .delete(webhooks)
-    .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, organizationId)))
+    .where(and(eq(webhooks.id, id), orgScope(webhooks, { organizationId, livemode })))
     .returning();
 
   if (!deleted) {

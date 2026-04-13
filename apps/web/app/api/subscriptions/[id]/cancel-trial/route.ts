@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { subscriptions } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 
 export async function POST(
@@ -11,7 +12,7 @@ export async function POST(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
 
@@ -21,7 +22,7 @@ export async function POST(
     .where(
       and(
         eq(subscriptions.id, id),
-        eq(subscriptions.organizationId, organizationId),
+        orgScope(subscriptions, { organizationId, livemode }),
       ),
     )
     .limit(1);

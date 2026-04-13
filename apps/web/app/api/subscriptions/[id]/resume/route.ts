@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { subscriptions } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { resolveActiveOrg } from "@/lib/require-active-org";
+import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { computeResumeUpdate } from "../pause/logic";
 
@@ -12,7 +13,7 @@ export async function POST(
 ) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, livemode } = ctx;
   const { id } = await params;
 
   const [existing] = await db
@@ -23,7 +24,7 @@ export async function POST(
       nextChargeDate: subscriptions.nextChargeDate,
     })
     .from(subscriptions)
-    .where(and(eq(subscriptions.id, id), eq(subscriptions.organizationId, organizationId)));
+    .where(and(eq(subscriptions.id, id), orgScope(subscriptions, { organizationId, livemode })));
 
   if (!existing) {
     return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
