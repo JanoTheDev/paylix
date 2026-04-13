@@ -29,9 +29,9 @@ contract MockUSDCTest is Test {
         assertEq(token.balanceOf(alice), 1000e6);
     }
 
-    function test_anyone_can_mint() public {
+    function test_non_owner_cannot_mint() public {
         vm.prank(alice);
+        vm.expectRevert();
         token.mint(alice, 500e6);
-        assertEq(token.balanceOf(alice), 500e6);
     }
 }

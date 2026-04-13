@@ -29,9 +29,9 @@ contract PaymentVaultPermitTest is Test {
     );
 
     function setUp() public {
+        usdc = new MockUSDC();
         vm.startPrank(owner);
         vault = new PaymentVault(platformWallet, 50);
-        usdc = new MockUSDC();
         vault.setAcceptedToken(address(usdc), true);
         vault.setRelayer(relayer);
         vm.stopPrank();

@@ -124,6 +124,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(amount > 0, "Amount must be > 0");
         require(merchant != address(0), "Invalid merchant");
         require(interval > 0, "Invalid interval");
+        require(block.timestamp <= type(uint256).max - interval, "Interval too large");
 
         uint256 subId = nextSubscriptionId++;
         subscriptions[subId] = Subscription({
@@ -134,7 +135,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         });
 
         _processPayment(subId);
-        emit SubscriptionCreated(subId, msg.sender, merchant, token, amount, interval, productId, customerId);
+        _emitSubscriptionCreated(subId, subscriptions[subId]);
         return subId;
     }
 
@@ -164,6 +165,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(p.merchant != address(0), "Invalid merchant");
         require(p.buyer != address(0), "Invalid buyer");
         require(p.interval > 0, "Invalid interval");
+        require(block.timestamp <= type(uint256).max - p.interval, "Interval too large");
         require(p.permitValue >= p.amount, "Permit < amount");
         require(block.timestamp <= p.deadline, "Intent expired");
 
@@ -233,11 +235,18 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     function chargeSubscription(uint256 subscriptionId) external nonReentrant whenNotPaused {
         Subscription storage sub = subscriptions[subscriptionId];
+        require(
+            msg.sender == sub.subscriber ||
+            msg.sender == sub.merchant ||
+            msg.sender == relayer,
+            "Not authorized to charge"
+        );
         require(sub.status == Status.Active, "Not active");
         require(block.timestamp >= sub.nextChargeDate, "Not due yet");
 
         bool success = _tryProcessPayment(subscriptionId);
         if (success) {
+            require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
             sub.nextChargeDate = sub.nextChargeDate + sub.interval;
         } else {
             sub.status = Status.PastDue;
@@ -250,6 +259,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(msg.sender == sub.subscriber || msg.sender == sub.merchant, "Not authorized");
         require(sub.status == Status.Active || sub.status == Status.PastDue, "Already inactive");
         sub.status = Status.Cancelled;
+        delete pendingWalletUpdates[subscriptionId];
         emit SubscriptionCancelled(subscriptionId);
     }
 
@@ -265,6 +275,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             "Already inactive"
         );
         sub.status = Status.Cancelled;
+        delete pendingWalletUpdates[subscriptionId];
         emit SubscriptionCancelled(subscriptionId);
     }
 
@@ -280,6 +291,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             "Already inactive"
         );
         sub.status = Status.Cancelled;
+        delete pendingWalletUpdates[subscriptionId];
         emit SubscriptionCancelled(subscriptionId);
     }
 
@@ -297,7 +309,10 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(pendingWalletUpdates[subscriptionId] == msg.sender, "Not pending for caller");
 
         Subscription storage sub = subscriptions[subscriptionId];
-        require(sub.status == Status.Active, "Not active");
+        if (sub.status != Status.Active) {
+            delete pendingWalletUpdates[subscriptionId];
+            revert("Subscription no longer active");
+        }
 
         address oldSubscriber = sub.subscriber;
         sub.subscriber = msg.sender;
@@ -324,6 +339,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     }
 
     function setRelayer(address _relayer) external onlyOwner {
+        require(_relayer != address(0), "Invalid relayer address");
         address old = relayer;
         relayer = _relayer;
         emit RelayerUpdated(old, _relayer);
@@ -350,39 +366,53 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     function _processPayment(uint256 subscriptionId) internal {
         Subscription storage sub = subscriptions[subscriptionId];
+        uint256 amount = sub.amount;
+        address token = sub.token;
+        address subscriber = sub.subscriber;
+        address merchant_ = sub.merchant;
+
         uint256 fee = 0;
         if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (sub.amount * platformFee) / 10000;
+            fee = (amount * platformFee) / 10000;
         }
-        uint256 merchantAmount = sub.amount - fee;
+        uint256 merchantAmount = amount - fee;
+        require(merchantAmount > 0, "Amount too small for fee");
         // slither-disable-next-line arbitrary-send-erc20
-        IERC20(sub.token).safeTransferFrom(sub.subscriber, sub.merchant, merchantAmount);
+        IERC20(token).safeTransferFrom(subscriber, merchant_, merchantAmount);
         if (fee > 0) {
+            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
-            IERC20(sub.token).safeTransferFrom(sub.subscriber, platformWallet, fee);
+            IERC20(token).safeTransferFrom(subscriber, platformWallet, fee);
         }
-        sub.totalCharged += sub.amount;
-        emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, sub.amount, fee, block.timestamp);
+        sub.totalCharged += amount;
+        emit PaymentReceived(subscriptionId, subscriber, merchant_, token, amount, fee, block.timestamp);
     }
 
     function _tryProcessPayment(uint256 subscriptionId) internal returns (bool) {
         Subscription storage sub = subscriptions[subscriptionId];
+        uint256 amount = sub.amount;
+        address tokenAddr = sub.token;
+        address subscriber = sub.subscriber;
+        address merchant_ = sub.merchant;
+
         uint256 fee = 0;
         if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (sub.amount * platformFee) / 10000;
+            fee = (amount * platformFee) / 10000;
         }
-        uint256 merchantAmount = sub.amount - fee;
-        IERC20 token = IERC20(sub.token);
-        if (token.allowance(sub.subscriber, address(this)) < sub.amount) return false;
-        if (token.balanceOf(sub.subscriber) < sub.amount) return false;
+        uint256 merchantAmount = amount - fee;
+        if (merchantAmount == 0) return false;
+        IERC20 token = IERC20(tokenAddr);
+        if (token.allowance(subscriber, address(this)) < amount) return false;
+        if (token.balanceOf(subscriber) < amount) return false;
         // slither-disable-next-line arbitrary-send-erc20
-        token.safeTransferFrom(sub.subscriber, sub.merchant, merchantAmount);
+        token.safeTransferFrom(subscriber, merchant_, merchantAmount);
         if (fee > 0) {
+            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
-            token.safeTransferFrom(sub.subscriber, platformWallet, fee);
+            token.safeTransferFrom(subscriber, platformWallet, fee);
         }
-        sub.totalCharged += sub.amount;
-        emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, sub.amount, fee, block.timestamp);
+        sub.totalCharged += amount;
+        emit PaymentReceived(subscriptionId, subscriber, merchant_, tokenAddr, amount, fee, block.timestamp);
         return true;
     }
 }

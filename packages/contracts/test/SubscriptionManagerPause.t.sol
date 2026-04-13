@@ -28,9 +28,9 @@ contract SubscriptionManagerPauseTest is Test {
     );
 
     function setUp() public {
+        usdc = new MockUSDC();
         vm.startPrank(owner);
         subs = new SubscriptionManager(platformWallet, 50);
-        usdc = new MockUSDC();
         subs.setAcceptedToken(address(usdc), true);
         subs.setRelayer(relayer);
         vm.stopPrank();

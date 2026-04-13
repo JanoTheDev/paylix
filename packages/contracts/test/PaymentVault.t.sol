@@ -18,9 +18,9 @@ contract PaymentVaultTest is Test {
     bytes32 public customerId = keccak256("cust_456");
 
     function setUp() public {
+        usdc = new MockUSDC();
         vm.startPrank(owner);
         vault = new PaymentVault(platformWallet, 50);
-        usdc = new MockUSDC();
         vault.setAcceptedToken(address(usdc), true);
         vm.stopPrank();
         usdc.mint(payer, 10000e6);

@@ -79,6 +79,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         uint256 deadline,
         bytes calldata intentSignature
     ) internal {
+        require(block.timestamp <= deadline, "Payment intent expired");
         uint256 nonce = intentNonces[buyer];
         bytes32 structHash = keccak256(
             abi.encode(
@@ -115,9 +116,11 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
             fee = (amount * platformFee) / 10000;
         }
         uint256 merchantAmount = amount - fee;
+        require(merchantAmount > 0, "Amount too small for fee");
 
         IERC20(token).safeTransferFrom(msg.sender, merchant, merchantAmount);
         if (fee > 0) {
+            require(platformWallet != address(0), "Invalid platform wallet");
             IERC20(token).safeTransferFrom(msg.sender, platformWallet, fee);
         }
 
@@ -181,6 +184,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
             fee = (amount * platformFee) / 10000;
         }
         uint256 merchantAmount = amount - fee;
+        require(merchantAmount > 0, "Amount too small for fee");
 
         // The `buyer` parameter is *not* arbitrary here: _consumePaymentIntent
         // above proves the buyer signed an EIP-712 PaymentIntent committing to
@@ -191,6 +195,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         // slither-disable-next-line arbitrary-send-erc20-permit
         IERC20(token).safeTransferFrom(buyer, merchant, merchantAmount);
         if (fee > 0) {
+            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20-permit
             IERC20(token).safeTransferFrom(buyer, platformWallet, fee);
         }
@@ -216,6 +221,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
     }
 
     function setRelayer(address _relayer) external onlyOwner {
+        require(_relayer != address(0), "Invalid relayer address");
         address old = relayer;
         relayer = _relayer;
         emit RelayerUpdated(old, _relayer);

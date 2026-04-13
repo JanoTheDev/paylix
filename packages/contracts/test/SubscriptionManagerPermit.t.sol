@@ -31,9 +31,9 @@ contract SubscriptionManagerPermitTest is Test {
     );
 
     function setUp() public {
+        usdc = new MockUSDC();
         vm.startPrank(owner);
         subs = new SubscriptionManager(platformWallet, 50);
-        usdc = new MockUSDC();
         subs.setAcceptedToken(address(usdc), true);
         subs.setRelayer(relayer);
         vm.stopPrank();
@@ -69,6 +69,7 @@ contract SubscriptionManagerPermitTest is Test {
         uint256 subId = subs.createSubscriptionWithPermit(p, intentSig);
 
         vm.warp(block.timestamp + MONTHLY + 1);
+        vm.prank(relayer);
         subs.chargeSubscription(subId);
 
         uint256 fee = (AMOUNT * 50) / 10000;

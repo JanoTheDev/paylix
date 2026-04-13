@@ -13,6 +13,7 @@ contract SubscriptionManagerTest is Test {
     address public platformWallet = makeAddr("platform");
     address public merchant = makeAddr("merchant");
     address public subscriber = makeAddr("subscriber");
+    address public relayer = makeAddr("relayer");
 
     bytes32 public productId = keccak256("prod_pro");
     bytes32 public customerId = keccak256("cust_789");
@@ -21,10 +22,11 @@ contract SubscriptionManagerTest is Test {
     uint256 public constant AMOUNT = 10e6;
 
     function setUp() public {
+        usdc = new MockUSDC();
         vm.startPrank(owner);
         subs = new SubscriptionManager(platformWallet, 50);
-        usdc = new MockUSDC();
         subs.setAcceptedToken(address(usdc), true);
+        subs.setRelayer(relayer);
         vm.stopPrank();
 
         usdc.mint(subscriber, 10000e6);
@@ -52,14 +54,46 @@ contract SubscriptionManagerTest is Test {
         vm.prank(subscriber);
         uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
         vm.warp(block.timestamp + MONTHLY);
+        vm.prank(relayer);
         subs.chargeSubscription(subId);
         uint256 fee = (AMOUNT * 50) / 10000;
         assertEq(usdc.balanceOf(merchant), (AMOUNT - fee) * 2);
     }
 
+    function test_chargeSubscription_by_subscriber() public {
+        vm.prank(subscriber);
+        uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        vm.warp(block.timestamp + MONTHLY);
+        vm.prank(subscriber);
+        subs.chargeSubscription(subId);
+        uint256 fee = (AMOUNT * 50) / 10000;
+        assertEq(usdc.balanceOf(merchant), (AMOUNT - fee) * 2);
+    }
+
+    function test_chargeSubscription_by_merchant() public {
+        vm.prank(subscriber);
+        uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        vm.warp(block.timestamp + MONTHLY);
+        vm.prank(merchant);
+        subs.chargeSubscription(subId);
+        uint256 fee = (AMOUNT * 50) / 10000;
+        assertEq(usdc.balanceOf(merchant), (AMOUNT - fee) * 2);
+    }
+
+    function test_chargeSubscription_unauthorized() public {
+        vm.prank(subscriber);
+        uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        vm.warp(block.timestamp + MONTHLY);
+        address random = makeAddr("random");
+        vm.prank(random);
+        vm.expectRevert("Not authorized to charge");
+        subs.chargeSubscription(subId);
+    }
+
     function test_chargeSubscription_too_early() public {
         vm.prank(subscriber);
         uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        vm.prank(relayer);
         vm.expectRevert("Not due yet");
         subs.chargeSubscription(subId);
     }
@@ -72,6 +106,7 @@ contract SubscriptionManagerTest is Test {
         uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
         vm.stopPrank();
         vm.warp(block.timestamp + MONTHLY);
+        vm.prank(merchant);
         subs.chargeSubscription(subId);
         (,,,,,,,,, SubscriptionManager.Status status,) = subs.subscriptions(subId);
         assertEq(uint8(status), uint8(SubscriptionManager.Status.PastDue));
@@ -146,15 +181,43 @@ contract SubscriptionManagerTest is Test {
         subs.acceptSubscriptionWalletUpdate(subId);
     }
 
+    function test_cancel_clears_pendingWalletUpdate() public {
+        vm.prank(subscriber);
+        uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        address newWallet = makeAddr("newWallet");
+        vm.prank(subscriber);
+        subs.requestSubscriptionWalletUpdate(subId, newWallet);
+        assertEq(subs.pendingWalletUpdates(subId), newWallet);
+
+        vm.prank(subscriber);
+        subs.cancelSubscription(subId);
+        assertEq(subs.pendingWalletUpdates(subId), address(0));
+    }
+
+    function test_accept_wallet_update_after_cancel_reverts() public {
+        vm.prank(subscriber);
+        uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
+        address newWallet = makeAddr("newWallet");
+        vm.prank(subscriber);
+        subs.requestSubscriptionWalletUpdate(subId, newWallet);
+
+        vm.prank(subscriber);
+        subs.cancelSubscription(subId);
+
+        // Cancel already deleted the pending entry, so accept sees no pending update
+        vm.prank(newWallet);
+        vm.expectRevert("Not pending for caller");
+        subs.acceptSubscriptionWalletUpdate(subId);
+    }
+
     function test_chargeSubscription_late_anchors_to_nextChargeDate() public {
         vm.prank(subscriber);
         uint256 subId = subs.createSubscription(address(usdc), merchant, AMOUNT, MONTHLY, productId, customerId);
 
-        // nextChargeDate was set to block.timestamp + MONTHLY at creation
         uint256 expectedFirstCharge = block.timestamp + MONTHLY;
 
-        // Warp well past the due time (late charge)
         vm.warp(expectedFirstCharge + 5 days);
+        vm.prank(relayer);
         subs.chargeSubscription(subId);
 
         (,,,,, uint256 nextChargeDate,,,,,) = subs.subscriptions(subId);
@@ -184,6 +247,7 @@ contract SubscriptionManagerTest is Test {
         vm.warp(block.timestamp + MONTHLY);
         vm.prank(owner);
         subs.pause();
+        vm.prank(relayer);
         vm.expectRevert();
         subs.chargeSubscription(subId);
     }
@@ -203,6 +267,7 @@ contract SubscriptionManagerTest is Test {
         vm.prank(subscriber);
         subs.cancelSubscription(subId);
         vm.warp(block.timestamp + MONTHLY);
+        vm.prank(relayer);
         vm.expectRevert("Not active");
         subs.chargeSubscription(subId);
     }
