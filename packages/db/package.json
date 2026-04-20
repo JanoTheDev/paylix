@@ -15,12 +15,12 @@
     "db:studio": "dotenv -e ../../.env -- drizzle-kit studio"
   },
   "dependencies": {
-    "drizzle-orm": "^0.38",
+    "drizzle-orm": "^0.45",
     "postgres": "^3.4"
   },
   "devDependencies": {
     "@paylix/config": "workspace:*",
-    "drizzle-kit": "^0.30",
+    "drizzle-kit": "^0.31",
     "typescript": "^5.5"
   }
 }
