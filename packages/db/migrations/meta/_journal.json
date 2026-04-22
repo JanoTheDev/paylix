@@ -141,6 +141,13 @@
       "when": 1745712000000,
       "tag": "0021_add_blocklist",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1745798400000,
+      "tag": "0022_add_cancel_at_period_end",
+      "breakpoints": true
     }
   ]
 }

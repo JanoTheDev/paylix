@@ -79,6 +79,47 @@ export async function runKeeper() {
       continue;
     }
 
+    // Scheduled cancellation: the period boundary has arrived, flip to
+    // cancelled instead of charging. Emit webhook so merchants see the
+    // transition exactly once. Off-chain only — keeper is the only party
+    // that ever calls chargeSubscription, so skipping here is sufficient.
+    if (sub.cancelAtPeriodEnd) {
+      try {
+        await db
+          .update(subscriptions)
+          .set({
+            status: "cancelled",
+            cancelAtPeriodEnd: false,
+            nextChargeDate: null,
+          })
+          .where(eq(subscriptions.id, sub.id));
+        const { dispatchWebhooks } = await import("./webhook-dispatch");
+        await dispatchWebhooks(
+          sub.organizationId,
+          "subscription.cancelled",
+          {
+            subscriptionId: sub.id,
+            onChainId: sub.onChainId,
+            status: "cancelled",
+            reason: "scheduled",
+            metadata: sub.metadata ?? {},
+          },
+          sub.livemode,
+        ).catch((err) =>
+          console.error("[Keeper] scheduled-cancel webhook failed:", err),
+        );
+        console.log(
+          `[Keeper] Subscription ${sub.id} reached cancel_at_period_end boundary, flipped to cancelled`,
+        );
+      } catch (err) {
+        console.error(
+          `[Keeper] Failed to flip ${sub.id} to cancelled at period end:`,
+          err,
+        );
+      }
+      continue;
+    }
+
     // Optimistically bump nextChargeDate BEFORE sending the tx to prevent the
     // next keeper tick from reselecting this subscription if the current
     // attempt is still in-flight. Roll back on failure.
