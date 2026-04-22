@@ -395,7 +395,7 @@ export default function WebhooksPage() {
         open={createOpen}
         onOpenChange={(v) => (v ? setCreateOpen(true) : closeCreateDialog())}
       >
-        <DialogContent className="border-border bg-surface-1 sm:max-w-[520px]">
+        <DialogContent className="border-border bg-surface-1 sm:max-w-[520px] max-h-[85vh] overflow-y-auto">
           {createdSecret ? (
             <>
               <DialogHeader>
@@ -436,7 +436,7 @@ export default function WebhooksPage() {
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label>Events</Label>
-                  <div className="flex flex-col gap-1">
+                  <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto rounded-md border border-border bg-surface-2/40 p-1">
                     {ALL_EVENTS.map((event) => (
                       <label
                         key={event.value}
@@ -575,7 +575,7 @@ export default function WebhooksPage() {
             </div>
             <div className="flex flex-col gap-2">
               <Label>Events</Label>
-              <div className="flex flex-col gap-1">
+              <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto rounded-md border border-border bg-surface-2/40 p-1">
                 {ALL_EVENTS.map((event) => (
                   <label
                     key={event.value}

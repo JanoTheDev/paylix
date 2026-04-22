@@ -196,6 +196,7 @@ export async function PATCH(
   return NextResponse.json({
     ...updated,
     amount: updated.amount?.toString() ?? null,
+    subtotalAmount: updated.subtotalAmount?.toString() ?? null,
   });
 }
 
