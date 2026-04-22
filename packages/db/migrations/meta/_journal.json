@@ -183,6 +183,13 @@
       "when": 1746230400000,
       "tag": "0027_add_refund_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1746316800000,
+      "tag": "0028_add_customer_wallets",
+      "breakpoints": true
     }
   ]
 }

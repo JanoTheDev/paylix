@@ -178,6 +178,10 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Multi-wallet per customer",
+        "anchor": "multi-wallet-per-customer"
+      },
+      {
         "text": "Customer refund requests",
         "anchor": "customer-refund-requests"
       },

@@ -59,6 +59,19 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Multi-wallet per customer</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        New <code>customer_wallets</code> table (migration 0028) with a
+        partial unique index enforcing exactly one primary wallet per
+        customer. Migration backfills existing{" "}
+        <code>customers.wallet_address</code> into a primary row.
+        Portal endpoints: <code>GET /api/portal/wallets</code>,{" "}
+        <code>POST /api/portal/wallets</code> (add),{" "}
+        <code>PATCH /api/portal/wallets/:id</code> (make primary),{" "}
+        <code>DELETE /api/portal/wallets/:id</code>. Keeper wallet-walk
+        (backup-on-fail charging) is a follow-up.
+      </p>
+
       <SubsectionHeading>Customer refund requests</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         New <code>refund_requests</code> table (migration 0027).
