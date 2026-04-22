@@ -10,7 +10,7 @@ import {
   invoices,
   invoiceLineItems,
 } from "@paylix/db/schema";
-import { eq, and, or, desc, sql } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import { keccak256, stringToBytes, type Log } from "viem";
 import { NETWORKS, getToken } from "@paylix/config/networks";
 import type { NetworkKey } from "@paylix/config/networks";
@@ -20,6 +20,7 @@ import { buildInvoice } from "./invoices/create";
 import { sendInvoiceEmail } from "./invoices/send-email";
 import { sendSubscriptionEmail } from "./emails/send-subscription-email";
 import { recordAudit } from "./audit";
+import { summarizeRetryPass, shouldWarn } from "./unmatched-metrics";
 
 export interface HandlerContext {
   livemode: boolean;
@@ -1373,17 +1374,39 @@ function rehydrateSubPaymentReceivedArgs(payload: Record<string, unknown>) {
 }
 
 export async function retryUnmatchedEvents() {
+  const [{ count: queueDepthBefore }] = await db
+    .select({ count: sql<number>`cast(count(*) as int)` })
+    .from(unmatchedEvents);
+
   const rows = await db
     .select()
     .from(unmatchedEvents)
     .orderBy(desc(unmatchedEvents.createdAt))
     .limit(50);
 
-  if (rows.length === 0) return;
+  if (rows.length === 0) {
+    if (queueDepthBefore > 0) {
+      // Rows exist but all slid past our ORDER BY window? Unreachable, but
+      // log a heartbeat anyway so operators can see the queue depth.
+      console.log(
+        JSON.stringify({
+          event: "unmatched_retry_pass",
+          pending: queueDepthBefore,
+          retried: 0,
+          matched: 0,
+          ageSecondsP95: 0,
+          oldestAgeSeconds: 0,
+        }),
+      );
+    }
+    return;
+  }
 
-  console.log(`[Handler] Retrying ${rows.length} unmatched events`);
+  const retriedTxHashes = new Set(rows.map((r) => r.txHash));
+  const retryResults: Array<{ createdAt: Date; matched: boolean }> = [];
 
   for (const row of rows) {
+    let attempted = false;
     try {
       const log = rehydrateLog(row);
       const payload = row.payload as Record<string, unknown>;
@@ -1395,6 +1418,7 @@ export async function retryUnmatchedEvents() {
           .update(unmatchedEvents)
           .set({ attempts: row.attempts + 1 })
           .where(eq(unmatchedEvents.id, row.id));
+        retryResults.push({ createdAt: row.createdAt, matched: false });
         continue;
       }
 
@@ -1405,16 +1429,19 @@ export async function retryUnmatchedEvents() {
         await db
           .delete(unmatchedEvents)
           .where(eq(unmatchedEvents.id, row.id));
+        attempted = true;
         await handlePaymentReceived(log, rehydratePaymentArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionCreated") {
         await db
           .delete(unmatchedEvents)
           .where(eq(unmatchedEvents.id, row.id));
+        attempted = true;
         await handleSubscriptionCreated(log, rehydrateSubCreatedArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionPaymentReceived") {
         await db
           .delete(unmatchedEvents)
           .where(eq(unmatchedEvents.id, row.id));
+        attempted = true;
         await handleSubscriptionPaymentReceived(
           log,
           rehydrateSubPaymentReceivedArgs(payload),
@@ -1433,5 +1460,40 @@ export async function retryUnmatchedEvents() {
         err
       );
     }
+    // `matched` is finalized below by checking whether a row with the same
+    // txHash is still unmatched post-pass. Push a provisional entry now so
+    // the order matches rows[].
+    retryResults.push({ createdAt: row.createdAt, matched: attempted });
+  }
+
+  // Recompute matched: a retried event is "matched" only if no row with the
+  // same txHash remains in unmatched_events (handlers re-record on miss).
+  const remaining =
+    retriedTxHashes.size === 0
+      ? []
+      : await db
+          .select({ txHash: unmatchedEvents.txHash })
+          .from(unmatchedEvents)
+          .where(inArray(unmatchedEvents.txHash, Array.from(retriedTxHashes)));
+  const stillUnmatched = new Set(remaining.map((r) => r.txHash));
+
+  for (let i = 0; i < rows.length; i++) {
+    if (stillUnmatched.has(rows[i].txHash)) {
+      retryResults[i].matched = false;
+    }
+  }
+
+  const summary = summarizeRetryPass({
+    queueDepthBefore,
+    retriedRows: retryResults,
+    nowMs: Date.now(),
+  });
+  console.log(JSON.stringify(summary));
+  if (shouldWarn(summary)) {
+    console.warn(
+      `[Unmatched Retry] queue depth or age above threshold: ${JSON.stringify(
+        summary,
+      )}`,
+    );
   }
 }
