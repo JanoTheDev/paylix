@@ -80,13 +80,32 @@ const ALL_EVENTS: { value: string; label: string }[] = [
   { value: "coupon.redeemed", label: "Coupon redeemed" },
 ];
 
-const deliveryColumns: ColumnDef<DeliveryRow, unknown>[] = [
-  col.text<DeliveryRow>("event", "Event"),
-  col.status<DeliveryRow>("status", "Status", "delivery"),
-  col.text<DeliveryRow>("httpStatus", "HTTP", { align: "right" }),
-  col.text<DeliveryRow>("attempts", "Attempts", { align: "right" }),
-  col.dateTime<DeliveryRow>("createdAt", "Timestamp"),
-];
+function buildDeliveryColumns(
+  onReplay: (id: string) => void,
+  replayingId: string | null,
+): ColumnDef<DeliveryRow, unknown>[] {
+  return [
+    col.text<DeliveryRow>("event", "Event"),
+    col.status<DeliveryRow>("status", "Status", "delivery"),
+    col.text<DeliveryRow>("httpStatus", "HTTP", { align: "right" }),
+    col.text<DeliveryRow>("attempts", "Attempts", { align: "right" }),
+    col.dateTime<DeliveryRow>("createdAt", "Timestamp"),
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={replayingId === row.original.id}
+          onClick={() => onReplay(row.original.id)}
+        >
+          {replayingId === row.original.id ? "Replaying…" : "Replay"}
+        </Button>
+      ),
+    },
+  ];
+}
 
 export default function WebhooksPage() {
   const [webhookList, setWebhookList] = useState<Webhook[]>([]);
@@ -106,6 +125,9 @@ export default function WebhooksPage() {
   const [editEvents, setEditEvents] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string>("");
+  const [testEventModalOpen, setTestEventModalOpen] = useState(false);
+  const [testEvent, setTestEvent] = useState<string>("payment.confirmed");
+  const [replayingId, setReplayingId] = useState<string | null>(null);
 
   const fetchWebhooks = useCallback(async () => {
     const res = await fetch("/api/webhooks");
@@ -171,14 +193,46 @@ export default function WebhooksPage() {
   async function handleTest() {
     if (!selected) return;
     setTesting(true);
-    const res = await fetch(`/api/webhooks/${selected.id}/test`, {
-      method: "POST",
-    });
-    if (res.ok) {
-      const delivery = await res.json();
-      setDeliveries((prev) => [delivery, ...prev]);
+    try {
+      const res = await fetch(`/api/webhooks/${selected.id}/send-test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: testEvent }),
+      });
+      if (res.ok) {
+        setTestEventModalOpen(false);
+        await loadDeliveries(selected.id);
+        toast.success("Test event sent");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error?.message ?? "Failed to send test event");
+      }
+    } catch {
+      toast.error("Failed to send test event");
+    } finally {
+      setTesting(false);
     }
-    setTesting(false);
+  }
+
+  async function handleReplay(deliveryId: string) {
+    if (!selected) return;
+    setReplayingId(deliveryId);
+    try {
+      const res = await fetch(`/api/webhooks/deliveries/${deliveryId}/replay`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        await loadDeliveries(selected.id);
+        toast.success("Delivery replayed");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error?.message ?? "Replay failed");
+      }
+    } catch {
+      toast.error("Replay failed");
+    } finally {
+      setReplayingId(null);
+    }
   }
 
   async function loadDeliveries(webhookId: string) {
@@ -454,10 +508,12 @@ export default function WebhooksPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={handleTest}
-                disabled={testing}
+                onClick={() => {
+                  setTestEvent(selected?.events[0] ?? "payment.confirmed");
+                  setTestEventModalOpen(true);
+                }}
               >
-                {testing ? "Sending…" : "Send Test"}
+                Send Test
               </Button>
               <Button
                 variant="destructive"
@@ -493,7 +549,7 @@ export default function WebhooksPage() {
             />
             <Section title="Recent Deliveries">
               <DataTable
-                columns={deliveryColumns}
+                columns={buildDeliveryColumns(handleReplay, replayingId)}
                 data={deliveryRows}
                 emptyState={
                   <EmptyState
@@ -563,6 +619,42 @@ export default function WebhooksPage() {
           if (deleteId) handleDelete(deleteId);
         }}
       />
+
+      <Dialog open={testEventModalOpen} onOpenChange={setTestEventModalOpen}>
+        <DialogContent className="border-border bg-surface-1 sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Send Test Event</DialogTitle>
+            <DialogDescription>
+              Dispatches a synthetic event with <code>livemode: false</code> and
+              a <code>evt_test_*</code> marker. Only events this webhook is
+              subscribed to can be sent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="test-event">Event</Label>
+            <select
+              id="test-event"
+              value={testEvent}
+              onChange={(e) => setTestEvent(e.target.value)}
+              className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+            >
+              {(selected?.events ?? []).map((ev) => (
+                <option key={ev} value={ev}>
+                  {ev}
+                </option>
+              ))}
+            </select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTestEventModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleTest} disabled={testing || !selected}>
+              {testing ? "Sending…" : "Send"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }
