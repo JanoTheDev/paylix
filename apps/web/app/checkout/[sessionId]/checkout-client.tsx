@@ -56,6 +56,9 @@ interface CheckoutSession {
   appliedCouponId?: string | null;
   discountCents?: number | null;
   subtotalAmount?: number | bigint | null;
+  taxAmount?: number | bigint | null;
+  taxRateBps?: number | null;
+  taxLabel?: string | null;
   couponDuration?: "once" | "forever" | "repeating" | null;
   couponDurationInCycles?: number | null;
 }
@@ -386,8 +389,31 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         await switchChainAsync({ chainId });
       }
 
-      // session.amount is already in native token units (no conversion needed)
-      const usdcAmount = BigInt(session.amount);
+      // Persist the customer form BEFORE signing. The PATCH handler
+      // recomputes tax when the country is set and may bump session.amount
+      // (subtotal + tax). We read the fresh amount back so the permit
+      // signs the tax-inclusive total.
+      let effectiveAmount = BigInt(session.amount);
+      if (hasCheckoutFields) {
+        try {
+          const patchRes = await fetch(`/api/checkout/${session.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ customer: customerFields }),
+          });
+          if (patchRes.ok) {
+            const patched = (await patchRes.json().catch(() => null)) as
+              | { amount?: string | null }
+              | null;
+            if (patched?.amount) {
+              effectiveAmount = BigInt(patched.amount);
+            }
+          }
+        } catch {
+          // ignore — fall back to prop amount
+        }
+      }
+      const usdcAmount = effectiveAmount;
 
       const isSubscription = session.type === "subscription";
       const spender = isSubscription
@@ -628,21 +654,6 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       }
 
       setPayStep("paying");
-
-      // Persist any collected customer form fields (names, email, phone,
-      // country, taxId) onto the session before relaying. Failures here are
-      // non-fatal — the payment can still go through.
-      if (hasCheckoutFields) {
-        try {
-          await fetch(`/api/checkout/${session.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ customer: customerFields }),
-          });
-        } catch {
-          // ignore — never block payment on form persistence
-        }
-      }
 
       // Submit to the backend relay endpoint — it will call the contract
       // via the whitelisted relayer wallet and return the tx hash.

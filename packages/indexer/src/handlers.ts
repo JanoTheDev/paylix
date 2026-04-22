@@ -252,6 +252,13 @@ export async function handlePaymentReceived(log: Log, args: {
     // Create payment record
     const sessionNetworkKey = session.networkKey ?? ctx.networkKey;
     const sessionTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
+    const centsDivisor = 10 ** (paymentToken.decimals - 2);
+    const sessionSubtotalCents = session.subtotalAmount
+      ? Number(session.subtotalAmount) / centsDivisor
+      : null;
+    const sessionTaxCents = session.taxAmount
+      ? Number(session.taxAmount) / centsDivisor
+      : 0;
     const [payment] = await tx
       .insert(payments)
       .values({
@@ -268,6 +275,10 @@ export async function handlePaymentReceived(log: Log, args: {
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
         quantity: session.quantity ?? 1,
+        taxCents: sessionTaxCents,
+        taxRateBps: session.taxRateBps ?? null,
+        taxLabel: session.taxLabel ?? null,
+        subtotalCents: sessionSubtotalCents,
         livemode: ctx.livemode,
       })
       .returning();
@@ -780,6 +791,13 @@ export async function handleSubscriptionCreated(log: Log, args: {
     // Create first payment (the initial charge happens atomically with createSubscription)
     const subNetworkKey = session.networkKey ?? ctx.networkKey;
     const subTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
+    const subCentsDivisor = 10 ** (subToken.decimals - 2);
+    const subSubtotalCents = session.subtotalAmount
+      ? Number(session.subtotalAmount) / subCentsDivisor
+      : null;
+    const subTaxCents = session.taxAmount
+      ? Number(session.taxAmount) / subCentsDivisor
+      : 0;
     const [payment] = await tx
       .insert(payments)
       .values({
@@ -795,6 +813,10 @@ export async function handleSubscriptionCreated(log: Log, args: {
         fromAddress: args.subscriber,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        taxCents: subTaxCents,
+        taxRateBps: session.taxRateBps ?? null,
+        taxLabel: session.taxLabel ?? null,
+        subtotalCents: subSubtotalCents,
         livemode: ctx.livemode,
       })
       .returning();

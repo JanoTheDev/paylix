@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { signPortalToken } from "@/lib/portal-tokens";
 import { normalizeEmail } from "@/lib/email-normalize";
 import { apiError } from "@/lib/api-error";
+import { resolveTax } from "@/lib/tax-rates";
 
 interface CustomerFormPayload {
   firstName?: unknown;
@@ -49,6 +50,10 @@ export async function GET(
       id: checkoutSessions.id,
       status: checkoutSessions.status,
       amount: checkoutSessions.amount,
+      subtotalAmount: checkoutSessions.subtotalAmount,
+      taxAmount: checkoutSessions.taxAmount,
+      taxRateBps: checkoutSessions.taxRateBps,
+      taxLabel: checkoutSessions.taxLabel,
       networkKey: checkoutSessions.networkKey,
       tokenSymbol: checkoutSessions.tokenSymbol,
       type: checkoutSessions.type,
@@ -80,6 +85,8 @@ export async function GET(
   const serialized = {
     ...session,
     amount: session.amount?.toString() ?? null,
+    subtotalAmount: session.subtotalAmount?.toString() ?? null,
+    taxAmount: session.taxAmount?.toString() ?? null,
   };
 
   if (session.status === "active" && new Date(session.expiresAt) < new Date()) {
@@ -143,13 +150,72 @@ export async function PATCH(
         .where(eq(checkoutSessions.id, id));
 
       if (session) {
-        const sessionPatch: Record<string, string | null> = {};
+        const sessionPatch: Record<string, string | number | bigint | null> = {};
         if (normalized.country !== null) sessionPatch.buyerCountry = normalized.country;
         if (normalized.taxId !== null) sessionPatch.buyerTaxId = normalized.taxId;
         if (normalized.firstName !== null) sessionPatch.buyerFirstName = normalized.firstName;
         if (normalized.lastName !== null) sessionPatch.buyerLastName = normalized.lastName;
         if (normalized.email !== null) sessionPatch.buyerEmail = normalized.email;
         if (normalized.phone !== null) sessionPatch.buyerPhone = normalized.phone;
+
+        // Tax: if country is set (or cleared), recompute on the session's
+        // subtotal. Snapshot the current amount as subtotalAmount the
+        // first time we touch tax — so the base survives later country
+        // changes. Tax applies as a percentage on the native-unit amount;
+        // this is exact for 1:1 stablecoins and approximate for volatile
+        // tokens (the merchant curates via taxRateBps override).
+        if (normalized.country !== null) {
+          const [full] = await db
+            .select({
+              amount: checkoutSessions.amount,
+              subtotalAmount: checkoutSessions.subtotalAmount,
+              productId: checkoutSessions.productId,
+            })
+            .from(checkoutSessions)
+            .where(eq(checkoutSessions.id, id));
+          if (full) {
+            const [prod] = await db
+              .select({
+                taxRateBps: products.taxRateBps,
+                taxLabel: products.taxLabel,
+                reverseChargeEligible: products.reverseChargeEligible,
+              })
+              .from(products)
+              .where(eq(products.id, full.productId));
+
+            const baseAmount: bigint = full.subtotalAmount ?? full.amount;
+            const isReverse =
+              (prod?.reverseChargeEligible ?? false) && normalized.taxId !== null;
+            const SCALE = 10_000;
+            const subInt = Number(baseAmount / BigInt(SCALE));
+            const resolution = resolveTax({
+              country: normalized.country,
+              subtotalCents: subInt,
+              productRateBps: prod?.taxRateBps ?? null,
+              productLabel: prod?.taxLabel ?? null,
+              reverseCharge: isReverse,
+            });
+
+            if (resolution && resolution.rateBps > 0) {
+              const taxAmount =
+                (baseAmount * BigInt(resolution.rateBps)) / BigInt(10000);
+              sessionPatch.subtotalAmount = baseAmount;
+              sessionPatch.taxAmount = taxAmount;
+              sessionPatch.taxRateBps = resolution.rateBps;
+              sessionPatch.taxLabel = resolution.label;
+              sessionPatch.amount = baseAmount + taxAmount;
+            } else {
+              // Country has no tax or reverse-charge — clear tax breakdown
+              // but keep the subtotal snapshot.
+              sessionPatch.subtotalAmount = baseAmount;
+              sessionPatch.taxAmount = BigInt(0);
+              sessionPatch.taxRateBps = null;
+              sessionPatch.taxLabel = null;
+              sessionPatch.amount = baseAmount;
+            }
+          }
+        }
+
         if (Object.keys(sessionPatch).length > 0) {
           await db
             .update(checkoutSessions)

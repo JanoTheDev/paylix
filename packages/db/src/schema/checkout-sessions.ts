@@ -19,6 +19,9 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   merchantWallet: text("merchant_wallet").notNull(),
   amount: bigint("amount", { mode: "bigint" }).notNull(),
   subtotalAmount: bigint("subtotal_amount", { mode: "bigint" }),
+  taxAmount: bigint("tax_amount", { mode: "bigint" }),
+  taxRateBps: integer("tax_rate_bps"),
+  taxLabel: text("tax_label"),
   networkKey: text("network_key"),   // nullable while awaiting_currency
   tokenSymbol: text("token_symbol"), // nullable while awaiting_currency
   type: text("type").notNull().default("one_time"),
