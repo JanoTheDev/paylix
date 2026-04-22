@@ -74,6 +74,38 @@ export async function runKeeper() {
   console.log(`[Keeper] Found ${dueSubscriptions.length} subscriptions due for charge`);
 
   for (const sub of dueSubscriptions) {
+    // Gift subscriptions never touch the contract. When gift_expires_at
+    // passes we flip to cancelled and emit the webhook; otherwise leave
+    // the row alone (next_charge_date acts purely as the expiry marker).
+    if (sub.isGift) {
+      const expiresAt = sub.giftExpiresAt ?? sub.nextChargeDate;
+      if (expiresAt && expiresAt.getTime() <= now.getTime()) {
+        try {
+          await db
+            .update(subscriptions)
+            .set({ status: "cancelled", nextChargeDate: null })
+            .where(eq(subscriptions.id, sub.id));
+          const { dispatchWebhooks } = await import("./webhook-dispatch");
+          await dispatchWebhooks(
+            sub.organizationId,
+            "subscription.cancelled",
+            {
+              subscriptionId: sub.id,
+              status: "cancelled",
+              reason: "gift_expired",
+              metadata: sub.metadata ?? {},
+            },
+            sub.livemode,
+          ).catch((err) =>
+            console.error("[Keeper] gift-expired webhook failed:", err),
+          );
+        } catch (err) {
+          console.error(`[Keeper] Failed to expire gift ${sub.id}:`, err);
+        }
+      }
+      continue;
+    }
+
     if (!sub.onChainId) {
       console.warn(`[Keeper] Subscription ${sub.id} has no onChainId, skipping`);
       continue;

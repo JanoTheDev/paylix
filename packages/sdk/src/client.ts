@@ -91,6 +91,13 @@ import {
   type BlocklistEntry,
   type AddBlocklistEntryParams,
 } from "./blocklist";
+import {
+  giftSubscription,
+  scheduleSubscriptionCancellation,
+  resumeSubscriptionSchedule,
+  type GiftSubscriptionParams,
+  type GiftedSubscription,
+} from "./subscription-schedule";
 
 export class Paylix {
   private config: PaylixConfig;
@@ -277,6 +284,18 @@ export class Paylix {
 
   async removeBlocklistEntry(id: string): Promise<void> {
     return removeBlocklistEntry(this.config, id);
+  }
+
+  async giftSubscription(params: GiftSubscriptionParams): Promise<GiftedSubscription> {
+    return giftSubscription(this.config, params);
+  }
+
+  async scheduleSubscriptionCancellation(subscriptionId: string): Promise<{ cancelAt: string }> {
+    return scheduleSubscriptionCancellation(this.config, subscriptionId);
+  }
+
+  async resumeSubscriptionSchedule(subscriptionId: string): Promise<void> {
+    return resumeSubscriptionSchedule(this.config, subscriptionId);
   }
 
   async replayWebhookDelivery(deliveryId: string): Promise<ReplayWebhookDeliveryResult> {

@@ -166,6 +166,18 @@
         "anchor": "2026-04-22"
       },
       {
+        "text": "CSV export",
+        "anchor": "csv-export"
+      },
+      {
+        "text": "Scheduled cancellation",
+        "anchor": "scheduled-cancellation"
+      },
+      {
+        "text": "Gift subscriptions",
+        "anchor": "gift-subscriptions"
+      },
+      {
         "text": "Coupons",
         "anchor": "coupons"
       },
@@ -267,6 +279,29 @@
       {
         "text": "Apply at checkout via the API",
         "anchor": "apply-at-checkout-via-the-api"
+      }
+    ]
+  },
+  {
+    "title": "CSV Export",
+    "description": "Download your payments, subscriptions, invoices, and customers as CSV for accounting tools, reporting, or backup.",
+    "path": "/csv-export",
+    "headings": [
+      {
+        "text": "From the dashboard",
+        "anchor": "from-the-dashboard"
+      },
+      {
+        "text": "Endpoints",
+        "anchor": "endpoints"
+      },
+      {
+        "text": "Format",
+        "anchor": "format"
+      },
+      {
+        "text": "No secrets in CSVs",
+        "anchor": "no-secrets-in-csvs"
       }
     ]
   },
@@ -715,6 +750,29 @@
     ]
   },
   {
+    "title": "Gift Subscriptions",
+    "description": "Grant a free subscription to a customer — no wallet, no USDC, no on-chain transaction. Useful for influencers, partners, beta users, and incident comps.",
+    "path": "/gift-subscriptions",
+    "headings": [
+      {
+        "text": "Create via the SDK",
+        "anchor": "create-via-the-sdk"
+      },
+      {
+        "text": "Parameters",
+        "anchor": "parameters"
+      },
+      {
+        "text": "Blocklist still applies",
+        "anchor": "blocklist-still-applies"
+      },
+      {
+        "text": "Webhook payload",
+        "anchor": "webhook-payload"
+      }
+    ]
+  },
+  {
     "title": "Invoices",
     "description": "Paylix automatically issues a legally-valid invoice for every successful payment — one-time checkouts and every recurring subscription charge. Invoices are immutable, sequentially numbered per merchant, and accessible via hosted link, PDF download, email, dashboard, customer portal, and SDK.",
     "path": "/invoices",
@@ -867,6 +925,29 @@
       {
         "text": "Response format",
         "anchor": "response-format"
+      }
+    ]
+  },
+  {
+    "title": "Scheduled Cancellation",
+    "description": "Let customers cancel mid-cycle but keep access until the end of the billing period, with the option to undo before the boundary passes.",
+    "path": "/scheduled-cancellation",
+    "headings": [
+      {
+        "text": "Merchant flow",
+        "anchor": "merchant-flow"
+      },
+      {
+        "text": "Portal flow",
+        "anchor": "portal-flow"
+      },
+      {
+        "text": "Keeper behavior",
+        "anchor": "keeper-behavior"
+      },
+      {
+        "text": "Invariants",
+        "anchor": "invariants"
       }
     ]
   },

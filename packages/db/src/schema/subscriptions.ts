@@ -75,6 +75,8 @@ export const subscriptions = pgTable(
     couponCyclesRemaining: integer("coupon_cycles_remaining"),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     cancelScheduledAt: timestamp("cancel_scheduled_at", { withTimezone: true }),
+    isGift: boolean("is_gift").notNull().default(false),
+    giftExpiresAt: timestamp("gift_expires_at", { withTimezone: true }),
     trialConvertedEmailSentAt: timestamp("trial_converted_email_sent_at", { withTimezone: true }),
     trialConversionSubmittedAt: timestamp("trial_conversion_submitted_at", { withTimezone: true }),
     livemode: boolean("livemode").notNull().default(false),

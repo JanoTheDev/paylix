@@ -28,6 +28,37 @@ export default function ChangelogPage() {
 
       <SectionHeading>2026-04-22</SectionHeading>
 
+      <SubsectionHeading>CSV export</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>GET /api/{"{payments,subscriptions,invoices,customers}"}/export</code>{" "}
+        emits mode-scoped CSVs with RFC 4180 escaping, ISO 8601 dates,
+        and dynamically expanded <code>metadata.&lt;key&gt;</code> columns.
+        50,000-row cap per download with an{" "}
+        <code>X-Paylix-Truncated</code> header. Dashboard Export buttons
+        on Payments and Customers.
+      </p>
+
+      <SubsectionHeading>Scheduled cancellation</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>POST /api/subscriptions/:id/cancel</code> now accepts{" "}
+        <code>{'{ when: "immediate" | "period_end" }'}</code>. Period-end
+        keeps the sub <code>active</code> until{" "}
+        <code>next_charge_date</code>; the keeper flips to{" "}
+        <code>cancelled</code> at the boundary and fires{" "}
+        <code>subscription.cancelled</code> with{" "}
+        <code>reason: "scheduled"</code>. Customers can undo via the
+        portal before the boundary.
+      </p>
+
+      <SubsectionHeading>Gift subscriptions</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        New <code>POST /api/subscriptions/gift</code> and{" "}
+        <code>paylix.giftSubscription()</code> create off-chain subs
+        with no wallet, no USDC, no contract call. Optional{" "}
+        <code>expiresAt</code>; keeper flips to cancelled when it
+        passes. Blocklist still applies.
+      </p>
+
       <SubsectionHeading>Coupons</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Merchant-managed discount codes. Create percent or fixed-amount

@@ -24,6 +24,11 @@ export type {
   SendTestWebhookResult,
 } from "./webhook-management";
 export type {
+  GiftSubscriptionParams,
+  GiftedSubscription,
+  CancelWhen,
+} from "./subscription-schedule";
+export type {
   PaylixConfig,
   CreateCheckoutParams,
   CreateCheckoutResult,
