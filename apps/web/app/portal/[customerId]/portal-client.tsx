@@ -85,6 +85,40 @@ export interface PortalWallet {
   createdAt: string;
 }
 
+export type PortalNotificationCategory =
+  | "marketing"
+  | "trial_reminders"
+  | "abandonment"
+  | "receipts";
+
+export interface PortalNotificationPreference {
+  category: PortalNotificationCategory;
+  optedIn: boolean;
+}
+
+const NOTIFICATION_LABELS: Record<
+  PortalNotificationCategory,
+  { label: string; description: string; transactional?: boolean }
+> = {
+  marketing: {
+    label: "Marketing",
+    description: "Product updates, promotions, and newsletters.",
+  },
+  trial_reminders: {
+    label: "Trial reminders",
+    description: "Heads-up emails before your trial converts to paid.",
+  },
+  abandonment: {
+    label: "Abandoned checkout",
+    description: "Nudges when you start but don't finish checkout.",
+  },
+  receipts: {
+    label: "Receipts",
+    description: "Payment confirmations and invoices.",
+    transactional: true,
+  },
+};
+
 export interface PortalRefundRequest {
   id: string;
   paymentId: string;
@@ -105,6 +139,7 @@ interface PortalClientProps {
   invoices: PortalInvoice[];
   refundRequests: PortalRefundRequest[];
   wallets: PortalWallet[];
+  notifications: PortalNotificationPreference[];
 }
 
 type PortalPaymentRow = {
@@ -156,6 +191,7 @@ export function PortalClient({
   invoices,
   refundRequests,
   wallets,
+  notifications,
 }: PortalClientProps) {
   const router = useRouter();
   const [cancelTarget, setCancelTarget] = useState<PortalSubscription | null>(
@@ -218,6 +254,30 @@ export function PortalClient({
     } else {
       const err = await res.json().catch(() => ({}));
       toast.error(err.error?.message ?? "Update failed");
+    }
+  }
+
+  const [notifState, setNotifState] = useState(notifications);
+
+  async function toggleNotification(
+    category: PortalNotificationCategory,
+    optedIn: boolean,
+  ) {
+    const prev = notifState;
+    setNotifState(
+      notifState.map((n) => (n.category === category ? { ...n, optedIn } : n)),
+    );
+    const res = await fetch("/api/portal/notifications", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId, token: portalToken, category, optedIn }),
+    });
+    if (!res.ok) {
+      setNotifState(prev);
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.error?.message ?? "Update failed");
+    } else {
+      toast.success(optedIn ? "Subscribed" : "Unsubscribed");
     }
   }
 
@@ -524,6 +584,42 @@ export function PortalClient({
               })}
           </div>
         )}
+      </Section>
+
+      <Section title="Email notifications">
+        <div className="flex flex-col gap-2">
+          {notifState.map((n) => {
+            const meta = NOTIFICATION_LABELS[n.category];
+            return (
+              <label
+                key={n.category}
+                className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border border-border bg-surface-1 px-4 py-3 text-sm"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-foreground">
+                      {meta.label}
+                    </span>
+                    {meta.transactional && (
+                      <Badge variant="info">Recommended</Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-foreground-muted">
+                    {meta.description}
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={n.optedIn}
+                  onChange={(e) =>
+                    toggleNotification(n.category, e.target.checked)
+                  }
+                />
+              </label>
+            );
+          })}
+        </div>
       </Section>
 
       <Section title="Wallets">

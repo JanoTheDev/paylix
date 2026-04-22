@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  customerNotificationPreferences,
   customerWallets,
   customers,
   invoices,
@@ -13,6 +14,7 @@ import { Web3Providers } from "@/components/providers";
 import {
   PortalClient,
   type PortalInvoice,
+  type PortalNotificationPreference,
   type PortalPayment,
   type PortalRefundRequest,
   type PortalSubscription,
@@ -147,6 +149,25 @@ export default async function PortalPage({
     .where(eq(customerWallets.customerId, customer.id))
     .orderBy(desc(customerWallets.isPrimary), customerWallets.createdAt);
 
+  const notifRows = await db
+    .select()
+    .from(customerNotificationPreferences)
+    .where(eq(customerNotificationPreferences.customerId, customer.id));
+
+  const notifByCat = new Map(notifRows.map((r) => [r.category, r.optedIn]));
+  const categories = [
+    "marketing",
+    "trial_reminders",
+    "abandonment",
+    "receipts",
+  ] as const;
+  const portalNotifications: PortalNotificationPreference[] = categories.map(
+    (category) => ({
+      category,
+      optedIn: notifByCat.get(category) ?? true,
+    }),
+  );
+
   const portalWallets: PortalWallet[] = walletRows.map((r) => ({
     id: r.id,
     address: r.address,
@@ -206,6 +227,7 @@ export default async function PortalPage({
         invoices={portalInvoices}
         refundRequests={portalRefundRequests}
         wallets={portalWallets}
+        notifications={portalNotifications}
       />
     </Web3Providers>
   );
