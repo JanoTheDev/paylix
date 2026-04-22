@@ -1,21 +1,17 @@
 import { createElement } from "react";
+import { BrandedEmail, EMPTY_BRANDING, type EmailBranding } from "./branding";
 
 export interface CheckoutAbandonedEmailProps {
   productName: string;
   restartUrl: string;
   merchantName: string | null;
+  branding?: EmailBranding;
 }
 
 export function CheckoutAbandonedEmail(props: CheckoutAbandonedEmailProps) {
   return createElement(
-    "div",
-    {
-      style: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#0b0b0f",
-        lineHeight: 1.5,
-      },
-    },
+    BrandedEmail,
+    { branding: props.branding ?? EMPTY_BRANDING },
     createElement("h1", { style: { fontSize: 18 } }, "Still interested?"),
     createElement(
       "p",
@@ -42,12 +38,5 @@ export function CheckoutAbandonedEmail(props: CheckoutAbandonedEmailProps) {
         "Resume checkout",
       ),
     ),
-    props.merchantName
-      ? createElement(
-          "p",
-          { style: { color: "#6b7280", fontSize: 13 } },
-          `Sent by ${props.merchantName} via Paylix.`,
-        )
-      : null,
   );
 }

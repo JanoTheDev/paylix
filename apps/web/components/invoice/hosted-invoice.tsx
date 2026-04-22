@@ -131,9 +131,23 @@ export function HostedInvoice({ invoice, lineItems, downloadHref, receiptHref }:
         </div>
       </div>
 
-      {invoice.merchantFooter && (
-        <footer className="mt-12 border-t border-border pt-6 text-xs text-foreground-muted">
-          {invoice.merchantFooter}
+      {(invoice.merchantFooter || invoice.merchantSupportEmail) && (
+        <footer className="mt-12 space-y-2 border-t border-border pt-6 text-xs text-foreground-muted">
+          {invoice.merchantSupportEmail && (
+            <div>
+              Questions? Reach us at{" "}
+              <a
+                href={`mailto:${invoice.merchantSupportEmail}`}
+                className="font-mono text-foreground underline"
+              >
+                {invoice.merchantSupportEmail}
+              </a>
+              .
+            </div>
+          )}
+          {invoice.merchantFooter && (
+            <div className="whitespace-pre-line">{invoice.merchantFooter}</div>
+          )}
         </footer>
       )}
     </div>

@@ -77,6 +77,9 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
       return;
     }
 
+    const { loadEmailBranding } = await import("./load-branding");
+    const branding = await loadEmailBranding(subscription.organizationId);
+
     if (
       !(await isNotificationEnabled(
         subscription.organizationId,
@@ -114,11 +117,12 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
         productName,
         amountLabel,
         intervalLabel: intervalLabel(subscription.intervalSeconds),
+        branding,
       });
     } else if (args.kind === "subscription-cancelled") {
       const { SubscriptionCancelledEmail } = await import("./subscription-cancelled");
       subject = `Your subscription to ${productName} has been cancelled`;
-      react = createElement(SubscriptionCancelledEmail, { productName });
+      react = createElement(SubscriptionCancelledEmail, { productName, branding });
     } else if (args.kind === "payment-receipt") {
       const { PaymentReceiptEmail } = await import("./payment-receipt");
       const nextDate = subscription.nextChargeDate
@@ -129,11 +133,16 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
         productName,
         amountLabel,
         nextChargeDate: nextDate,
+        branding,
       });
     } else {
       const { PastDueReminderEmail } = await import("./past-due-reminder");
       subject = `Action required: ${productName} payment failed`;
-      react = createElement(PastDueReminderEmail, { productName, tokenSymbol });
+      react = createElement(PastDueReminderEmail, {
+        productName,
+        tokenSymbol,
+        branding,
+      });
     }
 
     const result = await sendMail({

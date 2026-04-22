@@ -96,7 +96,9 @@ export async function runCheckoutRecoveryTick(): Promise<{ scanned: number }> {
     }
 
     const { CheckoutAbandonedEmail } = await import("./emails/checkout-abandoned");
+    const { loadEmailBranding } = await import("./emails/load-branding");
     const restartUrl = `${config.publicAppUrl}/checkout/restart/${row.id}`;
+    const branding = await loadEmailBranding(row.organizationId);
 
     try {
       await sendMail({
@@ -106,7 +108,8 @@ export async function runCheckoutRecoveryTick(): Promise<{ scanned: number }> {
         react: createElement(CheckoutAbandonedEmail, {
           productName: row.productName,
           restartUrl,
-          merchantName: null,
+          merchantName: branding.legalName,
+          branding,
         }),
       });
     } catch (err) {

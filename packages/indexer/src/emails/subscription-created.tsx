@@ -1,21 +1,17 @@
 import { createElement } from "react";
+import { BrandedEmail, EMPTY_BRANDING, type EmailBranding } from "./branding";
 
 export interface SubscriptionCreatedEmailProps {
   productName: string;
   amountLabel: string;
   intervalLabel: string;
+  branding?: EmailBranding;
 }
 
 export function SubscriptionCreatedEmail(props: SubscriptionCreatedEmailProps) {
   return createElement(
-    "div",
-    {
-      style: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#0b0b0f",
-        lineHeight: 1.5,
-      },
-    },
+    BrandedEmail,
+    { branding: props.branding ?? EMPTY_BRANDING },
     createElement("h1", { style: { fontSize: 18 } }, `Your subscription to ${props.productName} is active`),
     createElement(
       "p",

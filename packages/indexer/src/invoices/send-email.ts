@@ -47,6 +47,8 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
 
   // Dynamic import so the indexer doesn't pull React at module-eval time.
   const { InvoiceEmail } = await import("../emails/invoice-email");
+  const { loadEmailBranding } = await import("../emails/load-branding");
+  const branding = await loadEmailBranding(args.organizationId);
 
   const result = await sendMail({
     to: invoice.customerEmail,
@@ -58,6 +60,7 @@ export async function sendInvoiceEmail(args: SendInvoiceEmailArgs) {
       totalCents: invoice.totalCents,
       currency: invoice.currency,
       hostedUrl,
+      branding,
     }),
   });
 

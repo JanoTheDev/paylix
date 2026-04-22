@@ -102,6 +102,9 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
       return;
     }
 
+    const { loadEmailBranding } = await import("./load-branding");
+    const branding = await loadEmailBranding(subscription.organizationId);
+
     if (
       !(await isNotificationEnabled(
         subscription.organizationId,
@@ -140,6 +143,7 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
         trialLabel,
         amountLabel,
         firstChargeDate,
+        branding,
       });
     } else if (args.kind === "trial-ending-soon") {
       const { TrialEndingSoonEmail } = await import("./trial-ending-soon");
@@ -150,6 +154,7 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
         daysLeft,
         amountLabel,
         firstChargeDate,
+        branding,
       });
     } else if (args.kind === "trial-converted") {
       const { TrialConvertedEmail } = await import("./trial-converted");
@@ -180,6 +185,7 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
         chargeDate,
         nextChargeDate,
         txHash: paymentRow?.txHash ?? null,
+        branding,
       });
     } else {
       const { TrialConversionFailedEmail } = await import("./trial-conversion-failed");
@@ -190,6 +196,7 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
         productName,
         reason: normalizeReason(args.reason),
         restartUrl,
+        branding,
       });
     }
 

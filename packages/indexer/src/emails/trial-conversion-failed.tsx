@@ -1,4 +1,5 @@
 import { createElement } from "react";
+import { BrandedEmail, EMPTY_BRANDING, type EmailBranding } from "./branding";
 
 export type TrialConversionFailureReason =
   | "insufficient_balance"
@@ -11,6 +12,7 @@ export interface TrialConversionFailedEmailProps {
   productName: string;
   reason: TrialConversionFailureReason;
   restartUrl: string;
+  branding?: EmailBranding;
 }
 
 const REASON_COPY: Record<TrialConversionFailureReason, string> = {
@@ -27,14 +29,8 @@ const REASON_COPY: Record<TrialConversionFailureReason, string> = {
 
 export function TrialConversionFailedEmail(props: TrialConversionFailedEmailProps) {
   return createElement(
-    "div",
-    {
-      style: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#0b0b0f",
-        lineHeight: 1.5,
-      },
-    },
+    BrandedEmail,
+    { branding: props.branding ?? EMPTY_BRANDING },
     createElement(
       "h1",
       { style: { fontSize: 18 } },

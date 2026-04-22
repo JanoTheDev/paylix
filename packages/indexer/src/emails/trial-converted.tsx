@@ -1,4 +1,5 @@
 import { createElement } from "react";
+import { BrandedEmail, EMPTY_BRANDING, type EmailBranding } from "./branding";
 
 export interface TrialConvertedEmailProps {
   productName: string;
@@ -6,18 +7,13 @@ export interface TrialConvertedEmailProps {
   chargeDate: string;
   nextChargeDate: string | null;
   txHash: string | null;
+  branding?: EmailBranding;
 }
 
 export function TrialConvertedEmail(props: TrialConvertedEmailProps) {
   return createElement(
-    "div",
-    {
-      style: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#0b0b0f",
-        lineHeight: 1.5,
-      },
-    },
+    BrandedEmail,
+    { branding: props.branding ?? EMPTY_BRANDING },
     createElement(
       "h1",
       { style: { fontSize: 18 } },

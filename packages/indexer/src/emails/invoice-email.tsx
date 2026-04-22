@@ -1,4 +1,5 @@
 import { createElement } from "react";
+import { BrandedEmail, EMPTY_BRANDING, type EmailBranding } from "./branding";
 
 export interface InvoiceEmailProps {
   invoiceNumber: string;
@@ -6,6 +7,7 @@ export interface InvoiceEmailProps {
   totalCents: number;
   currency: string;
   hostedUrl: string;
+  branding?: EmailBranding;
 }
 
 function formatMoney(cents: number, currency: string) {
@@ -14,14 +16,8 @@ function formatMoney(cents: number, currency: string) {
 
 export function InvoiceEmail(props: InvoiceEmailProps) {
   return createElement(
-    "div",
-    {
-      style: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#0b0b0f",
-        lineHeight: 1.5,
-      },
-    },
+    BrandedEmail,
+    { branding: props.branding ?? EMPTY_BRANDING },
     createElement("h1", { style: { fontSize: 18 } }, `Invoice ${props.invoiceNumber}`),
     createElement("p", null, `From ${props.merchantName}`),
     createElement("p", null, `Total: ${formatMoney(props.totalCents, props.currency)}`),
