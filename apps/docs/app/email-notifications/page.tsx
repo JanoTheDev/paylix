@@ -149,6 +149,37 @@ export default function EmailNotificationsPage() {
               </span>
             </DocTableCell>
           </DocTableRow>
+          <DocTableRow>
+            <DocTableCell>
+              <span className="text-foreground">Trial Converted Receipt</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                First real charge after a trial converts
+              </span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Product name, charge amount, next charge date, tx hash
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+          <DocTableRow>
+            <DocTableCell>
+              <span className="text-foreground">Abandonment Recovery</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Checkout went abandoned &gt; 60 min after the buyer submitted an
+                email
+              </span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Product name, resume link to /checkout/restart/:id
+              </span>
+            </DocTableCell>
+          </DocTableRow>
         </DocTableBody>
       </DocTable>
 

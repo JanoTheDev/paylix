@@ -42,6 +42,9 @@ const navGroups: (NavItem | NavGroup)[] = [
     items: [
       { href: "/subscriptions", label: "Subscriptions" },
       { href: "/free-trials", label: "Free Trials" },
+      { href: "/coupons", label: "Coupons" },
+      { href: "/payment-links", label: "Payment Links" },
+      { href: "/analytics", label: "Analytics" },
       { href: "/invoices", label: "Invoices" },
       { href: "/email-notifications", label: "Email Notifications" },
       { href: "/webhooks", label: "Webhooks" },

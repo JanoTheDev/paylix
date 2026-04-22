@@ -457,6 +457,60 @@ app.post(
   }
 }`}</CodeBlock>
 
+      <SubsectionHeading>coupon.redeemed</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Sent when a coupon is successfully applied to a one-time payment and
+        the on-chain charge settles. Counts toward the coupon&apos;s redemption
+        total; the redemption row is persisted in{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          coupon_redemptions
+        </code>.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "coupon.redeemed",
+  "timestamp": "2026-04-22T12:00:00.000Z",
+  "data": {
+    "couponId": "cou_...",
+    "checkoutSessionId": "chk_...",
+    "discountCents": 250,
+    "amount": "7500000",
+    "subtotalAmount": "10000000",
+    "metadata": {}
+  }
+}`}</CodeBlock>
+
+      <SectionHeading>Replay a past delivery</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Every webhook delivery is stored, including failures. Open{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          /dashboard/webhooks
+        </code>
+        , select an endpoint, and click <strong>Replay</strong> on any
+        delivery row. A new delivery is created — the original row is never
+        mutated — and re-signed with the endpoint&apos;s current secret, so
+        replay works correctly even across rotations. Rate-limited to 10
+        replays/min/webhook.
+      </p>
+
+      <SectionHeading>Send a test event</SectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The <strong>Send Test</strong> modal dispatches a synthetic event for
+        any event type the endpoint is subscribed to. Test events carry{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          livemode: false
+        </code>{" "}
+        and an{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          event_id
+        </code>{" "}
+        prefixed with{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          evt_test_
+        </code>{" "}
+        — receivers should filter these out of production handlers. Rate-limited
+        to 20 test events/min/org.
+      </p>
+
       <SectionHeading>Best Practices</SectionHeading>
       <ul className="mt-4 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-disc">
         <li>
