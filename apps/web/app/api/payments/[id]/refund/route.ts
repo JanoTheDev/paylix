@@ -11,6 +11,7 @@ import { apiError } from "@/lib/api-error";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { resolveDeploymentForMode } from "@/lib/deployment";
 import { verifyRefund, type Erc20TransferLog } from "@/lib/verify-refund";
+import { withIdempotency } from "@/lib/idempotency";
 
 const refundSchema = z.object({
   amount: z.number().int().min(1),
@@ -31,7 +32,29 @@ export async function POST(
   const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
+
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    return handleRefund(rawBody, { id, organizationId, userId, livemode, request });
+  });
+}
+
+async function handleRefund(
+  rawBody: string,
+  args: {
+    id: string;
+    organizationId: string;
+    userId: string;
+    livemode: boolean;
+    request: Request;
+  },
+): Promise<Response> {
+  const { id, organizationId, userId, livemode, request } = args;
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return apiError("invalid_body", "Request body must be valid JSON.", 400);
+  }
   const parsed = refundSchema.safeParse(body);
   if (!parsed.success) {
     return apiError(

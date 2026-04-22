@@ -15,6 +15,7 @@ import { intervalToSeconds } from "@/lib/billing-intervals";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { findBlocklistMatch, BLOCKLIST_MESSAGE } from "@/lib/blocklist";
 import { loadOrgBlocklist } from "@/lib/blocklist-load";
+import { withIdempotency } from "@/lib/idempotency";
 
 const giftSchema = z.object({
   productId: z.string().uuid(),
@@ -34,8 +35,14 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
-  const body = await request.json().catch(() => null);
-  const parsed = giftSchema.safeParse(body);
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
+    const parsed = giftSchema.safeParse(body);
   if (!parsed.success) {
     return apiError(
       "validation_failed",
@@ -131,8 +138,9 @@ export async function POST(request: Request) {
     customerId: customer.customerId,
     gift: true,
     expiresAt: expiresAt?.toISOString() ?? null,
-    metadata: row.metadata ?? {},
-  }).catch((err) => console.error("[gift] webhook failed:", err));
+      metadata: row.metadata ?? {},
+    }).catch((err) => console.error("[gift] webhook failed:", err));
 
-  return NextResponse.json(row, { status: 201 });
+    return NextResponse.json(row, { status: 201 });
+  });
 }
