@@ -98,30 +98,41 @@ export default function AuditLogPage() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const [action, setAction] = useState("");
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [distinctActions, setDistinctActions] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch("/api/settings/audit-log");
+      const params = new URLSearchParams();
+      if (filter !== "all") params.set("resourceType", filter);
+      if (action) params.set("action", action);
+      if (q) params.set("q", q);
+      if (from) params.set("from", new Date(from).toISOString());
+      if (to) params.set("to", new Date(to).toISOString());
+      const res = await fetch(`/api/settings/audit-log?${params}`);
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs ?? []);
+        setDistinctActions(data.distinctActions ?? []);
       }
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filter, action, q, from, to]);
 
   useEffect(() => {
-    load();
+    const t = setTimeout(load, 300);
+    return () => clearTimeout(t);
   }, [load]);
 
-  const filteredLogs =
-    filter === "all"
-      ? logs
-      : logs.filter((log) => log.resourceType === filter);
+  const filteredLogs = logs;
 
   return (
     <PageShell>
@@ -130,8 +141,8 @@ export default function AuditLogPage() {
         description="Track every sensitive operation across your organization."
       />
 
-      {/* Filter chips */}
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      {/* Resource filter chips */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Filter size={14} className="text-foreground-muted" />
         {RESOURCE_FILTERS.map((f) => (
           <button
@@ -144,13 +155,77 @@ export default function AuditLogPage() {
             }`}
           >
             {f.label}
-            {f.value !== "all" && (
-              <span className="ml-1 opacity-60">
-                {logs.filter((l) => l.resourceType === f.value).length}
-              </span>
-            )}
           </button>
         ))}
+      </div>
+
+      {/* Search + action + date range */}
+      <div className="mb-6 flex flex-wrap items-end gap-3">
+        <div className="flex flex-1 min-w-[200px] flex-col gap-1">
+          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+            Search
+          </label>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Resource ID, email, or details…"
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+            Action
+          </label>
+          <select
+            value={action}
+            onChange={(e) => setAction(e.target.value)}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
+          >
+            <option value="">All actions</option>
+            {distinctActions.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+            From
+          </label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+            To
+          </label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
+          />
+        </div>
+        {(q || action || from || to || filter !== "all") && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setQ("");
+              setAction("");
+              setFrom("");
+              setTo("");
+              setFilter("all");
+            }}
+          >
+            Clear
+          </Button>
+        )}
       </div>
 
       {loading ? (

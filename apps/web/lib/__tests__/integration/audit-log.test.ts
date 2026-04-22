@@ -20,6 +20,7 @@ const mockLogEntry = {
 
 const mockDb = {
   select: vi.fn(),
+  selectDistinct: vi.fn(),
 };
 
 vi.mock("@/lib/db", () => ({ db: mockDb }));
@@ -30,6 +31,16 @@ describe("Audit Log integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  function mockDistinct() {
+    // Route now issues two selectDistinct calls after the main logs
+    // query; stub both to return empty arrays.
+    mockDb.selectDistinct.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    });
+  }
 
   it("returns recent audit entries", async () => {
     mockDb.select.mockReturnValueOnce({
@@ -43,7 +54,8 @@ describe("Audit Log integration", () => {
         }),
       }),
     });
-    const res = await getAuditLog();
+    mockDistinct();
+    const res = await getAuditLog(new Request("http://test/api/settings/audit-log"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.logs).toBeDefined();
@@ -64,7 +76,8 @@ describe("Audit Log integration", () => {
         }),
       }),
     });
-    const res = await getAuditLog();
+    mockDistinct();
+    const res = await getAuditLog(new Request("http://test/api/settings/audit-log"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.logs).toEqual([]);
@@ -78,7 +91,7 @@ describe("Audit Log integration", () => {
       ok: false,
       response: apiError("unauthorized", "Unauthorized", 401),
     });
-    const res = await getAuditLog();
+    const res = await getAuditLog(new Request("http://test/api/settings/audit-log"));
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.error.code).toBe("unauthorized");
