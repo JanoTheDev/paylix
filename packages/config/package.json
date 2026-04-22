@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "viem": "^2"
