@@ -267,6 +267,7 @@ export async function handlePaymentReceived(log: Log, args: {
         fromAddress: args.payer,
         toAddress: args.merchant,
         blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        quantity: session.quantity ?? 1,
         livemode: ctx.livemode,
       })
       .returning();
@@ -906,6 +907,7 @@ export async function handleSubscriptionCreated(log: Log, args: {
         intervalSeconds,
         metadata: session.metadata ?? {},
         appliedCouponId: session.appliedCouponId,
+        quantity: session.quantity ?? 1,
         livemode: ctx.livemode,
       })
       .returning();

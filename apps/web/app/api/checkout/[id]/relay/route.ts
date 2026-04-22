@@ -131,6 +131,7 @@ export async function POST(
       appliedCouponId: checkoutSessions.appliedCouponId,
       discountCents: checkoutSessions.discountCents,
       subtotalAmount: checkoutSessions.subtotalAmount,
+      quantity: checkoutSessions.quantity,
       billingInterval: products.billingInterval,
       trialDays: products.trialDays,
       trialMinutes: products.trialMinutes,
@@ -396,6 +397,7 @@ export async function POST(
         pendingPermitSignature,
         intervalSeconds: Number(intervalSeconds),
         appliedCouponId: session.appliedCouponId,
+        quantity: session.quantity,
         metadata: {},
       })
       .returning();

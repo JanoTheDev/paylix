@@ -22,6 +22,7 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   networkKey: text("network_key"),   // nullable while awaiting_currency
   tokenSymbol: text("token_symbol"), // nullable while awaiting_currency
   type: text("type").notNull().default("one_time"),
+  quantity: integer("quantity").notNull().default(1),
   collectCountry: boolean("collect_country").notNull().default(false),
   collectTaxId: boolean("collect_tax_id").notNull().default(false),
   buyerCountry: text("buyer_country"),

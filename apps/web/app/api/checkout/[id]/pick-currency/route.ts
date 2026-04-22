@@ -104,14 +104,22 @@ export async function POST(
     );
   }
 
-  // Transition the session to active with the locked fields
+  // Transition the session to active with the locked fields. Scale the
+  // stored unit price by the buyer's quantity from the session so
+  // downstream (permit/intent signing, relay) sees the total amount.
+  const [sessionForQty] = await db
+    .select({ quantity: checkoutSessions.quantity })
+    .from(checkoutSessions)
+    .where(eq(checkoutSessions.id, sessionId))
+    .limit(1);
+  const qty = sessionForQty?.quantity ?? 1;
   const [updated] = await db
     .update(checkoutSessions)
     .set({
       status: "active",
       networkKey,
       tokenSymbol,
-      amount: price.amount,
+      amount: price.amount * BigInt(qty),
     })
     .where(eq(checkoutSessions.id, sessionId))
     .returning();

@@ -13,6 +13,7 @@ export async function createCheckout(
   if (params.metadata) body.metadata = params.metadata;
   if (params.networkKey) body.networkKey = params.networkKey;
   if (params.tokenSymbol) body.tokenSymbol = params.tokenSymbol;
+  if (params.quantity !== undefined) body.quantity = params.quantity;
 
   const response = await fetch(`${config.backendUrl}/api/checkout`, {
     method: "POST",

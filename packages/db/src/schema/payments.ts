@@ -24,6 +24,7 @@ export const payments = pgTable(
     metadata: jsonb("metadata").$type<Record<string, string>>().default({}),
     refundedCents: integer("refunded_cents").notNull().default(0),
     refundedAt: timestamp("refunded_at", { withTimezone: true }),
+    quantity: integer("quantity").notNull().default(1),
     livemode: boolean("livemode").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

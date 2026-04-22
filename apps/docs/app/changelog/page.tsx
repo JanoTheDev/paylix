@@ -59,6 +59,25 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Webhook signature replay protection</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Web + indexer dispatchers now emit{" "}
+        <code>x-paylix-signature: t=&lt;unix&gt;,v1=&lt;hmac&gt;</code>.
+        The HMAC covers <code>&lt;unix_seconds&gt;.&lt;body&gt;</code>.
+        SDK <code>webhooks.verify</code> accepts the timestamped form
+        and rejects signatures more than 5 minutes old. Legacy{" "}
+        <code>sha256=</code> format still validates for backwards
+        compatibility and is flagged for removal in a future major.
+      </p>
+
+      <SubsectionHeading>Seats / quantity pricing</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Products gain <code>allowQuantity</code> / <code>minQuantity</code> /{" "}
+        <code>maxQuantity</code>. Checkout + subscription APIs accept{" "}
+        <code>quantity</code>; session amount scales linearly. Subscription
+        + payment rows record the quantity for bookkeeping. Migration 0025.
+      </p>
+
       <SubsectionHeading>Refunds</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         New <code>POST /api/payments/:id/refund</code> +{" "}

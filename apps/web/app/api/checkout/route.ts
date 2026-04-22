@@ -18,6 +18,7 @@ const createCheckoutSchema = z.object({
   metadata: z.record(z.string()).optional(),
   networkKey: z.string().optional(),
   tokenSymbol: z.string().optional(),
+  quantity: z.number().int().min(1).optional(),
 });
 
 export async function POST(request: Request) {
@@ -101,6 +102,33 @@ export async function POST(request: Request) {
       merchantWallet = "0x0000000000000000000000000000000000000000";
     }
 
+    // Quantity handling. Only allowed when the product opts in.
+    // Amount scales linearly; bounds clamped to min/max set on the
+    // product. Default 1 for products without the toggle.
+    let quantity = data.quantity ?? 1;
+    if (quantity > 1 && !product.allowQuantity) {
+      return apiError(
+        "quantity_not_allowed",
+        "This product does not accept a quantity > 1",
+      );
+    }
+    if (quantity < product.minQuantity) {
+      return apiError(
+        "quantity_below_min",
+        `Minimum quantity is ${product.minQuantity}`,
+      );
+    }
+    if (product.maxQuantity !== null && quantity > product.maxQuantity) {
+      return apiError(
+        "quantity_above_max",
+        `Maximum quantity is ${product.maxQuantity}`,
+      );
+    }
+
+    const scaledAmount = lockedPrice
+      ? lockedPrice.amount * BigInt(quantity)
+      : BigInt(0);
+
     const [session] = await db
       .insert(checkoutSessions)
       .values({
@@ -108,11 +136,12 @@ export async function POST(request: Request) {
         productId: product.id,
         customerId: data.customerId ?? null,
         merchantWallet,
-        amount: lockedPrice ? lockedPrice.amount : BigInt(0),
+        amount: scaledAmount,
         networkKey: lockedPrice?.networkKey ?? null,
         tokenSymbol: lockedPrice?.tokenSymbol ?? null,
         status: lockedPrice ? "active" : "awaiting_currency",
         type: data.type || product.type,
+        quantity,
         successUrl: data.successUrl ?? null,
         cancelUrl: data.cancelUrl ?? null,
         metadata: data.metadata || {},

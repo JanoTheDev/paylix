@@ -29,6 +29,12 @@ export interface CreateCheckoutParams {
    */
   networkKey?: string;
   tokenSymbol?: string;
+  /**
+   * Number of units the buyer is purchasing. Requires the product to
+   * have `allowQuantity: true`. Defaults to 1. `session.amount` will
+   * be `unit_price * quantity`.
+   */
+  quantity?: number;
 }
 
 export interface CreateCheckoutResult {
@@ -53,6 +59,12 @@ export interface CreateSubscriptionParams {
    */
   networkKey?: string;
   tokenSymbol?: string;
+  /**
+   * Number of seats / units the buyer is purchasing. Requires the
+   * product to have `allowQuantity: true`. Defaults to 1. Recurring
+   * charges run at `unit_price * quantity`.
+   */
+  quantity?: number;
 }
 
 /**

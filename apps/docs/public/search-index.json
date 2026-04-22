@@ -178,6 +178,14 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Webhook signature replay protection",
+        "anchor": "webhook-signature-replay-protection"
+      },
+      {
+        "text": "Seats / quantity pricing",
+        "anchor": "seats-quantity-pricing"
+      },
+      {
         "text": "Refunds",
         "anchor": "refunds"
       },
