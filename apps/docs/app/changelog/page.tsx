@@ -59,6 +59,20 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Admin overrides</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Three new support endpoints:{" "}
+        <code>POST /api/subscriptions/:id/extend-trial {"{ days }"}</code>{" "}
+        bumps trial_ends_at and revives failed-conversion subs;{" "}
+        <code>POST /api/subscriptions/:id/comp-charge</code> forgives
+        the current past-due cycle with a zero-dollar payment row;{" "}
+        <code>POST /api/subscriptions/:id/reschedule {"{ nextChargeDate }"}</code>{" "}
+        absolute-overrides next charge within one interval of current
+        period end. All recorded to the audit log. SDK:{" "}
+        <code>paylix.extendTrial</code>, <code>paylix.compCharge</code>,{" "}
+        <code>paylix.rescheduleSubscription</code>.
+      </p>
+
       <SubsectionHeading>Operator alerts</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Indexer alerts loop emits four new <code>system.*</code> events

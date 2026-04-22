@@ -103,6 +103,11 @@ import {
   type RefundPaymentParams,
   type Refund,
 } from "./refunds";
+import {
+  extendTrial,
+  compCharge,
+  rescheduleSubscription,
+} from "./admin";
 
 export class Paylix {
   private config: PaylixConfig;
@@ -305,6 +310,18 @@ export class Paylix {
 
   async refundPayment(params: RefundPaymentParams): Promise<Refund> {
     return refundPayment(this.config, params);
+  }
+
+  async extendTrial(subscriptionId: string, days: number) {
+    return extendTrial(this.config, subscriptionId, days);
+  }
+
+  async compCharge(subscriptionId: string) {
+    return compCharge(this.config, subscriptionId);
+  }
+
+  async rescheduleSubscription(subscriptionId: string, nextChargeDate: string) {
+    return rescheduleSubscription(this.config, subscriptionId, nextChargeDate);
   }
 
   async replayWebhookDelivery(deliveryId: string): Promise<ReplayWebhookDeliveryResult> {

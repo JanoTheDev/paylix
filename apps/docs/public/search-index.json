@@ -178,6 +178,10 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Admin overrides",
+        "anchor": "admin-overrides"
+      },
+      {
         "text": "Operator alerts",
         "anchor": "operator-alerts"
       },
