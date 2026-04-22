@@ -29,6 +29,9 @@ export async function GET() {
       lastUsedAt: apiKeys.lastUsedAt,
       createdAt: apiKeys.createdAt,
       livemode: apiKeys.livemode,
+      previousKeyPrefix: apiKeys.previousKeyPrefix,
+      rotatedAt: apiKeys.rotatedAt,
+      expiresAt: apiKeys.expiresAt,
     })
     .from(apiKeys)
     .where(orgScope(apiKeys, { organizationId, livemode }))

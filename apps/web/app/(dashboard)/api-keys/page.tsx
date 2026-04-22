@@ -42,6 +42,9 @@ interface ApiKey {
   isActive: boolean;
   lastUsedAt: string | null;
   createdAt: string;
+  previousKeyPrefix: string | null;
+  rotatedAt: string | null;
+  expiresAt: string | null;
 }
 
 type ApiKeyRow = {
@@ -53,7 +56,11 @@ type ApiKeyRow = {
   lastUsedAt: Date | null;
   createdAt: Date;
   isActive: boolean;
+  previousKeyPrefix: string | null;
+  expiresAt: Date | null;
 };
+
+type GraceOption = "none" | "24h" | "7d";
 
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -66,6 +73,9 @@ export default function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [rotateId, setRotateId] = useState<string | null>(null);
+  const [rotateGrace, setRotateGrace] = useState<GraceOption>("24h");
+  const [rotating, setRotating] = useState(false);
 
   const fetchKeys = useCallback(async () => {
     const res = await fetch("/api/keys");
@@ -104,6 +114,35 @@ export default function ApiKeysPage() {
     }
   }
 
+  async function handleRotate() {
+    if (!rotateId) return;
+    setRotating(true);
+    try {
+      const res = await fetch(`/api/keys/${rotateId}/rotate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grace: rotateGrace }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRotateId(null);
+        setCreatedKey(data.key);
+        fetchKeys();
+        toast.success(
+          rotateGrace === "none"
+            ? "Key rotated. Previous secret revoked immediately."
+            : `Key rotated. Previous secret stays valid for ${rotateGrace}.`,
+        );
+      } else {
+        toast.error("Failed to rotate API key");
+      }
+    } catch {
+      toast.error("Failed to rotate API key");
+    } finally {
+      setRotating(false);
+    }
+  }
+
   async function handleRevoke(id: string) {
     try {
       const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
@@ -128,6 +167,8 @@ export default function ApiKeysPage() {
     lastUsedAt: k.lastUsedAt ? new Date(k.lastUsedAt) : null,
     createdAt: new Date(k.createdAt),
     isActive: k.isActive,
+    previousKeyPrefix: k.previousKeyPrefix,
+    expiresAt: k.expiresAt ? new Date(k.expiresAt) : null,
   }));
 
   const columns: ColumnDef<ApiKeyRow, unknown>[] = [
@@ -150,6 +191,13 @@ export default function ApiKeysPage() {
     col.actions<ApiKeyRow>((row) => {
       if (!row.isActive) return null;
       const items: ActionItem[] = [
+        {
+          label: "Rotate",
+          onSelect: () => {
+            setRotateGrace("24h");
+            setRotateId(row.id);
+          },
+        },
         {
           label: "Revoke",
           variant: "destructive",
@@ -246,6 +294,42 @@ export default function ApiKeysPage() {
         secret={createdKey ?? ""}
         onAcknowledge={() => setCreatedKey(null)}
       />
+
+      <Dialog open={rotateId !== null} onOpenChange={(v) => !v && setRotateId(null)}>
+        <DialogContent className="border-border bg-surface-1 sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Rotate API Key</DialogTitle>
+            <DialogDescription>
+              A new secret is generated. The existing secret keeps working for
+              the grace period, then stops.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="rotate-grace">Grace period</Label>
+            <Select
+              value={rotateGrace}
+              onValueChange={(v) => setRotateGrace(v as GraceOption)}
+            >
+              <SelectTrigger id="rotate-grace">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Revoke immediately</SelectItem>
+                <SelectItem value="24h">24 hours</SelectItem>
+                <SelectItem value="7d">7 days</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRotateId(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRotate} disabled={rotating}>
+              {rotating ? "Rotating…" : "Rotate Key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={revokeId !== null}

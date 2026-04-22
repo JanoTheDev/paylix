@@ -99,6 +99,13 @@
       "when": 1744502400000,
       "tag": "0015_idempotency_nullable_response",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1745280000000,
+      "tag": "0016_add_api_key_rotation",
+      "breakpoints": true
     }
   ]
 }

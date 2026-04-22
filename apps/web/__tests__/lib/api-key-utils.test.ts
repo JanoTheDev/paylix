@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { generateApiKey, hashApiKey } from "../../lib/api-key-utils";
+import {
+  generateApiKey,
+  hashApiKey,
+  verifyApiKeyHash,
+  API_KEY_GRACE_SECONDS,
+} from "../../lib/api-key-utils";
 
 describe("generateApiKey", () => {
   it("generates publishable live key with pk_live_ prefix", () => {
@@ -38,5 +43,54 @@ describe("hashApiKey", () => {
   it("returns 64-char hex string", () => {
     const hash = hashApiKey("sk_live_test");
     expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe("verifyApiKeyHash", () => {
+  const now = new Date("2026-04-22T12:00:00Z");
+  const currentHash = "a".repeat(64);
+  const previousHash = "b".repeat(64);
+
+  it("accepts the current key hash", () => {
+    const row = { keyHash: currentHash, previousKeyHash: null, expiresAt: null };
+    expect(verifyApiKeyHash(row, currentHash, now)).toBe("current");
+  });
+
+  it("rejects an unrelated hash", () => {
+    const row = { keyHash: currentHash, previousKeyHash: null, expiresAt: null };
+    expect(verifyApiKeyHash(row, "c".repeat(64), now)).toBeNull();
+  });
+
+  it("accepts the previous hash while expires_at is in the future", () => {
+    const row = {
+      keyHash: currentHash,
+      previousKeyHash: previousHash,
+      expiresAt: new Date(now.getTime() + 60 * 1000),
+    };
+    expect(verifyApiKeyHash(row, previousHash, now)).toBe("previous");
+  });
+
+  it("rejects the previous hash once expires_at has elapsed", () => {
+    const row = {
+      keyHash: currentHash,
+      previousKeyHash: previousHash,
+      expiresAt: new Date(now.getTime() - 1),
+    };
+    expect(verifyApiKeyHash(row, previousHash, now)).toBeNull();
+  });
+
+  it("rejects the previous hash when expires_at is null (grace=none)", () => {
+    const row = {
+      keyHash: currentHash,
+      previousKeyHash: previousHash,
+      expiresAt: null,
+    };
+    expect(verifyApiKeyHash(row, previousHash, now)).toBeNull();
+  });
+
+  it("grace=none maps to 0 seconds; 24h and 7d map to expected durations", () => {
+    expect(API_KEY_GRACE_SECONDS.none).toBe(0);
+    expect(API_KEY_GRACE_SECONDS["24h"]).toBe(86400);
+    expect(API_KEY_GRACE_SECONDS["7d"]).toBe(604800);
   });
 });

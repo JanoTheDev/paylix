@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { apiKeys } from "@paylix/db/schema";
-import { eq, and } from "drizzle-orm";
-import { hashApiKey } from "./api-key-utils";
+import { eq, and, or } from "drizzle-orm";
+import { hashApiKey, verifyApiKeyHash } from "./api-key-utils";
 import { checkRateLimitAsync } from "./rate-limit";
 import { NextResponse } from "next/server";
 
@@ -29,12 +29,27 @@ export async function authenticateApiKey(
   const key = authHeader.slice(7);
   const hash = hashApiKey(key);
 
+  // Rotation support: accept either the current key_hash OR a previous
+  // key_hash whose grace period hasn't elapsed. verifyApiKeyHash below
+  // enforces the expires_at window even if both columns collide.
   const [found] = await db
     .select()
     .from(apiKeys)
-    .where(and(eq(apiKeys.keyHash, hash), eq(apiKeys.isActive, true)));
+    .where(
+      and(
+        or(eq(apiKeys.keyHash, hash), eq(apiKeys.previousKeyHash, hash)),
+        eq(apiKeys.isActive, true),
+      ),
+    );
 
   if (!found) return null;
+
+  const match = verifyApiKeyHash(
+    { keyHash: found.keyHash, previousKeyHash: found.previousKeyHash, expiresAt: found.expiresAt },
+    hash,
+    new Date(),
+  );
+  if (!match) return null;
 
   if (requiredType && found.type !== requiredType) return null;
 
