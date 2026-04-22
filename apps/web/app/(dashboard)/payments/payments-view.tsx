@@ -6,6 +6,7 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ExportButton,
   col,
   Amount,
 } from "@/components/paykit";
@@ -80,6 +81,7 @@ export default function PaymentsView({ rows }: PaymentsViewProps) {
       <PageHeader
         title="Payments"
         description="All payments received by your account, including subscription charges."
+        action={<ExportButton href="/api/payments/export" />}
       />
       <DataTable
         columns={columns}

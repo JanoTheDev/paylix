@@ -25,5 +25,6 @@ export { ConfirmDialog } from "./confirm-dialog";
 export { ActionMenu } from "./action-menu";
 export type { ActionItem } from "./action-menu";
 export { SecretRevealDialog } from "./secret-reveal-dialog";
+export { ExportButton } from "./export-button";
 
 export { LoadingState, ErrorState } from "./feedback";

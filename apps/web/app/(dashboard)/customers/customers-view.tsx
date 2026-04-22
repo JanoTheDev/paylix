@@ -6,6 +6,7 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ExportButton,
   col,
 } from "@/components/paykit";
 import { Button } from "@/components/ui/button";
@@ -103,7 +104,10 @@ export default function CustomersView({ rows }: CustomersViewProps) {
         title="Customers"
         description="Everyone who has paid you or been added manually."
         action={
-          <Button onClick={() => setCreateOpen(true)}>+ New customer</Button>
+          <div className="flex gap-2">
+            <ExportButton href="/api/customers/export" />
+            <Button onClick={() => setCreateOpen(true)}>+ New customer</Button>
+          </div>
         }
       />
       <div className="flex flex-wrap items-center gap-1.5">
