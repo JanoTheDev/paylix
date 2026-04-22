@@ -37,6 +37,14 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 nonce,uint256 deadline)"
     );
 
+    // BackupPayerAuth is signed by the primary subscriber to authorize a
+    // specific address as a fallback payer for their subscription. The
+    // backup wallet separately signs an EIP-2612 permit granting the
+    // contract USDC allowance so the keeper can draw from it.
+    bytes32 private constant BACKUP_PAYER_AUTH_TYPEHASH = keccak256(
+        "BackupPayerAuth(uint256 subscriptionId,address backup,uint256 nonce,uint256 deadline)"
+    );
+
     /// @notice Per-subscription discount state set at creation and
     ///         decremented on each charge. Declared as a side struct so the
     ///         existing `Subscription` layout is untouched.
@@ -77,6 +85,13 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// everything that was there before.
     mapping(uint256 => SubscriptionDiscount) public subscriptionDiscounts;
 
+    /// @dev Per-subscription ordered list of fallback payer addresses. When
+    /// the primary subscriber runs out of USDC balance/allowance,
+    /// _tryProcessPayment walks this list and pulls from the first
+    /// wallet that can cover the charge.
+    mapping(uint256 => address[]) public subscriptionBackups;
+    uint256 public constant MAX_BACKUP_PAYERS = 5;
+
     event SubscriptionCreated(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 interval, bytes32 productId, bytes32 customerId);
     event PaymentReceived(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 fee, uint256 timestamp);
     event SubscriptionPastDue(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant);
@@ -88,6 +103,8 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     event PlatformWalletUpdated(address newWallet);
     event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
     event GaslessPausedUpdated(bool paused);
+    event SubscriptionBackupPayerAdded(uint256 indexed subscriptionId, address indexed backup);
+    event SubscriptionBackupPayerRemoved(uint256 indexed subscriptionId, address indexed backup);
 
     constructor(address _platformWallet, uint256 _platformFee)
         Ownable(msg.sender)
@@ -589,7 +606,6 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             amount = d.discountAmount >= sub.amount ? 0 : sub.amount - d.discountAmount;
         }
         address tokenAddr = sub.token;
-        address subscriber = sub.subscriber;
         address merchant_ = sub.merchant;
 
         uint256 fee = 0;
@@ -599,8 +615,31 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 merchantAmount = amount - fee;
         if (merchantAmount == 0) return false;
         IERC20 token = IERC20(tokenAddr);
-        if (token.allowance(subscriber, address(this)) < amount) return false;
-        if (token.balanceOf(subscriber) < amount) return false;
+
+        // Pick the first wallet (primary, then each backup in order) that
+        // can cover the full charge. Backups were pre-authorized by the
+        // primary subscriber via BackupPayerAuth; they signed their own
+        // EIP-2612 permit at the time they were added.
+        address payer = sub.subscriber;
+        if (
+            token.allowance(payer, address(this)) < amount ||
+            token.balanceOf(payer) < amount
+        ) {
+            address[] storage backups = subscriptionBackups[subscriptionId];
+            payer = address(0);
+            uint256 n = backups.length;
+            for (uint256 i = 0; i < n; i++) {
+                address b = backups[i];
+                if (
+                    token.allowance(b, address(this)) >= amount &&
+                    token.balanceOf(b) >= amount
+                ) {
+                    payer = b;
+                    break;
+                }
+            }
+            if (payer == address(0)) return false;
+        }
 
         // Committed to pulling — decrement discount state now.
         if (d.discountCyclesRemaining > 0 && d.discountAmount > 0) {
@@ -608,14 +647,146 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         }
 
         // slither-disable-next-line arbitrary-send-erc20
-        token.safeTransferFrom(subscriber, merchant_, merchantAmount);
+        token.safeTransferFrom(payer, merchant_, merchantAmount);
         if (fee > 0) {
             require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
-            token.safeTransferFrom(subscriber, platformWallet, fee);
+            token.safeTransferFrom(payer, platformWallet, fee);
         }
         sub.totalCharged += amount;
-        emit PaymentReceived(subscriptionId, subscriber, merchant_, tokenAddr, amount, fee, block.timestamp);
+        emit PaymentReceived(subscriptionId, payer, merchant_, tokenAddr, amount, fee, block.timestamp);
         return true;
+    }
+
+    // -------------------------------------------------------------------
+    // Backup payers (wallet-walk). The primary subscriber authorizes a
+    // backup via an EIP-712 BackupPayerAuth signature; the backup wallet
+    // signs its own EIP-2612 permit so the contract can pull USDC from
+    // it. When the primary runs out of funds, chargeSubscription walks
+    // this list and pulls from the first backup that can cover.
+    // -------------------------------------------------------------------
+
+    /// @notice View list of backup payer addresses for a subscription.
+    function getSubscriptionBackups(uint256 subscriptionId)
+        external
+        view
+        returns (address[] memory)
+    {
+        return subscriptionBackups[subscriptionId];
+    }
+
+    struct BackupPayerParams {
+        uint256 subscriptionId;
+        address backup;
+        uint256 authDeadline;
+        uint256 permitValue;
+        uint256 permitDeadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    function _verifyBackupAuth(
+        uint256 subscriptionId,
+        address backup,
+        address subscriber,
+        uint256 authDeadline,
+        bytes calldata subscriberAuthSig
+    ) internal {
+        uint256 nonce = intentNonces[subscriber];
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    BACKUP_PAYER_AUTH_TYPEHASH,
+                    subscriptionId,
+                    backup,
+                    nonce,
+                    authDeadline
+                )
+            )
+        );
+        require(
+            ECDSA.recover(digest, subscriberAuthSig) == subscriber,
+            "Bad subscriber auth"
+        );
+        intentNonces[subscriber] = nonce + 1;
+    }
+
+    /// @notice Add a backup payer. Relayer-submitted, gasless for both
+    ///         the primary subscriber and the backup wallet. The primary
+    ///         signs a BackupPayerAuth EIP-712 message; the backup signs
+    ///         an EIP-2612 permit granting the contract standing
+    ///         allowance on their USDC.
+    function addSubscriptionBackupPayer(
+        BackupPayerParams calldata p,
+        bytes calldata subscriberAuthSig
+    ) external nonReentrant whenNotPaused {
+        require(msg.sender == relayer, "Only relayer");
+        require(!gaslessPaused, "Gasless paused");
+        require(block.timestamp <= p.authDeadline, "Auth expired");
+
+        Subscription storage sub = subscriptions[p.subscriptionId];
+        require(
+            sub.status == Status.Active || sub.status == Status.PastDue,
+            "Not active"
+        );
+        require(
+            p.backup != address(0) && p.backup != sub.subscriber,
+            "Invalid backup"
+        );
+
+        address[] storage backups = subscriptionBackups[p.subscriptionId];
+        require(backups.length < MAX_BACKUP_PAYERS, "Too many backups");
+        for (uint256 i = 0; i < backups.length; i++) {
+            require(backups[i] != p.backup, "Already added");
+        }
+
+        _verifyBackupAuth(
+            p.subscriptionId,
+            p.backup,
+            sub.subscriber,
+            p.authDeadline,
+            subscriberAuthSig
+        );
+
+        // Submit backup's permit. Caught permit failure is non-fatal —
+        // the backup may already have a standing allowance that covers
+        // charges without needing a permit this call.
+        try
+            IERC20Permit(sub.token).permit(
+                p.backup,
+                address(this),
+                p.permitValue,
+                p.permitDeadline,
+                p.v,
+                p.r,
+                p.s
+            )
+        {} catch {}
+
+        backups.push(p.backup);
+        emit SubscriptionBackupPayerAdded(p.subscriptionId, p.backup);
+    }
+
+    /// @notice Remove a backup payer. Callable by the primary subscriber only.
+    ///         Not relayer-gated — the subscriber already holds gas on a
+    ///         wallet they control (the primary).
+    function removeSubscriptionBackupPayer(uint256 subscriptionId, address backup)
+        external
+    {
+        Subscription storage sub = subscriptions[subscriptionId];
+        require(msg.sender == sub.subscriber, "Not subscriber");
+
+        address[] storage backups = subscriptionBackups[subscriptionId];
+        uint256 n = backups.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (backups[i] == backup) {
+                if (i != n - 1) backups[i] = backups[n - 1];
+                backups.pop();
+                emit SubscriptionBackupPayerRemoved(subscriptionId, backup);
+                return;
+            }
+        }
+        revert("Backup not found");
     }
 }

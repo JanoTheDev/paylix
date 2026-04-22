@@ -165,6 +165,36 @@ export const SUBSCRIPTION_MANAGER_ABI = [
     ],
   },
   {
+    name: "addSubscriptionBackupPayer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "p",
+        type: "tuple",
+        components: [
+          { name: "subscriptionId", type: "uint256" },
+          { name: "backup", type: "address" },
+          { name: "authDeadline", type: "uint256" },
+          { name: "permitValue", type: "uint256" },
+          { name: "permitDeadline", type: "uint256" },
+          { name: "v", type: "uint8" },
+          { name: "r", type: "bytes32" },
+          { name: "s", type: "bytes32" },
+        ],
+      },
+      { name: "subscriberAuthSig", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "getSubscriptionBackups",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "subscriptionId", type: "uint256" }],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  {
     name: "getIntentNonce",
     type: "function",
     stateMutability: "view",
