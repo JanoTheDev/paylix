@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PaymentDetailDrawer } from "@/components/payments/payment-detail-drawer";
 
 export type PaymentRow = {
   id: string;
@@ -57,6 +58,7 @@ interface PaymentsViewProps {
 
 export default function PaymentsView({ rows: initialRows }: PaymentsViewProps) {
   const [rows, setRows] = useState(initialRows);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<PaymentRow | null>(null);
   const [refundAmount, setRefundAmount] = useState("");
   const [refundReason, setRefundReason] = useState("");
@@ -150,7 +152,9 @@ export default function PaymentsView({ rows: initialRows }: PaymentsViewProps) {
     col.hash<PaymentRow>("txHash", "Tx Hash"),
     col.actions<PaymentRow>((row) => {
       const state = refundState(row);
-      const items: ActionItem[] = [];
+      const items: ActionItem[] = [
+        { label: "View details", onSelect: () => setDetailId(row.id) },
+      ];
       if (row.invoiceHostedToken) {
         items.push({
           label: "Invoice",
@@ -165,7 +169,6 @@ export default function PaymentsView({ rows: initialRows }: PaymentsViewProps) {
           onSelect: () => openRefund(row),
         });
       }
-      if (items.length === 0) return <span className="text-foreground-dim">—</span>;
       return <ActionMenu items={items} />;
     }),
   ];
@@ -268,6 +271,11 @@ export default function PaymentsView({ rows: initialRows }: PaymentsViewProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PaymentDetailDrawer
+        paymentId={detailId}
+        onClose={() => setDetailId(null)}
+      />
     </PageShell>
   );
 }

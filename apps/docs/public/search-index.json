@@ -178,6 +178,10 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Payment detail drawer",
+        "anchor": "payment-detail-drawer"
+      },
+      {
         "text": "Customer notification preferences",
         "anchor": "customer-notification-preferences"
       },

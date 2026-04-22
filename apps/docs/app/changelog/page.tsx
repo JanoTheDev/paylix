@@ -59,6 +59,16 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Payment detail drawer</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        New <code>GET /api/payments/:id/detail</code> returns the
+        composite of payment + refunds + linked invoice + linked
+        checkout session + recent related webhook deliveries. Dashboard
+        payments row action "View details" opens a right-side drawer
+        with all of it — refund history, invoice links, delivery list,
+        and metadata.
+      </p>
+
       <SubsectionHeading>Customer notification preferences</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         New <code>customer_notification_preferences</code> table lets
