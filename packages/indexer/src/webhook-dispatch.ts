@@ -81,7 +81,12 @@ async function attemptDelivery(
   payload: string,
   deliveryId: string
 ) {
-  const signature = `sha256=${createHmac("sha256", secret).update(payload).digest("hex")}`;
+  // Timestamped signature: receivers validate freshness within a
+  // configurable window (default 5 min) to block replay attacks.
+  const ts = Math.floor(Date.now() / 1000);
+  const signature = `t=${ts},v1=${createHmac("sha256", secret)
+    .update(`${ts}.${payload}`)
+    .digest("hex")}`;
 
   try {
     const response = await fetch(url, {

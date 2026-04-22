@@ -74,8 +74,9 @@ export async function POST(
     data: fixtureDataFor(event),
   };
   const payloadString = JSON.stringify(envelope);
-  const signature = `sha256=${createHmac("sha256", webhook.secret)
-    .update(payloadString)
+  const ts = Math.floor(Date.now() / 1000);
+  const signature = `t=${ts},v1=${createHmac("sha256", webhook.secret)
+    .update(`${ts}.${payloadString}`)
     .digest("hex")}`;
 
   const [delivery] = await db

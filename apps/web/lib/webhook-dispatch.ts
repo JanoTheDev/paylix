@@ -26,9 +26,15 @@ export async function dispatchWebhooks(
     const timestamp = new Date().toISOString();
     const eventPayload = { event, timestamp, data };
     const payload = JSON.stringify(eventPayload);
+    // Unix seconds — the signature ties the request to a moment in time
+    // so receivers can reject replays that arrive outside their tolerance
+    // window (default 5 min in the SDK verifier).
+    const ts = Math.floor(Date.now() / 1000);
 
     for (const wh of matching) {
-      const signature = `sha256=${createHmac("sha256", wh.secret).update(payload).digest("hex")}`;
+      const signature = `t=${ts},v1=${createHmac("sha256", wh.secret)
+        .update(`${ts}.${payload}`)
+        .digest("hex")}`;
 
       const [delivery] = await db
         .insert(webhookDeliveries)

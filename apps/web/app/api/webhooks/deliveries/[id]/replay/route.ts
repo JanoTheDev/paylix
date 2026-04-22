@@ -48,8 +48,9 @@ export async function POST(
 
   const payload = row.delivery.payload as Record<string, unknown>;
   const payloadString = JSON.stringify(payload);
-  const signature = `sha256=${createHmac("sha256", row.webhook.secret)
-    .update(payloadString)
+  const ts = Math.floor(Date.now() / 1000);
+  const signature = `t=${ts},v1=${createHmac("sha256", row.webhook.secret)
+    .update(`${ts}.${payloadString}`)
     .digest("hex")}`;
 
   // New delivery row — never mutate the original. Status flips as the

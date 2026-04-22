@@ -18,30 +18,41 @@ export default function WebhookVerificationPage() {
       />
 
       <Callout variant="tip" title="Signature format">
-        The signature header value is always prefixed with{" "}
+        The current Paylix signature is{" "}
         <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
-          sha256=
+          t=&lt;unix_seconds&gt;,v1=&lt;hex&gt;
+        </code>
+        . The HMAC covers{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          &lt;unix_seconds&gt;.&lt;raw_body&gt;
         </code>{" "}
-        followed by the hex-encoded HMAC. Your verification code must compare
-        against this exact format.
+        (dot-separated). Receivers should reject signatures whose timestamp
+        is outside a 5-minute window to block replay attacks. Older deploys
+        still accept the legacy{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          sha256=&lt;hex&gt;
+        </code>{" "}
+        format for backward compatibility, but new integrations should use
+        the timestamped form.
       </Callout>
 
       <SectionHeading>How it works</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        Paylix computes{" "}
+        Paylix generates a Unix-seconds timestamp and computes{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-          HMAC-SHA256(webhook_secret, raw_body)
+          HMAC-SHA256(webhook_secret, &lt;timestamp&gt;.&lt;raw_body&gt;)
         </code>
-        , hex-encodes the result, and sends it as{" "}
+        , hex-encodes the result, and sends the value{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-          sha256=&lt;hex&gt;
+          t=&lt;timestamp&gt;,v1=&lt;hex&gt;
         </code>{" "}
         in the{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
           x-paylix-signature
         </code>{" "}
-        header. To verify, recompute the same HMAC with your webhook secret and
-        compare using a constant-time comparison function.
+        header. To verify: parse out the timestamp + HMAC, re-compute HMAC
+        over <code>t.body</code> with your secret, constant-time compare,
+        and reject if the timestamp is more than 5 minutes old.
       </p>
 
       <SectionHeading>Node.js</SectionHeading>
@@ -59,44 +70,75 @@ const isValid = webhooks.verify({
       <SubsectionHeading>Manual (without the SDK)</SubsectionHeading>
       <CodeBlock language="ts">{`import { createHmac, timingSafeEqual } from "crypto";
 
+const MAX_AGE_SECONDS = 300; // 5 minutes
+
+function parseHeader(header: string): { t: string; v1: string } | null {
+  const parts = Object.fromEntries(
+    header.split(",").map((s) => s.trim().split("=", 2) as [string, string]),
+  );
+  return parts.t && parts.v1 ? { t: parts.t, v1: parts.v1 } : null;
+}
+
 function verifyWebhook(payload: string, signature: string, secret: string): boolean {
-  if (!signature.startsWith("sha256=")) return false;
+  const parsed = parseHeader(signature);
+  if (!parsed) {
+    // Legacy sha256=<hex> format — no timestamp, no replay protection.
+    if (!signature.startsWith("sha256=")) return false;
+    const expected = createHmac("sha256", secret).update(payload).digest("hex");
+    const provided = signature.slice(7);
+    return expected.length === provided.length && timingSafeEqual(
+      Buffer.from(expected, "hex"),
+      Buffer.from(provided, "hex"),
+    );
+  }
+
+  const ts = Number(parsed.t);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(ts) || Math.abs(now - ts) > MAX_AGE_SECONDS) return false;
 
   const expected = createHmac("sha256", secret)
-    .update(payload)
+    .update(\`\${parsed.t}.\${payload}\`)
     .digest("hex");
-  const provided = signature.slice(7); // strip "sha256=" prefix
-
-  if (expected.length !== provided.length) return false;
-
+  if (expected.length !== parsed.v1.length) return false;
   return timingSafeEqual(
     Buffer.from(expected, "hex"),
-    Buffer.from(provided, "hex"),
+    Buffer.from(parsed.v1, "hex"),
   );
 }`}</CodeBlock>
 
       <SectionHeading>Python</SectionHeading>
       <CodeBlock language="python">{`import hmac
 import hashlib
+import time
+
+MAX_AGE_SECONDS = 300  # 5 minutes
 
 def verify_webhook(payload: bytes, signature: str, secret: str) -> bool:
     """Verify a Paylix webhook signature.
 
     payload: raw request body as bytes
-    signature: value of the x-paylix-signature header
+    signature: value of the x-paylix-signature header (either
+               "t=<unix>,v1=<hex>" or legacy "sha256=<hex>")
     secret: your webhook secret (whsec_...)
     """
+    # Timestamped format
+    if "v1=" in signature and "t=" in signature:
+        parts = dict(kv.split("=", 1) for kv in signature.split(","))
+        try:
+            ts = int(parts["t"])
+        except (KeyError, ValueError):
+            return False
+        if abs(int(time.time()) - ts) > MAX_AGE_SECONDS:
+            return False
+        signed = f"{ts}.".encode() + payload
+        expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, parts.get("v1", ""))
+
+    # Legacy format
     if not signature.startswith("sha256="):
         return False
-
-    expected = hmac.new(
-        secret.encode(),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
-
-    provided = signature[7:]  # strip "sha256=" prefix
-    return hmac.compare_digest(expected, provided)`}</CodeBlock>
+    expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature[7:])`}</CodeBlock>
 
       <SubsectionHeading>Flask example</SubsectionHeading>
       <CodeBlock language="python">{`from flask import Flask, request, jsonify

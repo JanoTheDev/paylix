@@ -254,6 +254,10 @@ export interface WebhookVerifyParams {
   payload: string | Buffer;
   signature: string;
   secret: string;
+  /** Max age in seconds for a timestamped signature. Default 300 (5 min). */
+  maxAgeSeconds?: number;
+  /** Override "now" for tests; defaults to Date.now() / 1000. */
+  nowSeconds?: number;
 }
 
 export interface WebhookEvent {
