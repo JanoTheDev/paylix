@@ -8,6 +8,7 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { normalizeEmail } from "@/lib/email-normalize";
+import { withIdempotency } from "@/lib/idempotency";
 
 const createSchema = z.object({
   type: z.enum(["wallet", "email", "country"]),
@@ -47,14 +48,20 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
-  const body = await request.json().catch(() => null);
-  const parsed = createSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError(
-      "validation_failed",
-      parsed.error.issues.map((i) => i.message).join("; "),
-    );
-  }
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
+    const parsed = createSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError(
+        "validation_failed",
+        parsed.error.issues.map((i) => i.message).join("; "),
+      );
+    }
 
   const type = parsed.data.type;
   const value = canonicalize(type, parsed.data.value);
@@ -104,5 +111,6 @@ export async function POST(request: Request) {
     ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
   });
 
-  return NextResponse.json(row, { status: 201 });
+    return NextResponse.json(row, { status: 201 });
+  });
 }
