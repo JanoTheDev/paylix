@@ -479,6 +479,55 @@ app.post(
   }
 }`}</CodeBlock>
 
+      <SubsectionHeading>system.keeper_failure_rate_high</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Fires when more than 20% of attempted subscription charges fail
+        in the last 15 minutes (min 5 attempts). Debounced to at most
+        once per hour. Investigate relayer gas, RPC health, or a run of
+        insufficient-balance buyers.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.keeper_failure_rate_high",
+  "data": { "failed": 8, "total": 22, "rate": 0.36, "windowMinutes": 15 }
+}`}</CodeBlock>
+
+      <SubsectionHeading>system.webhook_failure_rate_high</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Fires when more than 30% of webhook deliveries failed in the last
+        60 minutes (min 10 deliveries). Typically indicates a merchant
+        endpoint outage or a breaking change you pushed that broke
+        receiver validation.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.webhook_failure_rate_high",
+  "data": { "failed": 40, "total": 100, "rate": 0.4, "windowMinutes": 60 }
+}`}</CodeBlock>
+
+      <SubsectionHeading>system.unmatched_retry_queue_deep</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Fires when the indexer&apos;s unmatched-event retry queue has
+        more than 50 rows older than 10 minutes. Usually means a batch
+        of on-chain events arrived before the matching DB rows —
+        investigate the apps/web → indexer write path.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.unmatched_retry_queue_deep",
+  "data": { "pending": 73, "olderThanMinutes": 10 }
+}`}</CodeBlock>
+
+      <SubsectionHeading>system.trial_conversion_failure_rate_high</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Fires when more than 25% of trials that reached a terminal
+        state (active or trial_conversion_failed) in the last 24 hours
+        failed to convert (min 3). Often a signal that wallet-history
+        or email checks are too strict, or that relayer gas is running
+        out mid-conversion.
+      </p>
+      <CodeBlock language="json">{`{
+  "event": "system.trial_conversion_failure_rate_high",
+  "data": { "failed": 4, "total": 12, "rate": 0.33, "windowHours": 24 }
+}`}</CodeBlock>
+
       <SubsectionHeading>coupon.redeemed</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Sent when a coupon is successfully applied to a one-time payment and

@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { and, count, desc, eq, isNull, max, sql, sum } from "drizzle-orm";
 import { customers, payments, subscriptions } from "@paylix/db/schema";
 import { db } from "@/lib/db";

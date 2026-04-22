@@ -59,6 +59,36 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Operator alerts</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Indexer alerts loop emits four new <code>system.*</code> events
+        alongside the existing balance-low pair:{" "}
+        <code>keeper_failure_rate_high</code>,{" "}
+        <code>webhook_failure_rate_high</code>,{" "}
+        <code>unmatched_retry_queue_deep</code>,{" "}
+        <code>trial_conversion_failure_rate_high</code>. Debounced to at
+        most one fire per hour via system_status markers.
+      </p>
+
+      <SubsectionHeading>Audit log filter + search</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>/api/settings/audit-log</code> accepts{" "}
+        <code>action</code>, <code>resourceType</code>,{" "}
+        <code>resourceId</code>, <code>userId</code>, <code>from</code>,{" "}
+        <code>to</code>, and free-text <code>q</code>. Response carries{" "}
+        <code>distinctActions</code> + <code>distinctResourceTypes</code> +{" "}
+        <code>nextCursor</code>. Dashboard page adds search, action
+        dropdown, date range, and debounced live refetch.
+      </p>
+
+      <SubsectionHeading>Idempotency on refund + gift</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>POST /api/payments/:id/refund</code> and{" "}
+        <code>POST /api/subscriptions/gift</code> honor the{" "}
+        <code>Idempotency-Key</code> header — retries with the same key
+        return the cached response instead of double-executing.
+      </p>
+
       <SubsectionHeading>Webhook signature replay protection</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Web + indexer dispatchers now emit{" "}

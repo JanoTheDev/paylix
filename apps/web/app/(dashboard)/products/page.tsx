@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { desc } from "drizzle-orm";
 import { products } from "@paylix/db/schema";
 import { db } from "@/lib/db";

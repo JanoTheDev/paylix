@@ -178,6 +178,18 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Operator alerts",
+        "anchor": "operator-alerts"
+      },
+      {
+        "text": "Audit log filter + search",
+        "anchor": "audit-log-filter-search"
+      },
+      {
+        "text": "Idempotency on refund + gift",
+        "anchor": "idempotency-on-refund-gift"
+      },
+      {
         "text": "Webhook signature replay protection",
         "anchor": "webhook-signature-replay-protection"
       },
@@ -1615,6 +1627,22 @@
       {
         "text": "system.keeper_balance_low",
         "anchor": "system-keeper-balance-low"
+      },
+      {
+        "text": "system.keeper_failure_rate_high",
+        "anchor": "system-keeper-failure-rate-high"
+      },
+      {
+        "text": "system.webhook_failure_rate_high",
+        "anchor": "system-webhook-failure-rate-high"
+      },
+      {
+        "text": "system.unmatched_retry_queue_deep",
+        "anchor": "system-unmatched-retry-queue-deep"
+      },
+      {
+        "text": "system.trial_conversion_failure_rate_high",
+        "anchor": "system-trial-conversion-failure-rate-high"
       },
       {
         "text": "coupon.redeemed",

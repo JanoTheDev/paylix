@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     // Quantity handling. Only allowed when the product opts in.
     // Amount scales linearly; bounds clamped to min/max set on the
     // product. Default 1 for products without the toggle.
-    let quantity = data.quantity ?? 1;
+    const quantity = data.quantity ?? 1;
     if (quantity > 1 && !product.allowQuantity) {
       return apiError(
         "quantity_not_allowed",

@@ -21,7 +21,6 @@ import {
   User,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "@/components/team-switcher";
 import { ModeToggle } from "@/components/mode-toggle";

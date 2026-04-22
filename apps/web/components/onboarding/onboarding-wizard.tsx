@@ -25,7 +25,7 @@ const BILLING_INTERVALS = [
   { value: "yearly", label: "Yearly" },
 ] as const;
 
-const STEPS = ["Welcome", "Create product", "Payout wallet", "Done"] as const;
+const _STEPS = ["Welcome", "Create product", "Payout wallet", "Done"] as const;
 
 interface NetworkInfo {
   networkKey: string;

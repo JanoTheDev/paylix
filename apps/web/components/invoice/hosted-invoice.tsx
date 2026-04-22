@@ -17,6 +17,7 @@ export function HostedInvoice({ invoice, lineItems, downloadHref, receiptHref }:
       <header className="flex items-start justify-between gap-8 border-b border-border pb-6">
         <div>
           {invoice.merchantLogoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={invoice.merchantLogoUrl}
               alt={invoice.merchantLegalName}
