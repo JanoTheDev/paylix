@@ -8,6 +8,7 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
+import { withIdempotency } from "@/lib/idempotency";
 
 const cancelSchema = z
   .object({ when: z.enum(["immediate", "period_end"]).optional() })
@@ -31,12 +32,20 @@ export async function POST(
 
   const { id } = await params;
 
-  const body = await request.json().catch(() => null);
-  const parsed = cancelSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError("validation_failed", "Invalid cancel options");
-  }
-  const when = parsed.data?.when ?? "immediate";
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    let body: unknown = null;
+    if (rawBody.length > 0) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return apiError("invalid_body", "Request body must be valid JSON.", 400);
+      }
+    }
+    const parsed = cancelSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError("validation_failed", "Invalid cancel options");
+    }
+    const when = parsed.data?.when ?? "immediate";
 
   const [existing] = await db
     .select()
@@ -113,4 +122,5 @@ export async function POST(
   }).catch((err) => console.error("[cancel] webhook failed:", err));
 
   return NextResponse.json({ success: true });
+  });
 }

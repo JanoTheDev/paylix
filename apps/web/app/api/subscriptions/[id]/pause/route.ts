@@ -6,6 +6,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { computePauseUpdate } from "./logic";
+import { withIdempotency } from "@/lib/idempotency";
 
 export async function POST(
   request: Request,
@@ -16,30 +17,32 @@ export async function POST(
   const { organizationId, userId, livemode } = ctx;
   const { id } = await params;
 
-  const [existing] = await db
-    .select({ status: subscriptions.status, pausedBy: subscriptions.pausedBy })
-    .from(subscriptions)
-    .where(and(eq(subscriptions.id, id), orgScope(subscriptions, { organizationId, livemode })));
+  return withIdempotency(request, organizationId, async () => {
+    const [existing] = await db
+      .select({ status: subscriptions.status, pausedBy: subscriptions.pausedBy })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.id, id), orgScope(subscriptions, { organizationId, livemode })));
 
-  if (!existing) {
-    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
-  }
+    if (!existing) {
+      return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
+    }
 
-  const result = computePauseUpdate(existing, "merchant", new Date());
-  if (!result.ok) {
-    return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
-  }
+    const result = computePauseUpdate(existing, "merchant", new Date());
+    if (!result.ok) {
+      return NextResponse.json({ error: { code: "invalid_state", message: result.reason } }, { status: 409 });
+    }
 
-  await db.update(subscriptions).set(result.update).where(eq(subscriptions.id, id));
+    await db.update(subscriptions).set(result.update).where(eq(subscriptions.id, id));
 
-  void recordAudit({
-    organizationId,
-    userId,
-    action: "subscription.paused",
-    resourceType: "subscription",
-    resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    void recordAudit({
+      organizationId,
+      userId,
+      action: "subscription.paused",
+      resourceType: "subscription",
+      resourceId: id,
+      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    });
+
+    return NextResponse.json({ success: true });
   });
-
-  return NextResponse.json({ success: true });
 }

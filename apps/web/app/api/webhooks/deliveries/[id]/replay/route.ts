@@ -6,6 +6,7 @@ import { createHmac } from "crypto";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimitAsync } from "@/lib/rate-limit";
+import { withIdempotency } from "@/lib/idempotency";
 
 export async function POST(
   request: Request,
@@ -17,6 +18,7 @@ export async function POST(
 
   const { id } = await params;
 
+  return withIdempotency(request, organizationId, async () => {
   // Resolve the original delivery scoped to this org via the webhook join.
   const [row] = await db
     .select({
@@ -106,4 +108,5 @@ export async function POST(
       { status: 502 },
     );
   }
+  });
 }

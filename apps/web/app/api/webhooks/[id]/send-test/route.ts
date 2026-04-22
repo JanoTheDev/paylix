@@ -12,6 +12,7 @@ import {
   fixtureDataFor,
   type WebhookEventType,
 } from "@/lib/webhook-test-fixtures";
+import { withIdempotency } from "@/lib/idempotency";
 
 const sendTestSchema = z.object({
   event: z.enum(WEBHOOK_EVENT_TYPES),
@@ -26,12 +27,19 @@ export async function POST(
   const { organizationId, livemode } = ctx;
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
-  const parsed = sendTestSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError("validation_failed", "event is required", 400);
-  }
-  const event: WebhookEventType = parsed.data.event;
+
+  return withIdempotency(request, organizationId, async (rawBody) => {
+    let body: unknown;
+    try {
+      body = rawBody.length > 0 ? JSON.parse(rawBody) : null;
+    } catch {
+      return apiError("invalid_body", "Request body must be valid JSON.", 400);
+    }
+    const parsed = sendTestSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError("validation_failed", "event is required", 400);
+    }
+    const event: WebhookEventType = parsed.data.event;
 
   // Per-org rate limit: 20 test events per minute.
   const rl = await checkRateLimitAsync(`webhook-test:${organizationId}`, 20, 60_000);
@@ -132,4 +140,5 @@ export async function POST(
       { status: 502 },
     );
   }
+  });
 }
