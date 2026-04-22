@@ -169,6 +169,13 @@
       "when": 1746057600000,
       "tag": "0025_add_quantity",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1746144000000,
+      "tag": "0026_add_customer_notification_prefs",
+      "breakpoints": true
     }
   ]
 }

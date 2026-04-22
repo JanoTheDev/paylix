@@ -117,6 +117,26 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
       return;
     }
 
+    // Per-customer opt-out check. Trial reminders map to the
+    // trial_reminders category; the trial-converted receipt is a
+    // transactional email and falls under receipts.
+    const { customerOptedIn } = await import("./customer-prefs");
+    const customerCategory =
+      args.kind === "trial-ending-soon"
+        ? "trial_reminders"
+        : args.kind === "trial-converted"
+          ? "receipts"
+          : null;
+    if (customerCategory) {
+      const optedIn = await customerOptedIn(customer.id, customerCategory);
+      if (!optedIn) {
+        console.log(
+          `[sendTrialEmail] customer opted out of ${customerCategory}, skipping ${args.kind}`,
+        );
+        return;
+      }
+    }
+
     const productName = product.name;
     const trialEndsAt = subscription.trialEndsAt ?? new Date();
     const firstChargeDate = formatDate(trialEndsAt);

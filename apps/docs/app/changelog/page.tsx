@@ -59,6 +59,18 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Customer notification preferences</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        New <code>customer_notification_preferences</code> table lets
+        individual customers opt out per category (marketing,{" "}
+        <code>trial_reminders</code>, <code>abandonment</code>,{" "}
+        <code>receipts</code>). Trial reminder + trial-converted senders
+        honor the per-customer flag on top of the existing merchant
+        toggle. One-click unsubscribe landing page at{" "}
+        <code>/api/public/unsubscribe?token=&lt;signed&gt;</code> flips
+        opt-out and offers a resubscribe button. Migration 0026.
+      </p>
+
       <SubsectionHeading>Admin overrides</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Three new support endpoints:{" "}
