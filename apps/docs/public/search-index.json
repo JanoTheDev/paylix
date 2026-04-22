@@ -194,8 +194,12 @@
         "anchor": "idempotency-on-more-routes"
       },
       {
-        "text": "Tax helpers + preview API",
-        "anchor": "tax-helpers-preview-api"
+        "text": "Tax: full checkout integration",
+        "anchor": "tax-full-checkout-integration"
+      },
+      {
+        "text": "Wallet-walk: subscription backup payers",
+        "anchor": "wallet-walk-subscription-backup-payers"
       },
       {
         "text": "Payment detail drawer",

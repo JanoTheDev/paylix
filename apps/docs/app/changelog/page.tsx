@@ -116,16 +116,35 @@ export default function ChangelogPage() {
         <code>idempotency_key_reused</code>.
       </p>
 
-      <SubsectionHeading>Tax helpers + preview API</SubsectionHeading>
+      <SubsectionHeading>Tax: full checkout integration</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        New <code>lib/tax-rates.ts</code> ships headline VAT rates for
-        EU + UK/NO/CH and US state sales tax for 50 states + DC.{" "}
-        <code>POST /api/tax/preview</code> returns{" "}
-        <code>{"{ rateBps, label, taxCents, totalCents }"}</code> for a
-        given country/state/subtotal. Per-product{" "}
-        <code>productRateBps</code> override + reverse-charge
-        short-circuit. Full checkout integration (signing permit with
-        tax included) is a follow-up.
+        Tax now flows end-to-end. <code>PATCH /api/checkout/:id</code>{" "}
+        recomputes tax when the buyer sets a country (EU VAT / US state
+        sales tax / product override / reverse-charge) and bumps{" "}
+        <code>amount</code> to <code>subtotal + tax</code>. The hosted
+        checkout re-reads the session before signing so the permit
+        binds the tax-inclusive total. Payments and checkout sessions
+        get new <code>tax_cents</code>, <code>tax_rate_bps</code>,{" "}
+        <code>tax_label</code>, <code>subtotal_cents</code> columns
+        (migration 0029); the indexer populates them on the payment row
+        from the session snapshot.
+      </p>
+
+      <SubsectionHeading>Wallet-walk: subscription backup payers</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>SubscriptionManager</code> now supports up to 5 backup
+        payer wallets per subscription. The primary subscriber signs a{" "}
+        <code>BackupPayerAuth</code> EIP-712 message; the backup signs
+        an EIP-2612 permit granting the contract standing USDC
+        allowance; relayer submits{" "}
+        <code>addSubscriptionBackupPayer</code>. On each{" "}
+        <code>chargeSubscription</code>, the contract tries the primary
+        first and walks backups in order on insufficient
+        balance/allowance. <code>PaymentReceived</code> emits with the
+        actual paying wallet, so the indexer records the real payer.
+        Events: <code>SubscriptionBackupPayerAdded</code>,{" "}
+        <code>SubscriptionBackupPayerRemoved</code>. Portal API:{" "}
+        <code>POST /api/portal/subscriptions/:id/backup-payer</code>.
       </p>
 
       <SubsectionHeading>Payment detail drawer</SubsectionHeading>
