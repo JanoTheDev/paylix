@@ -17,10 +17,10 @@ export default function CouponsPage() {
         description="Discount codes buyers apply at checkout. Create codes from the dashboard; buyers type them into the hosted checkout and pay the discounted amount on-chain."
       />
 
-      <Callout variant="info" title="v1 scope">
-        Coupons apply to one-time payments only and must be percent-based.
-        Fixed-amount coupons and subscription-cycle coupons are tracked as
-        follow-ups.
+      <Callout variant="info" title="v1.5 scope">
+        Coupons apply to one-time payments only. Both{" "}
+        <strong>percent</strong> and <strong>fixed-amount</strong> coupons
+        are supported. Subscription-cycle coupons are still in the works.
       </Callout>
 
       <SectionHeading>Creating a coupon</SectionHeading>

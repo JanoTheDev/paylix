@@ -83,6 +83,27 @@ export function computeDiscountCents(
 }
 
 /**
+ * Convert integer cents to the base units of a token with the given
+ * decimal count. Example: 250 cents on USDC (6 decimals) = 2_500_000.
+ *
+ * Pure + bigint-safe so discounts for fixed-amount coupons settle at
+ * exactly the amount the merchant typed, across any USDC-like token.
+ * Non-decimal or negative-decimal inputs throw so typos surface instead
+ * of silently wrecking on-chain amounts.
+ */
+export function convertCentsToBaseUnits(cents: number, decimals: number): bigint {
+  if (!Number.isInteger(cents) || cents < 0) {
+    throw new Error(`cents must be a non-negative integer, got ${cents}`);
+  }
+  if (!Number.isInteger(decimals) || decimals < 2) {
+    throw new Error(`decimals must be an integer >= 2, got ${decimals}`);
+  }
+  // 1 cent = 10^(decimals - 2) base units.
+  const factor = 10n ** BigInt(decimals - 2);
+  return BigInt(cents) * factor;
+}
+
+/**
  * Decide whether a coupon still applies for a given cycle index (0-based).
  * cycle=0 is the first charge. For subscriptions:
  * - once: only cycle 0.

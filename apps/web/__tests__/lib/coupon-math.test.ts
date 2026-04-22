@@ -4,6 +4,7 @@ import {
   validateCoupon,
   computeDiscountCents,
   appliesToCycle,
+  convertCentsToBaseUnits,
   type CouponForMath,
 } from "../../lib/coupon-math";
 
@@ -126,5 +127,31 @@ describe("appliesToCycle", () => {
 
   it("negative cycle rejected", () => {
     expect(appliesToCycle({ duration: "forever", durationInCycles: null }, -1)).toBe(false);
+  });
+});
+
+describe("convertCentsToBaseUnits", () => {
+  it("USDC (6 decimals): 250 cents → 2_500_000", () => {
+    expect(convertCentsToBaseUnits(250, 6)).toBe(2_500_000n);
+  });
+
+  it("hypothetical 18-decimal token: 100 cents → 1e18", () => {
+    expect(convertCentsToBaseUnits(100, 18)).toBe(1_000_000_000_000_000_000n);
+  });
+
+  it("2-decimal token: 1 cent → 1", () => {
+    expect(convertCentsToBaseUnits(1, 2)).toBe(1n);
+  });
+
+  it("zero cents → zero base units", () => {
+    expect(convertCentsToBaseUnits(0, 6)).toBe(0n);
+  });
+
+  it("throws on negative cents", () => {
+    expect(() => convertCentsToBaseUnits(-1, 6)).toThrow();
+  });
+
+  it("throws on decimals < 2", () => {
+    expect(() => convertCentsToBaseUnits(100, 1)).toThrow();
   });
 });

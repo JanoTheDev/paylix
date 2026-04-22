@@ -6,10 +6,12 @@ import { z } from "zod";
 import {
   canonicalCouponCode,
   computeDiscountCents,
+  convertCentsToBaseUnits,
   validateCoupon,
   type CouponForMath,
 } from "@/lib/coupon-math";
 import { apiError } from "@/lib/api-error";
+import { getToken, type NetworkKey } from "@paylix/config/networks";
 
 const applySchema = z.object({ code: z.string().min(2).max(40) });
 
@@ -82,30 +84,55 @@ export async function POST(
     return apiError("coupon_invalid", validation.reason, 409);
   }
 
-  // v1: fixed-amount coupons are deferred until we standardise the
-  // token-base-units-vs-cents conversion at the checkout boundary.
-  // Percent coupons are unit-agnostic, so they ship first.
-  if (coupon.type !== "percent") {
-    return apiError(
-      "not_supported",
-      "Fixed-amount coupons are not yet supported on checkout",
-      409,
-    );
-  }
-
   // Preserve the pre-discount amount on subtotalAmount (first apply only).
   // On subsequent swaps or removals we restore from this field so the
   // buyer never ends up with a silently compounded discount.
   const subtotal = session.subtotalAmount ?? session.amount;
-  const subtotalScalar = Number(subtotal);
-  const discount = computeDiscountCents(couponForMath, subtotalScalar);
-  const newAmount = BigInt(Math.max(0, subtotalScalar - discount));
+
+  // Branch on coupon type:
+  //   percent → math is unit-agnostic, operate directly on base units.
+  //   fixed   → amount_off_cents needs conversion to base units using
+  //             the locked token's decimal count.
+  let discountBaseUnits: bigint;
+  if (coupon.type === "percent") {
+    const subtotalScalar = Number(subtotal);
+    const discountScalar = computeDiscountCents(couponForMath, subtotalScalar);
+    discountBaseUnits = BigInt(discountScalar);
+  } else {
+    // coupon.type === "fixed"
+    if (!session.networkKey || !session.tokenSymbol) {
+      return apiError(
+        "awaiting_currency",
+        "Pick a currency before applying a fixed-amount coupon",
+        409,
+      );
+    }
+    let decimals: number;
+    try {
+      const token = getToken(session.networkKey as NetworkKey, session.tokenSymbol);
+      decimals = token.decimals;
+    } catch {
+      return apiError("invalid_currency", "Session token is not registered", 409);
+    }
+    const amountOff = coupon.amountOffCents ?? 0;
+    const offBaseUnits = convertCentsToBaseUnits(amountOff, decimals);
+    discountBaseUnits = subtotal < offBaseUnits ? subtotal : offBaseUnits;
+  }
+
+  const newAmount = subtotal > discountBaseUnits ? subtotal - discountBaseUnits : 0n;
+  // discount_cents is only meaningful for percent coupons (derived from
+  // cents-scaled math); for fixed coupons we pass the raw amount_off
+  // cents through since that's what the merchant configured.
+  const discountForBookkeeping =
+    coupon.type === "percent"
+      ? Number(discountBaseUnits)
+      : coupon.amountOffCents ?? 0;
 
   await db
     .update(checkoutSessions)
     .set({
       appliedCouponId: coupon.id,
-      discountCents: discount,
+      discountCents: discountForBookkeeping,
       subtotalAmount: subtotal,
       amount: newAmount,
     })
@@ -120,7 +147,7 @@ export async function POST(
     amountOffCents: coupon.amountOffCents,
     duration: coupon.duration,
     durationInCycles: coupon.durationInCycles,
-    discountCents: discount,
+    discountCents: discountForBookkeeping,
     subtotalAmount: subtotal.toString(),
     amount: newAmount.toString(),
   });
