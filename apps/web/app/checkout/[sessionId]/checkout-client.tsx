@@ -56,6 +56,8 @@ interface CheckoutSession {
   appliedCouponId?: string | null;
   discountCents?: number | null;
   subtotalAmount?: number | bigint | null;
+  couponDuration?: "once" | "forever" | "repeating" | null;
+  couponDurationInCycles?: number | null;
 }
 
 interface CheckoutClientProps {
@@ -500,41 +502,97 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       let intentSignature: string;
       if (isSubscription) {
         const intervalSeconds = BigInt(intervalToSeconds(session.billingInterval));
-        intentSignature = await signTypedDataAsync({
-          domain: {
-            name: "Paylix SubscriptionManager",
-            version: "1",
-            chainId,
-            verifyingContract: spender as `0x${string}`,
-          },
-          types: {
-            SubscriptionIntent: [
-              { name: "buyer", type: "address" },
-              { name: "token", type: "address" },
-              { name: "merchant", type: "address" },
-              { name: "amount", type: "uint256" },
-              { name: "interval", type: "uint256" },
-              { name: "productId", type: "bytes32" },
-              { name: "customerId", type: "bytes32" },
-              { name: "permitValue", type: "uint256" },
-              { name: "nonce", type: "uint256" },
-              { name: "deadline", type: "uint256" },
-            ],
-          },
-          primaryType: "SubscriptionIntent",
-          message: {
-            buyer: address as `0x${string}`,
-            token: usdcAddress,
-            merchant: session.merchantWallet as `0x${string}`,
-            amount: usdcAmount,
-            interval: intervalSeconds,
-            productId: productIdBytes,
-            customerId: customerIdBytes,
-            permitValue,
-            nonce: intentNonce,
-            deadline,
-          },
-        });
+        // Subscription + once/repeating coupon: sign the extended
+        // SubscriptionIntentDiscount typed data so the on-chain contract
+        // commits to the per-cycle discount + cycle count.
+        const isDiscountSub =
+          session.appliedCouponId &&
+          session.couponDuration &&
+          session.couponDuration !== "forever" &&
+          session.discountCents != null;
+        if (isDiscountSub) {
+          const discountAmount = BigInt(session.discountCents!);
+          const discountCycles = BigInt(
+            session.couponDuration === "once"
+              ? 1
+              : session.couponDurationInCycles ?? 1,
+          );
+          intentSignature = await signTypedDataAsync({
+            domain: {
+              name: "Paylix SubscriptionManager",
+              version: "1",
+              chainId,
+              verifyingContract: spender as `0x${string}`,
+            },
+            types: {
+              SubscriptionIntentDiscount: [
+                { name: "buyer", type: "address" },
+                { name: "token", type: "address" },
+                { name: "merchant", type: "address" },
+                { name: "amount", type: "uint256" },
+                { name: "interval", type: "uint256" },
+                { name: "productId", type: "bytes32" },
+                { name: "customerId", type: "bytes32" },
+                { name: "permitValue", type: "uint256" },
+                { name: "discountAmount", type: "uint256" },
+                { name: "discountCycles", type: "uint256" },
+                { name: "nonce", type: "uint256" },
+                { name: "deadline", type: "uint256" },
+              ],
+            },
+            primaryType: "SubscriptionIntentDiscount",
+            message: {
+              buyer: address as `0x${string}`,
+              token: usdcAddress,
+              merchant: session.merchantWallet as `0x${string}`,
+              amount: usdcAmount,
+              interval: intervalSeconds,
+              productId: productIdBytes,
+              customerId: customerIdBytes,
+              permitValue,
+              discountAmount,
+              discountCycles,
+              nonce: intentNonce,
+              deadline,
+            },
+          });
+        } else {
+          intentSignature = await signTypedDataAsync({
+            domain: {
+              name: "Paylix SubscriptionManager",
+              version: "1",
+              chainId,
+              verifyingContract: spender as `0x${string}`,
+            },
+            types: {
+              SubscriptionIntent: [
+                { name: "buyer", type: "address" },
+                { name: "token", type: "address" },
+                { name: "merchant", type: "address" },
+                { name: "amount", type: "uint256" },
+                { name: "interval", type: "uint256" },
+                { name: "productId", type: "bytes32" },
+                { name: "customerId", type: "bytes32" },
+                { name: "permitValue", type: "uint256" },
+                { name: "nonce", type: "uint256" },
+                { name: "deadline", type: "uint256" },
+              ],
+            },
+            primaryType: "SubscriptionIntent",
+            message: {
+              buyer: address as `0x${string}`,
+              token: usdcAddress,
+              merchant: session.merchantWallet as `0x${string}`,
+              amount: usdcAmount,
+              interval: intervalSeconds,
+              productId: productIdBytes,
+              customerId: customerIdBytes,
+              permitValue,
+              nonce: intentNonce,
+              deadline,
+            },
+          });
+        }
       } else {
         intentSignature = await signTypedDataAsync({
           domain: {

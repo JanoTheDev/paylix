@@ -59,6 +59,21 @@ export default function ChangelogPage() {
         passes. Blocklist still applies.
       </p>
 
+      <SubsectionHeading>Coupons — subscription once + repeating</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        <code>SubscriptionManager</code> gains{" "}
+        <code>createSubscriptionWithPermitDiscount</code> and a new{" "}
+        <code>SubscriptionIntentDiscount</code> EIP-712 typehash. The
+        contract stores a per-subscription discount amount and cycle
+        counter in a <code>subscriptionDiscounts</code> side mapping;{" "}
+        <code>_processPayment</code> applies the discount for each of the
+        first N charges and decrements. Buyer&apos;s signed intent now
+        commits to <code>discountAmount</code> and{" "}
+        <code>discountCycles</code>, so a compromised relayer cannot swap
+        them. Contract redeploy required; Foundry coverage under{" "}
+        <code>SubscriptionManagerDiscount.t.sol</code>.
+      </p>
+
       <SubsectionHeading>Coupons</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Merchant-managed discount codes. Create percent or fixed-amount

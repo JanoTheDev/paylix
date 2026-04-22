@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { checkoutSessions, products, productPrices } from "@paylix/db/schema";
+import { checkoutSessions, products, productPrices, coupons } from "@paylix/db/schema";
 import { db } from "@/lib/db";
 import { NETWORKS } from "@paylix/config/networks";
 import { CheckoutProviders } from "@/components/providers";
@@ -60,9 +60,12 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
       appliedCouponId: checkoutSessions.appliedCouponId,
       discountCents: checkoutSessions.discountCents,
       subtotalAmount: checkoutSessions.subtotalAmount,
+      couponDuration: coupons.duration,
+      couponDurationInCycles: coupons.durationInCycles,
     })
     .from(checkoutSessions)
     .innerJoin(products, eq(checkoutSessions.productId, products.id))
+    .leftJoin(coupons, eq(coupons.id, checkoutSessions.appliedCouponId))
     .where(eq(checkoutSessions.id, sessionId));
 
   if (!session) {

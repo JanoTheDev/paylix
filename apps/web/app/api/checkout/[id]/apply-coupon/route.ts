@@ -56,16 +56,21 @@ export async function POST(
     .limit(1);
   if (!coupon) return apiError("not_found", "Coupon not found", 404);
 
-  // Subscription coupons: SubscriptionManager stores a single amount
-  // that every future charge uses. Lowering session.amount before the
-  // SubscriptionIntent is signed makes the whole subscription run at
-  // the discounted amount — i.e. "forever" semantics. "once" and
-  // "repeating" would require a dual-permit checkout which is out of
-  // scope for this release.
+  // SubscriptionManager.createSubscriptionWithPermit always calls
+  // _processPayment on creation, so the on-chain stored amount IS the
+  // first charge amount. Lowering session.amount before the intent is
+  // signed makes the sub run at the discounted amount every cycle —
+  // "forever" semantics.
+  //
+  // "once" and "repeating" would need the first charge to be lower
+  // than subsequent charges. The contract has no way to store two
+  // amounts or defer the first charge, so this cannot be done off-chain
+  // without a contract change. Keep "forever" as the supported
+  // subscription coupon shape.
   if (session.type === "subscription" && coupon.duration !== "forever") {
     return apiError(
       "not_supported",
-      "Only 'forever' coupons apply to subscriptions; 'once' and 'repeating' are deferred",
+      "Subscription coupons only support duration 'forever'. 'once' and 'repeating' need contract-level support for a split first-charge amount and are not available off-chain.",
       409,
     );
   }
@@ -122,20 +127,36 @@ export async function POST(
     discountBaseUnits = subtotal < offBaseUnits ? subtotal : offBaseUnits;
   }
 
-  const newAmount = subtotal > discountBaseUnits ? subtotal - discountBaseUnits : 0n;
-  // discount_cents is only meaningful for percent coupons (derived from
-  // cents-scaled math); for fixed coupons we pass the raw amount_off
-  // cents through since that's what the merchant configured.
+  // discount_cents is meaningful for percent + fixed one-time and for
+  // "forever" subs (where session.amount is lowered). For once/repeating
+  // on subs we store the discount in base units so the relay has enough
+  // info to assemble the on-chain SubscriptionIntentDiscount.
   const discountForBookkeeping =
     coupon.type === "percent"
       ? Number(discountBaseUnits)
       : coupon.amountOffCents ?? 0;
 
+  // Subscription + once/repeating: DON'T mutate session.amount. The
+  // contract stores the full amount with a side-channel discount that
+  // expires after N cycles. subtotal_amount stays at the full amount too
+  // since it matches the signed intent; discount_cents carries the
+  // per-cycle discount in the locked token's base units.
+  const subNonForever =
+    session.type === "subscription" && coupon.duration !== "forever";
+
+  const newAmount = subNonForever
+    ? subtotal
+    : subtotal > discountBaseUnits
+      ? subtotal - discountBaseUnits
+      : 0n;
+
   await db
     .update(checkoutSessions)
     .set({
       appliedCouponId: coupon.id,
-      discountCents: discountForBookkeeping,
+      discountCents: subNonForever
+        ? Number(discountBaseUnits)
+        : discountForBookkeeping,
       subtotalAmount: subtotal,
       amount: newAmount,
     })
@@ -150,7 +171,9 @@ export async function POST(
     amountOffCents: coupon.amountOffCents,
     duration: coupon.duration,
     durationInCycles: coupon.durationInCycles,
-    discountCents: discountForBookkeeping,
+    discountCents: subNonForever
+      ? Number(discountBaseUnits)
+      : discountForBookkeeping,
     subtotalAmount: subtotal.toString(),
     amount: newAmount.toString(),
   });

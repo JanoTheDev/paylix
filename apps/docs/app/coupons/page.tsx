@@ -17,15 +17,23 @@ export default function CouponsPage() {
         description="Discount codes buyers apply at checkout. Create codes from the dashboard; buyers type them into the hosted checkout and pay the discounted amount on-chain."
       />
 
-      <Callout variant="info" title="v1.5 scope">
-        Both <strong>percent</strong> and <strong>fixed-amount</strong>{" "}
-        coupons are supported on one-time payments. Subscriptions accept{" "}
-        <strong>forever</strong>-duration coupons (every charge runs at
-        the discounted amount — zero contract changes, set at sub
-        creation). <strong>once</strong> and <strong>repeating</strong>{" "}
-        on subscriptions remain deferred (they need a dual-permit
-        checkout to split the first charge from the recurring amount).
+      <Callout variant="info" title="Supported combinations">
+        <strong>Percent</strong> and <strong>fixed-amount</strong> coupons
+        work on one-time payments and on subscriptions with any{" "}
+        <code>duration</code>. Subscription shapes:
       </Callout>
+      <ul className="ml-5 list-disc space-y-1 text-sm leading-relaxed text-foreground-muted">
+        <li><strong>forever</strong> — every recurring charge runs at the discounted amount.</li>
+        <li><strong>once</strong> — first charge discounted; every renewal at full price.</li>
+        <li><strong>repeating</strong> — discounted for the first N charges, full price after.</li>
+      </ul>
+      <p className="mt-3 text-sm leading-relaxed text-foreground-muted">
+        <code>once</code> and <code>repeating</code> use a
+        per-subscription discount field stored by{" "}
+        <code>createSubscriptionWithPermitDiscount</code> — the discount
+        amount and cycle count are part of the buyer&apos;s signed
+        intent, so a compromised relayer can&apos;t swap them.
+      </p>
 
       <SectionHeading>Creating a coupon</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">

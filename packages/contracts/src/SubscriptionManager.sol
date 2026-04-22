@@ -27,6 +27,24 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
     );
 
+    // Extended intent used by createSubscriptionWithPermitDiscount. Adds the
+    // discount amount and cycle count so "once" / "repeating" coupon shapes
+    // can be encoded on-chain at subscription creation without a dual-permit
+    // checkout flow. A buyer signing this intent commits to being charged
+    // `amount - discountAmount` for the first `discountCyclesRemaining`
+    // charges, then `amount` every cycle after.
+    bytes32 private constant SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH = keccak256(
+        "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 nonce,uint256 deadline)"
+    );
+
+    /// @notice Per-subscription discount state set at creation and
+    ///         decremented on each charge. Declared as a side struct so the
+    ///         existing `Subscription` layout is untouched.
+    struct SubscriptionDiscount {
+        uint256 discountAmount;
+        uint256 discountCyclesRemaining;
+    }
+
     mapping(address => uint256) public intentNonces;
 
     enum Status { Active, PastDue, Cancelled, Expired }
@@ -53,6 +71,11 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     mapping(uint256 => address) public pendingWalletUpdates;
     address public relayer;
     bool public gaslessPaused;
+
+    /// @dev New in the discount release. Appended at the end so existing
+    /// storage slots are untouched — a redeploy gets the same layout for
+    /// everything that was there before.
+    mapping(uint256 => SubscriptionDiscount) public subscriptionDiscounts;
 
     event SubscriptionCreated(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 interval, bytes32 productId, bytes32 customerId);
     event PaymentReceived(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 fee, uint256 timestamp);
@@ -240,6 +263,122 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         return subId;
     }
 
+    struct CreateSubPermitDiscountParams {
+        address token;
+        address buyer;
+        address merchant;
+        uint256 amount;
+        uint256 interval;
+        bytes32 productId;
+        bytes32 customerId;
+        uint256 permitValue;
+        uint256 discountAmount;
+        uint256 discountCycles;
+        uint256 deadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    function _hashDiscountIntent(
+        CreateSubPermitDiscountParams calldata p,
+        uint256 nonce
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH,
+                p.buyer,
+                p.token,
+                p.merchant,
+                p.amount,
+                p.interval,
+                p.productId,
+                p.customerId,
+                p.permitValue,
+                p.discountAmount,
+                p.discountCycles,
+                nonce,
+                p.deadline
+            )
+        );
+    }
+
+    function _consumeSubscriptionIntentDiscount(
+        CreateSubPermitDiscountParams calldata p,
+        bytes calldata intentSignature
+    ) internal {
+        uint256 nonce = intentNonces[p.buyer];
+        bytes32 digest = _hashTypedDataV4(_hashDiscountIntent(p, nonce));
+        address recovered = ECDSA.recover(digest, intentSignature);
+        require(recovered == p.buyer, "Invalid intent signature");
+        unchecked { intentNonces[p.buyer] = nonce + 1; }
+    }
+
+    /// @notice Like createSubscriptionWithPermit but stores a per-subscription
+    ///         discount that applies to the first `discountCycles` charges
+    ///         (the first of which is the creation charge). The buyer's
+    ///         SubscriptionIntentDiscount signature commits to all fields
+    ///         including discountAmount and discountCycles, so a compromised
+    ///         relayer cannot swap them.
+    function _validateDiscountParams(CreateSubPermitDiscountParams calldata p) internal view {
+        require(msg.sender == relayer, "Only relayer");
+        require(!gaslessPaused, "Gasless paused");
+        require(acceptedTokens[p.token], "Token not accepted");
+        require(p.amount > 0, "Amount must be > 0");
+        require(p.merchant != address(0), "Invalid merchant");
+        require(p.buyer != address(0), "Invalid buyer");
+        require(p.interval > 0, "Invalid interval");
+        require(block.timestamp <= type(uint256).max - p.interval, "Interval too large");
+        require(p.permitValue >= p.amount, "Permit < amount");
+        require(block.timestamp <= p.deadline, "Intent expired");
+        require(p.discountAmount < p.amount, "Discount >= amount");
+        require(p.discountCycles > 0, "Zero discount cycles");
+    }
+
+    function _storeDiscountSubscription(
+        CreateSubPermitDiscountParams calldata p
+    ) internal returns (uint256 subId) {
+        subId = nextSubscriptionId++;
+        subscriptions[subId] = Subscription({
+            subscriber: p.buyer,
+            merchant: p.merchant,
+            token: p.token,
+            amount: p.amount,
+            interval: p.interval,
+            nextChargeDate: block.timestamp + p.interval,
+            productId: p.productId,
+            customerId: p.customerId,
+            createdAt: block.timestamp,
+            status: Status.Active,
+            totalCharged: 0
+        });
+        subscriptionDiscounts[subId] = SubscriptionDiscount({
+            discountAmount: p.discountAmount,
+            discountCyclesRemaining: p.discountCycles
+        });
+    }
+
+    function createSubscriptionWithPermitDiscount(
+        CreateSubPermitDiscountParams calldata p,
+        bytes calldata intentSignature
+    ) external nonReentrant whenNotPaused returns (uint256) {
+        _validateDiscountParams(p);
+        _consumeSubscriptionIntentDiscount(p, intentSignature);
+
+        try IERC20Permit(p.token).permit(
+            p.buyer, address(this), p.permitValue, p.deadline, p.v, p.r, p.s
+        ) {
+            // ok
+        } catch {
+            // Same permissive fallback as createSubscriptionWithPermit.
+        }
+
+        uint256 subId = _storeDiscountSubscription(p);
+        _processPayment(subId);
+        _emitSubscriptionCreated(subId, subscriptions[subId]);
+        return subId;
+    }
+
     function _emitSubscriptionCreated(uint256 subId, Subscription storage sub) internal {
         emit SubscriptionCreated(
             subId,
@@ -399,9 +538,24 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     // amount + interval at creation time. See test_reverts_if_relayer_swaps_*
     // in test/SubscriptionManagerPermit.t.sol.
 
+    /// @dev Resolves the effective charge amount for this cycle. If the sub
+    ///      has remaining discount cycles, applies `discountAmount` and
+    ///      decrements. Returns the charge amount the caller should pull.
+    function _resolveChargeAmount(uint256 subscriptionId) internal returns (uint256) {
+        Subscription storage sub = subscriptions[subscriptionId];
+        SubscriptionDiscount storage d = subscriptionDiscounts[subscriptionId];
+        if (d.discountCyclesRemaining == 0 || d.discountAmount == 0) {
+            return sub.amount;
+        }
+        d.discountCyclesRemaining--;
+        if (d.discountAmount >= sub.amount) return 0;
+        return sub.amount - d.discountAmount;
+    }
+
     function _processPayment(uint256 subscriptionId) internal {
         Subscription storage sub = subscriptions[subscriptionId];
-        uint256 amount = sub.amount;
+        uint256 amount = _resolveChargeAmount(subscriptionId);
+        require(amount > 0, "Charge amount is zero");
         address token = sub.token;
         address subscriber = sub.subscriber;
         address merchant_ = sub.merchant;
@@ -425,7 +579,15 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     function _tryProcessPayment(uint256 subscriptionId) internal returns (bool) {
         Subscription storage sub = subscriptions[subscriptionId];
+        SubscriptionDiscount storage d = subscriptionDiscounts[subscriptionId];
+
+        // Preview the charge WITHOUT decrementing — if balance/allowance is
+        // insufficient we must leave the discount state intact so the retry
+        // gets the same discounted amount.
         uint256 amount = sub.amount;
+        if (d.discountCyclesRemaining > 0 && d.discountAmount > 0) {
+            amount = d.discountAmount >= sub.amount ? 0 : sub.amount - d.discountAmount;
+        }
         address tokenAddr = sub.token;
         address subscriber = sub.subscriber;
         address merchant_ = sub.merchant;
@@ -439,6 +601,12 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         IERC20 token = IERC20(tokenAddr);
         if (token.allowance(subscriber, address(this)) < amount) return false;
         if (token.balanceOf(subscriber) < amount) return false;
+
+        // Committed to pulling — decrement discount state now.
+        if (d.discountCyclesRemaining > 0 && d.discountAmount > 0) {
+            d.discountCyclesRemaining--;
+        }
+
         // slither-disable-next-line arbitrary-send-erc20
         token.safeTransferFrom(subscriber, merchant_, merchantAmount);
         if (fee > 0) {

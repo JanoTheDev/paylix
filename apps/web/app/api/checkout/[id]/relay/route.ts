@@ -480,28 +480,80 @@ export async function POST(
           { status: 400 },
         );
       }
-      txHash = await withRetry(() => relayer.writeContract({
-        address: deployment.subscriptionManager,
-        abi: SUBSCRIPTION_MANAGER_ABI,
-        functionName: "createSubscriptionWithPermit",
-        args: [
-          {
-            token: deployment.usdcAddress,
-            buyer,
-            merchant: session.merchantWallet as `0x${string}`,
-            amount: tokenAmount,
-            interval: intervalSeconds,
-            productId: productIdBytes,
-            customerId: customerIdBytes,
-            permitValue,
-            deadline,
-            v,
-            r,
-            s,
-          },
-          intentSignature,
-        ],
-      }));
+
+      // Load the coupon once so we can decide whether to route to the
+      // discount-aware contract function. Only once/repeating coupons on
+      // subscriptions take that path — forever coupons already mutated
+      // session.amount at apply-coupon time and use the plain function.
+      const couponRow = session.appliedCouponId
+        ? await db
+            .select({
+              duration: coupons.duration,
+              durationInCycles: coupons.durationInCycles,
+            })
+            .from(coupons)
+            .where(eq(coupons.id, session.appliedCouponId))
+            .limit(1)
+            .then((rows) => rows[0] ?? null)
+        : null;
+      const useDiscountPath =
+        couponRow &&
+        (couponRow.duration === "once" || couponRow.duration === "repeating") &&
+        session.discountCents != null;
+
+      if (useDiscountPath) {
+        const discountAmount = BigInt(session.discountCents!);
+        const discountCycles = BigInt(
+          couponRow.duration === "once" ? 1 : couponRow.durationInCycles ?? 1,
+        );
+        txHash = await withRetry(() => relayer.writeContract({
+          address: deployment.subscriptionManager,
+          abi: SUBSCRIPTION_MANAGER_ABI,
+          functionName: "createSubscriptionWithPermitDiscount",
+          args: [
+            {
+              token: deployment.usdcAddress,
+              buyer,
+              merchant: session.merchantWallet as `0x${string}`,
+              amount: tokenAmount,
+              interval: intervalSeconds,
+              productId: productIdBytes,
+              customerId: customerIdBytes,
+              permitValue,
+              discountAmount,
+              discountCycles,
+              deadline,
+              v,
+              r,
+              s,
+            },
+            intentSignature,
+          ],
+        }));
+      } else {
+        txHash = await withRetry(() => relayer.writeContract({
+          address: deployment.subscriptionManager,
+          abi: SUBSCRIPTION_MANAGER_ABI,
+          functionName: "createSubscriptionWithPermit",
+          args: [
+            {
+              token: deployment.usdcAddress,
+              buyer,
+              merchant: session.merchantWallet as `0x${string}`,
+              amount: tokenAmount,
+              interval: intervalSeconds,
+              productId: productIdBytes,
+              customerId: customerIdBytes,
+              permitValue,
+              deadline,
+              v,
+              r,
+              s,
+            },
+            intentSignature,
+          ],
+        }));
+      }
     } else {
       txHash = await withRetry(() => relayer.writeContract({
         address: deployment.paymentVault,

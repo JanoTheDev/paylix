@@ -178,6 +178,10 @@
         "anchor": "gift-subscriptions"
       },
       {
+        "text": "Coupons — subscription once + repeating",
+        "anchor": "coupons-subscription-once-repeating"
+      },
+      {
         "text": "Coupons",
         "anchor": "coupons"
       },
