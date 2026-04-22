@@ -77,6 +77,14 @@ export interface PortalInvoice {
   hostedToken: string;
 }
 
+export interface PortalWallet {
+  id: string;
+  address: string;
+  nickname: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
 export interface PortalRefundRequest {
   id: string;
   paymentId: string;
@@ -96,6 +104,7 @@ interface PortalClientProps {
   payments: PortalPayment[];
   invoices: PortalInvoice[];
   refundRequests: PortalRefundRequest[];
+  wallets: PortalWallet[];
 }
 
 type PortalPaymentRow = {
@@ -146,6 +155,7 @@ export function PortalClient({
   payments,
   invoices,
   refundRequests,
+  wallets,
 }: PortalClientProps) {
   const router = useRouter();
   const [cancelTarget, setCancelTarget] = useState<PortalSubscription | null>(
@@ -159,6 +169,72 @@ export function PortalClient({
   const [refundAmount, setRefundAmount] = useState("");
   const [refundReason, setRefundReason] = useState("");
   const [refundBusy, setRefundBusy] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+  const [newWalletAddress, setNewWalletAddress] = useState("");
+  const [newWalletNickname, setNewWalletNickname] = useState("");
+  const [walletBusy, setWalletBusy] = useState(false);
+
+  async function addWallet() {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(newWalletAddress.trim())) {
+      toast.error("Enter a valid 0x address");
+      return;
+    }
+    setWalletBusy(true);
+    try {
+      const res = await fetch("/api/portal/wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId,
+          token: portalToken,
+          address: newWalletAddress.trim(),
+          nickname: newWalletNickname.trim() || undefined,
+        }),
+      });
+      if (res.ok) {
+        toast.success("Wallet added");
+        setWalletDialogOpen(false);
+        setNewWalletAddress("");
+        setNewWalletNickname("");
+        router.refresh();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error?.message ?? "Add failed");
+      }
+    } finally {
+      setWalletBusy(false);
+    }
+  }
+
+  async function makePrimary(walletId: string) {
+    const res = await fetch(`/api/portal/wallets/${walletId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId, token: portalToken }),
+    });
+    if (res.ok) {
+      toast.success("Primary wallet updated");
+      router.refresh();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.error?.message ?? "Update failed");
+    }
+  }
+
+  async function removeWallet(walletId: string) {
+    const res = await fetch(`/api/portal/wallets/${walletId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId, token: portalToken }),
+    });
+    if (res.ok) {
+      toast.success("Wallet removed");
+      router.refresh();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.error?.message ?? "Remove failed");
+    }
+  }
 
   const openRequestByPayment = new Map<string, PortalRefundRequest>();
   for (const r of refundRequests) {
@@ -450,6 +526,66 @@ export function PortalClient({
         )}
       </Section>
 
+      <Section title="Wallets">
+        <div className="flex flex-col gap-2">
+          {wallets.length === 0 ? (
+            <div className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-sm text-foreground-muted">
+              No wallets on file.
+            </div>
+          ) : (
+            wallets.map((w) => (
+              <div
+                key={w.id}
+                className="flex flex-col gap-2 rounded-lg border border-border bg-surface-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-foreground">
+                      {w.address.slice(0, 6)}…{w.address.slice(-4)}
+                    </span>
+                    {w.isPrimary && <Badge variant="success">Primary</Badge>}
+                  </div>
+                  {w.nickname && (
+                    <p className="mt-1 text-xs text-foreground-muted">
+                      {w.nickname}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {!w.isPrimary && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => makePrimary(w.id)}
+                      >
+                        Make primary
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeWallet(w.id)}
+                      >
+                        Remove
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+          <div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setWalletDialogOpen(true)}
+            >
+              Add wallet
+            </Button>
+          </div>
+        </div>
+      </Section>
+
       {refundRequests.length > 0 && (
         <Section title="Refund requests">
           <div className="flex flex-col gap-2">
@@ -651,6 +787,56 @@ export function PortalClient({
           await handleConfirmed();
         }}
       />
+
+      <Dialog
+        open={walletDialogOpen}
+        onOpenChange={(v) => {
+          setWalletDialogOpen(v);
+          if (!v) {
+            setNewWalletAddress("");
+            setNewWalletNickname("");
+          }
+        }}
+      >
+        <DialogContent className="border-border bg-surface-1 sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Add a wallet</DialogTitle>
+            <DialogDescription>
+              Paylix can attempt backup charges against extra wallets
+              when the primary runs out of USDC.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 text-sm">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="wa-addr">Address</Label>
+              <Input
+                id="wa-addr"
+                value={newWalletAddress}
+                onChange={(e) => setNewWalletAddress(e.target.value)}
+                placeholder="0x…"
+                className="font-mono"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="wa-nick">Nickname (optional)</Label>
+              <Input
+                id="wa-nick"
+                value={newWalletNickname}
+                onChange={(e) => setNewWalletNickname(e.target.value)}
+                placeholder="Backup wallet"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWalletDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={addWallet} disabled={walletBusy}>
+              {walletBusy ? "Adding…" : "Add wallet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={refundTarget !== null}

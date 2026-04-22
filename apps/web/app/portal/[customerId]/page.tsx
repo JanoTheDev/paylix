@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  customerWallets,
   customers,
   invoices,
   payments,
@@ -15,6 +16,7 @@ import {
   type PortalPayment,
   type PortalRefundRequest,
   type PortalSubscription,
+  type PortalWallet,
 } from "./portal-client";
 import { verifyPortalToken } from "@/lib/portal-tokens";
 
@@ -139,6 +141,20 @@ export default async function PortalPage({
     createdAt: r.createdAt.toISOString(),
   }));
 
+  const walletRows = await db
+    .select()
+    .from(customerWallets)
+    .where(eq(customerWallets.customerId, customer.id))
+    .orderBy(desc(customerWallets.isPrimary), customerWallets.createdAt);
+
+  const portalWallets: PortalWallet[] = walletRows.map((r) => ({
+    id: r.id,
+    address: r.address,
+    nickname: r.nickname,
+    isPrimary: r.isPrimary,
+    createdAt: r.createdAt.toISOString(),
+  }));
+
   const portalInvoices: PortalInvoice[] = invRows.map((r) => ({
     id: r.id,
     number: r.number,
@@ -189,6 +205,7 @@ export default async function PortalPage({
         payments={portalPayments}
         invoices={portalInvoices}
         refundRequests={portalRefundRequests}
+        wallets={portalWallets}
       />
     </Web3Providers>
   );
