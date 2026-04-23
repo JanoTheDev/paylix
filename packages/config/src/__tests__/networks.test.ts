@@ -9,6 +9,8 @@ import {
   assertValidNetworkKey,
   assertValidTokenSymbol,
   getToken,
+  isTokenUsable,
+  getUsableTokens,
 } from "../networks";
 import {
   arbitrum,
@@ -492,6 +494,32 @@ describe("getToken", () => {
 
   it("throws on unknown symbol", () => {
     expect(() => getToken("base", "DOGE")).toThrow(/DOGE/);
+  });
+});
+
+describe("isTokenUsable + getUsableTokens", () => {
+  it("eip2612 tokens are currently usable", () => {
+    expect(isTokenUsable(NETWORKS.base.tokens.USDC)).toBe(true);
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.PYUSD)).toBe(true);
+  });
+
+  it("permit2 tokens are currently inert (relay not dispatched yet)", () => {
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.USDT)).toBe(false);
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.WETH)).toBe(false);
+  });
+
+  it("dai-permit tokens are currently inert", () => {
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.DAI)).toBe(false);
+  });
+
+  it("none-scheme tokens are never usable", () => {
+    expect(isTokenUsable(NETWORKS.bnb.tokens.USDC)).toBe(false);
+  });
+
+  it("getUsableTokens filters to the active set per network", () => {
+    const ethTokens = getUsableTokens(NETWORKS.ethereum);
+    const symbols = ethTokens.map((t) => t.symbol).sort();
+    expect(symbols).toEqual(["PYUSD", "USDC"]);
   });
 });
 

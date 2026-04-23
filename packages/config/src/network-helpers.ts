@@ -90,3 +90,34 @@ export function getToken(networkKey: NetworkKey, tokenSymbol: string): TokenConf
   assertValidTokenSymbol(network, tokenSymbol);
   return (network.tokens as Record<string, TokenConfig>)[tokenSymbol]!;
 }
+
+/**
+ * Signature schemes the relay route + checkout client currently know how to
+ * execute. Flip entries to `true` as the matching app code lands:
+ *
+ *   - eip2612     — wired today (PaymentVault.createPaymentWithPermit)
+ *   - permit2     — PaymentVault path shipped in #55 part 1, relay not yet dispatched
+ *   - dai-permit  — contract path pending
+ *   - none        — never usable by design
+ *
+ * UIs that list selectable tokens MUST filter via `isTokenUsable` so they
+ * don't show options that would fail at relay time.
+ */
+const SCHEME_USABLE = {
+  eip2612: true,
+  permit2: false,
+  "dai-permit": false,
+  none: false,
+} as const;
+
+export function isTokenUsable(token: TokenConfig): boolean {
+  return SCHEME_USABLE[token.signatureScheme];
+}
+
+/**
+ * Returns the tokens on a network that can currently be used for checkout.
+ * Thin wrapper so call sites don't have to repeat the filter everywhere.
+ */
+export function getUsableTokens(network: NetworkConfig): TokenConfig[] {
+  return Object.values(network.tokens).filter(isTokenUsable);
+}

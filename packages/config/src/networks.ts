@@ -11,7 +11,7 @@
  * NetworkKey union derives from `keyof typeof NETWORKS` automatically.
  */
 
-export type { Environment, TokenConfig, NetworkConfig } from "./network-types";
+export type { Environment, SignatureScheme, TokenConfig, NetworkConfig } from "./network-types";
 export { NETWORKS, type NetworkKey } from "./network-registry";
 export {
   getActiveNetwork,
@@ -21,4 +21,6 @@ export {
   assertValidNetworkKey,
   assertValidTokenSymbol,
   getToken,
+  isTokenUsable,
+  getUsableTokens,
 } from "./network-helpers";
