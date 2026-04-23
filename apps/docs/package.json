@@ -16,7 +16,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.460",
-    "next": "^15",
+    "next": "^16",
     "react": "^19",
     "react-dom": "^19",
     "shiki": "^4.0.2",
