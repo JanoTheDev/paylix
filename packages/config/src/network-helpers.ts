@@ -105,7 +105,11 @@ export function getToken(networkKey: NetworkKey, tokenSymbol: string): TokenConf
  */
 const SCHEME_USABLE = {
   eip2612: true,
-  permit2: false,
+  // Permit2 one-time payments are wired end-to-end as of the #56 part 2
+  // changes. Subscription Permit2 still needs relay-payload wiring, but
+  // the product form / checkout picker gate by payment type before this
+  // helper sees the token — safe to flip here.
+  permit2: true,
   "dai-permit": false,
   none: false,
 } as const;

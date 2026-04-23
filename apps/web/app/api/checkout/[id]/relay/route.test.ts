@@ -20,6 +20,11 @@ const mockDeployment = {
   usdcAddress: "0x0000000000000000000000000000000000000456" as `0x${string}`,
 };
 
+// Resolve MockUSDC address for base-sepolia token lookups. Without this env
+// the relay route throws when resolving the token address from the registry.
+process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS = "0x0000000000000000000000000000000000000456";
+process.env.NEXT_PUBLIC_NETWORK = "base-sepolia";
+
 vi.mock("@/lib/db", () => ({ db: mockDb }));
 vi.mock("@/lib/blocklist-load", () => ({
   loadOrgBlocklist: vi.fn().mockResolvedValue([]),

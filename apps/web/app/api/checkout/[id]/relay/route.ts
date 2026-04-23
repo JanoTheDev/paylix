@@ -17,6 +17,11 @@ import {
   SUBSCRIPTION_MANAGER_ABI,
 } from "@/lib/contracts";
 import { resolveDeploymentForMode } from "@/lib/deployment";
+import {
+  getToken,
+  resolveTokenAddress,
+  type NetworkKey,
+} from "@paylix/config/networks";
 import { intervalToSeconds } from "@/lib/billing-intervals";
 import {
   parseRelayBody,
@@ -101,7 +106,17 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const parsed = parseRelayBody(body);
   if (!parsed.ok) return errorResponse(parsed.error);
-  const { buyer, deadline, v, r, s, permitValue, intentSignature } = parsed.value;
+  const {
+    buyer,
+    deadline,
+    v,
+    r,
+    s,
+    permitValue,
+    permit2Nonce,
+    permit2Signature,
+    intentSignature,
+  } = parsed.value;
   // (networkKey and tokenSymbol also in parsed.value, validated below after session load)
 
   // 3. Load session + product
@@ -357,13 +372,17 @@ export async function POST(
       }
     }
 
+    // Trial + subscription paths are EIP-2612-only today; the eip2612 guard
+    // at the top of the route ensures these fields are non-null when we get
+    // here. Asserting with ! rather than branching keeps the trial snapshot
+    // shape stable for the trial-converter later.
     const pendingPermitSignature = {
       permit: {
-        value: permitValue.toString(),
+        value: permitValue!.toString(),
         deadline: Number(deadline),
-        v: Number(v),
-        r,
-        s,
+        v: Number(v!),
+        r: r!,
+        s: s!,
       },
       intent: {
         merchantId: session.merchantWallet,
@@ -473,8 +492,75 @@ export async function POST(
   const relayer = createRelayerClient(deployment);
   let txHash: `0x${string}`;
 
+  // Resolve the actual token address + scheme from the registry. Payments
+  // for non-USDC tokens (USDT / WETH / DAI / etc.) target the token's
+  // canonical address, not deployment.usdcAddress. The scheme routes the
+  // call to the right vault function.
+  const tokenConfig = getToken(
+    session.networkKey as NetworkKey,
+    session.tokenSymbol,
+  );
+  const tokenAddress = resolveTokenAddress(tokenConfig);
+  const scheme = tokenConfig.signatureScheme;
+
+  if (scheme === "none" || scheme === "dai-permit") {
+    await releaseRelayLock(db, sessionId).catch(() => {});
+    return NextResponse.json(
+      {
+        error: {
+          code: "scheme_not_supported",
+          message: `Token ${session.tokenSymbol} on ${session.networkKey} uses the '${scheme}' signature scheme, which the relay route doesn't execute yet. Track follow-up work in issue #56.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  // Body-shape guard: Permit2 tokens need permit2Nonce/permit2Signature,
+  // EIP-2612 tokens need v/r/s/permitValue. validation.ts accepts either
+  // but doesn't know which the session's token requires.
+  if (scheme === "permit2" && (permit2Nonce === null || permit2Signature === null)) {
+    await releaseRelayLock(db, sessionId).catch(() => {});
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_body",
+          message: `Token ${session.tokenSymbol} uses Permit2; request must include permit2Nonce and permit2Signature.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+  if (scheme === "eip2612" && (v === null || r === null || s === null || permitValue === null)) {
+    await releaseRelayLock(db, sessionId).catch(() => {});
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_body",
+          message: `Token ${session.tokenSymbol} uses EIP-2612; request must include v, r, s, and permitValue.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   try {
     if (isSubscription) {
+      // Permit2 subscriptions (#55 part 2) require an AllowanceTransfer
+      // PermitSingle grant which the checkout client would need to sign
+      // and this body shape would need to carry. Follow-up work.
+      if (scheme === "permit2") {
+        await releaseRelayLock(db, sessionId).catch(() => {});
+        return NextResponse.json(
+          {
+            error: {
+              code: "scheme_not_supported",
+              message: "Permit2 subscriptions are contract-ready (#55 part 2) but the relay payload wiring is follow-up work. One-time Permit2 payments work today.",
+            },
+          },
+          { status: 400 },
+        );
+      }
       const intervalSeconds = BigInt(intervalToSeconds(session.billingInterval));
       if (intervalSeconds <= BigInt(0)) {
         return NextResponse.json(
@@ -508,26 +594,28 @@ export async function POST(
         const discountCycles = BigInt(
           couponRow.duration === "once" ? 1 : couponRow.durationInCycles ?? 1,
         );
+        // Subscription path guarded at the top — scheme=permit2 subs are
+        // rejected before reaching here, so the ! asserts are sound.
         txHash = await withRetry(() => relayer.writeContract({
           address: deployment.subscriptionManager,
           abi: SUBSCRIPTION_MANAGER_ABI,
           functionName: "createSubscriptionWithPermitDiscount",
           args: [
             {
-              token: deployment.usdcAddress,
+              token: tokenAddress,
               buyer,
               merchant: session.merchantWallet as `0x${string}`,
               amount: tokenAmount,
               interval: intervalSeconds,
               productId: productIdBytes,
               customerId: customerIdBytes,
-              permitValue,
+              permitValue: permitValue!,
               discountAmount,
               discountCycles,
               deadline,
-              v,
-              r,
-              s,
+              v: v!,
+              r: r!,
+              s: s!,
             },
             intentSignature,
           ],
@@ -539,36 +627,60 @@ export async function POST(
           functionName: "createSubscriptionWithPermit",
           args: [
             {
-              token: deployment.usdcAddress,
+              token: tokenAddress,
               buyer,
               merchant: session.merchantWallet as `0x${string}`,
               amount: tokenAmount,
               interval: intervalSeconds,
               productId: productIdBytes,
               customerId: customerIdBytes,
-              permitValue,
+              permitValue: permitValue!,
               deadline,
-              v,
-              r,
-              s,
+              v: v!,
+              r: r!,
+              s: s!,
             },
             intentSignature,
           ],
         }));
       }
+    } else if (scheme === "permit2") {
+      // Permit2 one-time: the buyer's Permit2 signature authorizes a single
+      // transfer of `tokenAmount` of `tokenAddress`. The vault verifies the
+      // intent binding first, then pulls via Permit2.permitTransferFrom.
+      txHash = await withRetry(() => relayer.writeContract({
+        address: deployment.paymentVault,
+        abi: PAYMENT_VAULT_ABI,
+        functionName: "createPaymentWithPermit2",
+        args: [
+          {
+            token: tokenAddress,
+            buyer,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: tokenAmount,
+            productId: productIdBytes,
+            customerId: customerIdBytes,
+            permit2Nonce: permit2Nonce as bigint,
+            permit2Deadline: deadline,
+            permit2Signature: permit2Signature as `0x${string}`,
+            intentSignature,
+          },
+        ],
+      }));
     } else {
+      // scheme === "eip2612" — classic permit path.
       txHash = await withRetry(() => relayer.writeContract({
         address: deployment.paymentVault,
         abi: PAYMENT_VAULT_ABI,
         functionName: "createPaymentWithPermit",
         args: [
-          deployment.usdcAddress,
+          tokenAddress,
           buyer,
           session.merchantWallet as `0x${string}`,
           tokenAmount,
           productIdBytes,
           customerIdBytes,
-          { deadline, v, r, s },
+          { deadline, v: v as number, r: r as `0x${string}`, s: s as `0x${string}` },
           intentSignature,
         ],
       }));

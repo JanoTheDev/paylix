@@ -459,6 +459,143 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       const tokenVersion = activeToken.eip712Version;
       const tokenName = activeToken.name;
 
+      // ──────────────────────────────────────────────────────────────────
+      // Permit2 branch (USDT / WETH / DAI on L2s / WBTC / etc.)
+      // ──────────────────────────────────────────────────────────────────
+      // Tokens without native EIP-2612 are routed through Uniswap's Permit2
+      // singleton at 0x000000000022D473030F116dDEE9F6B43aC78BA3 (same address
+      // on every EVM chain). The buyer signs a PermitTransferFrom authorizing
+      // a one-shot pull; the vault's createPaymentWithPermit2 CPIs Permit2.
+      //
+      // Subscriptions on Permit2 (AllowanceTransfer) are contract-ready
+      // (#55 part 2) but the relay payload wiring is follow-up — so we only
+      // take this branch for one-time payments today.
+      if (activeToken.signatureScheme === "permit2" && !isSubscription) {
+        const PERMIT2_ADDR = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
+
+        // Resolve the actual token address (USDT, WETH, etc.) — not the
+        // chain's USDC. For mainnet entries this is the canonical address
+        // baked into the registry.
+        const tokenAddress = (activeToken.address ?? usdcAddress) as `0x${string}`;
+
+        // Permit2 uses a random uint256 nonce (bitmap-indexed). Generate
+        // one client-side — Permit2 itself enforces uniqueness.
+        const nonceBytes = new Uint8Array(32);
+        crypto.getRandomValues(nonceBytes);
+        const permit2Nonce = BigInt(
+          "0x" + Array.from(nonceBytes).map((b) => b.toString(16).padStart(2, "0")).join(""),
+        );
+
+        setPayStep("approving");
+
+        const permit2Signature = await signTypedDataAsync({
+          domain: {
+            name: "Permit2",
+            chainId,
+            verifyingContract: PERMIT2_ADDR,
+          },
+          types: {
+            PermitTransferFrom: [
+              { name: "permitted", type: "TokenPermissions" },
+              { name: "spender", type: "address" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+            ],
+            TokenPermissions: [
+              { name: "token", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+          },
+          primaryType: "PermitTransferFrom",
+          message: {
+            permitted: {
+              token: tokenAddress,
+              amount: usdcAmount,
+            },
+            spender: paymentVaultAddress,
+            nonce: permit2Nonce,
+            deadline,
+          },
+        });
+
+        // Paylix PaymentIntent binding — same shape as the EIP-2612 path so
+        // the vault's _consumePaymentIntent recovers the same digest.
+        const productIdBytesP2 = keccak256(stringToBytes(session.productId));
+        const customerIdBytesP2 = keccak256(stringToBytes(session.id));
+        const intentNonceP2 = (await publicClient.readContract({
+          address: paymentVaultAddress,
+          abi: PAYMENT_VAULT_ABI,
+          functionName: "getIntentNonce",
+          args: [address as `0x${string}`],
+        })) as bigint;
+
+        const intentSigP2 = await signTypedDataAsync({
+          domain: {
+            name: "Paylix PaymentVault",
+            version: "1",
+            chainId,
+            verifyingContract: paymentVaultAddress,
+          },
+          types: {
+            PaymentIntent: [
+              { name: "buyer", type: "address" },
+              { name: "token", type: "address" },
+              { name: "merchant", type: "address" },
+              { name: "amount", type: "uint256" },
+              { name: "productId", type: "bytes32" },
+              { name: "customerId", type: "bytes32" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+            ],
+          },
+          primaryType: "PaymentIntent",
+          message: {
+            buyer: address as `0x${string}`,
+            token: tokenAddress,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: usdcAmount,
+            productId: productIdBytesP2,
+            customerId: customerIdBytesP2,
+            nonce: intentNonceP2,
+            deadline,
+          },
+        });
+
+        setPayStep("paying");
+
+        const relayResP2 = await fetch(`/api/checkout/${session.id}/relay`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            buyer: address,
+            deadline: deadline.toString(),
+            permit2Nonce: permit2Nonce.toString(),
+            permit2Signature,
+            intentSignature: intentSigP2,
+            networkKey: session.networkKey,
+            tokenSymbol: session.tokenSymbol,
+          }),
+        });
+
+        if (!relayResP2.ok) {
+          const errBody = await relayResP2.json().catch(() => ({}));
+          const errMsg =
+            errBody?.error?.message ||
+            errBody?.error?.code ||
+            `Relay failed (${relayResP2.status})`;
+          throw new Error(errMsg);
+        }
+        const relayBodyP2 = (await relayResP2.json()) as {
+          txHash?: `0x${string}`;
+        };
+        if (relayBodyP2.txHash) setTxHash(relayBodyP2.txHash);
+        setStatus("completed");
+        return;
+      }
+      // ──────────────────────────────────────────────────────────────────
+      // EIP-2612 branch (USDC / PYUSD / subscriptions today)
+      // ──────────────────────────────────────────────────────────────────
+
       // Fetch the current on-chain permit nonce
       const [nonce] = await Promise.all([
         publicClient.readContract({

@@ -498,17 +498,18 @@ describe("getToken", () => {
 });
 
 describe("isTokenUsable + getUsableTokens", () => {
-  it("eip2612 tokens are currently usable", () => {
+  it("eip2612 tokens are usable", () => {
     expect(isTokenUsable(NETWORKS.base.tokens.USDC)).toBe(true);
     expect(isTokenUsable(NETWORKS.ethereum.tokens.PYUSD)).toBe(true);
   });
 
-  it("permit2 tokens are currently inert (relay not dispatched yet)", () => {
-    expect(isTokenUsable(NETWORKS.ethereum.tokens.USDT)).toBe(false);
-    expect(isTokenUsable(NETWORKS.ethereum.tokens.WETH)).toBe(false);
+  it("permit2 tokens are usable for one-time payments (#56 part 2 wired)", () => {
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.USDT)).toBe(true);
+    expect(isTokenUsable(NETWORKS.ethereum.tokens.WETH)).toBe(true);
+    expect(isTokenUsable(NETWORKS.arbitrum.tokens.WBTC)).toBe(true);
   });
 
-  it("dai-permit tokens are currently inert", () => {
+  it("dai-permit tokens stay inert (contract path pending)", () => {
     expect(isTokenUsable(NETWORKS.ethereum.tokens.DAI)).toBe(false);
   });
 
@@ -519,7 +520,8 @@ describe("isTokenUsable + getUsableTokens", () => {
   it("getUsableTokens filters to the active set per network", () => {
     const ethTokens = getUsableTokens(NETWORKS.ethereum);
     const symbols = ethTokens.map((t) => t.symbol).sort();
-    expect(symbols).toEqual(["PYUSD", "USDC"]);
+    // DAI is dai-permit (inert). USDC + PYUSD are eip2612. USDT + WETH + WBTC are permit2.
+    expect(symbols).toEqual(["PYUSD", "USDC", "USDT", "WBTC", "WETH"]);
   });
 });
 

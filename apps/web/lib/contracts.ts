@@ -74,6 +74,30 @@ export const PAYMENT_VAULT_ABI = [
     outputs: [],
   },
   {
+    name: "createPaymentWithPermit2",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "p",
+        type: "tuple",
+        components: [
+          { name: "token", type: "address" },
+          { name: "buyer", type: "address" },
+          { name: "merchant", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "productId", type: "bytes32" },
+          { name: "customerId", type: "bytes32" },
+          { name: "permit2Nonce", type: "uint256" },
+          { name: "permit2Deadline", type: "uint256" },
+          { name: "permit2Signature", type: "bytes" },
+          { name: "intentSignature", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
     name: "getIntentNonce",
     type: "function",
     stateMutability: "view",
