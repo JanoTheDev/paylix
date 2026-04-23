@@ -11,6 +11,7 @@ import {
   SUBSCRIPTION_MANAGER_ABI,
 } from "@/lib/contracts";
 import { NETWORKS, type TokenConfig } from "@paylix/config/networks";
+import { QRCodeSVG } from "qrcode.react";
 import { intervalToSeconds, formatInterval } from "@/lib/billing-intervals";
 import { formatTrialDuration } from "@/lib/format-trial";
 import { fromNativeUnits, formatNativeAmount } from "@/lib/amounts";
@@ -60,6 +61,8 @@ interface CheckoutSession {
   taxRateBps?: number | null;
   taxLabel?: string | null;
   couponDuration?: "once" | "forever" | "repeating" | null;
+  /** UTXO-chain receive address. Null on EVM/Solana sessions. */
+  btcReceiveAddress?: string | null;
   couponDurationInCycles?: number | null;
 }
 
@@ -95,6 +98,17 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     if (!n) return null;
     return (n.tokens as Record<string, TokenConfig>)[session.tokenSymbol] ?? null;
   }, [session.networkKey, session.tokenSymbol]);
+
+  // Chain-family classifier. UTXO chains (Bitcoin / Litecoin) show a QR code
+  // + receive address instead of the EVM/Solana wallet-connect flow — buyers
+  // on these chains send funds from whatever wallet they hold.
+  const networkFamily = useMemo<"evm" | "utxo" | "solana">(() => {
+    const k = session.networkKey;
+    if (!k) return "evm";
+    if (k === "bitcoin" || k === "bitcoin-testnet" || k === "litecoin" || k === "litecoin-testnet") return "utxo";
+    if (k === "solana" || k === "solana-devnet") return "solana";
+    return "evm";
+  }, [session.networkKey]);
   const [customerFields, setCustomerFields] = useState({
     firstName: "",
     lastName: "",
@@ -1199,6 +1213,182 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     } finally {
       setIsPicking(false);
     }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Solana render branch
+  // ──────────────────────────────────────────────────────────────────
+  // Full @solana/wallet-adapter-react integration lands in a follow-up;
+  // until then show a clear "use your Solana wallet directly" screen so
+  // buyers aren't stuck staring at a broken EVM wallet-connect modal.
+  if (networkFamily === "solana" && status !== "completed") {
+    const decimals = activeToken?.decimals ?? 6;
+    const amountStr = formatNativeAmount(
+      BigInt(session.amount),
+      decimals,
+      session.tokenSymbol ?? "USDC",
+    );
+    const merchantTruncated = `${session.merchantWallet.slice(0, 8)}…${session.merchantWallet.slice(-4)}`;
+
+    return (
+      <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold tracking-[-0.4px]">
+            {session.productName}
+          </h1>
+          {session.productDescription && (
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {session.productDescription}
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-border bg-surface-1 p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Pay on Solana</span>
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+              Beta
+            </span>
+          </div>
+          <div className="mb-3">
+            <div className="text-[11px] text-muted-foreground">Amount</div>
+            <MonoText className="text-lg font-semibold tabular-nums">
+              {amountStr}
+            </MonoText>
+          </div>
+          <div>
+            <div className="text-[11px] text-muted-foreground">Merchant</div>
+            <MonoText className="text-xs break-all">
+              {session.merchantWallet}
+            </MonoText>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-border bg-background p-4 text-xs leading-relaxed text-muted-foreground">
+          <p className="font-medium text-foreground mb-2">How to pay</p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>Open Phantom, Backpack, or Solflare on the same device.</li>
+            <li>
+              Send <MonoText>{amountStr}</MonoText> to{" "}
+              <MonoText>{merchantTruncated}</MonoText>.
+            </li>
+            <li>
+              Keep this tab open. Paylix picks up the on-chain event and
+              updates this page automatically.
+            </li>
+          </ol>
+        </div>
+
+        <p className="mt-4 text-center text-[11px] text-muted-foreground">
+          In-page wallet connect is in beta. Hosted Phantom / Backpack flow
+          tracked as a follow-up.
+        </p>
+
+        <div className="mt-6 text-center">
+          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+            Powered by Paylix
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Bitcoin / Litecoin render branch
+  // ──────────────────────────────────────────────────────────────────
+  // UTXO chains have no wallet-connect flow — buyer sends funds from their
+  // own wallet to the merchant's per-session BIP32-derived address. We
+  // show the address + QR + confirmation poll, then flip to `completed`
+  // once the watcher marks it paid.
+  if (networkFamily === "utxo" && status !== "completed") {
+    const coinLabel = session.networkKey?.startsWith("bitcoin") ? "BTC" : "LTC";
+    const decimals = activeToken?.decimals ?? 8;
+    const amountStr = formatNativeAmount(BigInt(session.amount), decimals, coinLabel);
+
+    if (!session.btcReceiveAddress) {
+      return (
+        <Card className="w-full max-w-[480px] p-8 shadow-2xl">
+          <h1 className="text-xl font-semibold tracking-[-0.4px]">
+            {session.productName}
+          </h1>
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>
+              No receive address has been derived for this session yet.
+              Either the merchant hasn&apos;t configured their {coinLabel} xpub
+              yet, or the UTXO indexer isn&apos;t running. Contact the merchant.
+            </AlertDescription>
+          </Alert>
+        </Card>
+      );
+    }
+
+    return (
+      <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold tracking-[-0.4px]">
+            {session.productName}
+          </h1>
+          {session.productDescription && (
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {session.productDescription}
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-surface-1 p-6">
+          <QRCodeSVG
+            value={`${session.networkKey?.startsWith("bitcoin") ? "bitcoin" : "litecoin"}:${session.btcReceiveAddress}?amount=${amountStr.replace(/[^\d.]/g, "")}`}
+            size={220}
+            bgColor="transparent"
+            fgColor="currentColor"
+            level="M"
+          />
+          <div className="text-center">
+            <div className="text-[11px] text-muted-foreground mb-1">
+              Send exactly
+            </div>
+            <MonoText className="text-lg font-semibold tabular-nums">
+              {amountStr}
+            </MonoText>
+          </div>
+          <div className="w-full">
+            <div className="text-[11px] text-muted-foreground mb-1 text-center">
+              To this address
+            </div>
+            <div className="break-all rounded-lg border border-border bg-background px-3 py-2 font-mono text-[12px] text-center">
+              {session.btcReceiveAddress}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full mt-2"
+              onClick={() => {
+                void navigator.clipboard.writeText(session.btcReceiveAddress!);
+              }}
+            >
+              Copy address
+            </Button>
+          </div>
+        </div>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          Waiting for confirmation. {coinLabel} payments typically confirm in{" "}
+          {coinLabel === "BTC" ? "10–20 minutes" : "5–15 minutes"}. Keep this
+          tab open — the page updates automatically.
+        </p>
+
+        <p className="mt-2 text-center text-[11px] text-muted-foreground">
+          Do not send a different amount. Send the exact {amountStr}, or the
+          payment won&apos;t match.
+        </p>
+
+        <div className="mt-6 text-center">
+          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+            Powered by Paylix
+          </span>
+        </div>
+      </Card>
+    );
   }
 
   if (status === "awaiting_currency") {

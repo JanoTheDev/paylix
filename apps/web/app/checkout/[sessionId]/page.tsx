@@ -60,6 +60,7 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
       appliedCouponId: checkoutSessions.appliedCouponId,
       discountCents: checkoutSessions.discountCents,
       subtotalAmount: checkoutSessions.subtotalAmount,
+      btcReceiveAddress: checkoutSessions.btcReceiveAddress,
       couponDuration: coupons.duration,
       couponDurationInCycles: coupons.durationInCycles,
     })

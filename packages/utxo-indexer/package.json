@@ -1,0 +1,23 @@
+{
+  "name": "@paylix/utxo-indexer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@paylix/utxo-watcher": "workspace:*",
+    "@paylix/db": "workspace:*",
+    "@paylix/config": "workspace:*",
+    "drizzle-orm": "^0.38.4"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.4",
+    "tsx": "^4.21.0",
+    "@types/node": "^20"
+  }
+}

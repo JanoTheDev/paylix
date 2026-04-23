@@ -83,6 +83,44 @@ interface UserSettings {
   notificationsEnabled?: boolean;
 }
 
+type AddressKind = "evm" | "solana" | "utxo";
+
+function addressKind(networkKey: string): AddressKind {
+  if (networkKey === "solana" || networkKey === "solana-devnet") return "solana";
+  if (
+    networkKey === "bitcoin" ||
+    networkKey === "bitcoin-testnet" ||
+    networkKey === "litecoin" ||
+    networkKey === "litecoin-testnet"
+  )
+    return "utxo";
+  return "evm";
+}
+
+const ADDRESS_HINT: Record<AddressKind, {
+  placeholder: string;
+  helper: string;
+  regex: RegExp | null;
+}> = {
+  evm: {
+    placeholder: "0x…",
+    helper: "Ethereum-format 0x address (42 chars).",
+    regex: /^0x[a-fA-F0-9]{40}$/,
+  },
+  solana: {
+    placeholder: "e.g. 4Nd1mYd2BTJ1… (base58 pubkey)",
+    helper:
+      "Solana pubkey in base58 (32-44 chars). Merchants receive SPL tokens to the associated token account derived from this pubkey.",
+    regex: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+  },
+  utxo: {
+    placeholder: "xpub… / zpub… / Ltub… (extended public key)",
+    helper:
+      "BIP32 extended public key. Paylix derives a fresh receive address per checkout session — it never sees your private keys.",
+    regex: null, // validated server-side via validateXpub
+  },
+};
+
 interface NetworkConfigUI {
   networkKey: string;
   chainName: string;
@@ -90,6 +128,8 @@ interface NetworkConfigUI {
   enabled: boolean;
   usesDefault: boolean;
   overrideAddress: string | null;
+  /** BIP32 xpub for UTXO chains; null for EVM/Solana. */
+  xpub?: string | null;
   environment?: "mainnet" | "testnet";
   tokenSummary?: Array<{
     symbol: string;
@@ -273,6 +313,14 @@ export default function SettingsPage() {
     );
   }
 
+  function updateXpub(key: string, xpub: string) {
+    setNetworks((prev) =>
+      prev.map((n) =>
+        n.networkKey === key ? { ...n, xpub } : n,
+      ),
+    );
+  }
+
   async function saveMasterNotifications(next: boolean) {
     setNotificationsSaving(true);
     const previous = notificationsEnabled;
@@ -338,7 +386,17 @@ export default function SettingsPage() {
           networks: networks.map((n) => ({
             networkKey: n.networkKey,
             enabled: n.enabled,
-            overrideAddress: n.usesDefault ? null : n.overrideAddress,
+            // UTXO chains store their extended public key instead of a
+            // wallet address. For EVM/Solana, overrideAddress is the
+            // per-network wallet (null = use default).
+            overrideAddress:
+              addressKind(n.networkKey) === "utxo"
+                ? null
+                : n.usesDefault
+                  ? null
+                  : n.overrideAddress,
+            xpub:
+              addressKind(n.networkKey) === "utxo" ? (n.xpub ?? null) : null,
           })),
         }),
       });
@@ -485,46 +543,85 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  {n.enabled && (
-                    <div className="mt-3 flex flex-col gap-2 pt-3 border-t border-border/50">
-                      <div className="text-[11px] text-foreground-muted">
-                        Payout wallet for {n.chainName}:
+                  {n.enabled && (() => {
+                    const kind = addressKind(n.networkKey);
+                    const hint = ADDRESS_HINT[kind];
+                    return (
+                      <div className="mt-3 flex flex-col gap-2 pt-3 border-t border-border/50">
+                        <div className="text-[11px] text-foreground-muted">
+                          {kind === "utxo"
+                            ? `${n.chainName} xpub (BIP32 extended public key):`
+                            : `Payout wallet for ${n.chainName}:`}
+                        </div>
+
+                        {kind === "utxo" ? (
+                          // UTXO chains have no concept of "same as default
+                          // EVM wallet". Merchant must supply their own xpub.
+                          <>
+                            <Input
+                              type="text"
+                              placeholder={hint.placeholder}
+                              value={n.xpub ?? ""}
+                              onChange={(e) =>
+                                updateXpub(n.networkKey, e.target.value)
+                              }
+                              className="font-mono text-xs"
+                            />
+                            <p className="text-[11px] text-foreground-muted">
+                              {hint.helper}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex gap-4 text-xs">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  checked={n.usesDefault}
+                                  onChange={() =>
+                                    setNetworkMode(n.networkKey, "default")
+                                  }
+                                  disabled={kind === "solana"}
+                                />
+                                Use default wallet (same as above)
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  checked={!n.usesDefault}
+                                  onChange={() =>
+                                    setNetworkMode(n.networkKey, "override")
+                                  }
+                                />
+                                Use a different wallet here
+                              </label>
+                            </div>
+                            {kind === "solana" && n.usesDefault && (
+                              <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                                Solana uses base58 pubkeys. Set an override — the EVM-format default wallet won&apos;t work here.
+                              </p>
+                            )}
+                            {!n.usesDefault && (
+                              <>
+                                <Input
+                                  type="text"
+                                  placeholder={hint.placeholder}
+                                  value={n.overrideAddress ?? ""}
+                                  onChange={(e) =>
+                                    updateOverride(n.networkKey, e.target.value)
+                                  }
+                                  className="font-mono text-xs"
+                                />
+                                <p className="text-[11px] text-foreground-muted">
+                                  {hint.helper}
+                                </p>
+                              </>
+                            )}
+                          </>
+                        )}
                       </div>
-                      <div className="flex gap-4 text-xs">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="radio"
-                            checked={n.usesDefault}
-                            onChange={() =>
-                              setNetworkMode(n.networkKey, "default")
-                            }
-                          />
-                          Use default wallet (same as above)
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="radio"
-                            checked={!n.usesDefault}
-                            onChange={() =>
-                              setNetworkMode(n.networkKey, "override")
-                            }
-                          />
-                          Use a different wallet here
-                        </label>
-                      </div>
-                      {!n.usesDefault && (
-                        <Input
-                          type="text"
-                          placeholder={`0x… (wallet for ${n.chainName} only)`}
-                          value={n.overrideAddress ?? ""}
-                          onChange={(e) =>
-                            updateOverride(n.networkKey, e.target.value)
-                          }
-                          className="font-mono text-xs"
-                        />
-                      )}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               ))}
 

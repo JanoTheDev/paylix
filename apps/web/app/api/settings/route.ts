@@ -99,6 +99,7 @@ export async function GET() {
       enabled: row?.enabled ?? false,
       usesDefault: row ? row.walletAddress === null : true,
       overrideAddress: row?.walletAddress ?? null,
+      xpub: row?.xpub ?? null,
     };
   });
 
@@ -181,15 +182,51 @@ export async function PATCH(request: Request) {
         );
       }
 
-      const addr = entry.overrideAddress;
+      // Validate the payout address per chain family:
+      //   EVM     — 0x-prefixed 20-byte hex
+      //   Solana  — base58 pubkey (32-44 chars, base58 alphabet)
+      //   UTXO    — xpub stored separately; overrideAddress is ignored
+      const isSolana =
+        entry.networkKey === "solana" || entry.networkKey === "solana-devnet";
+      const isUtxo =
+        entry.networkKey === "bitcoin" ||
+        entry.networkKey === "bitcoin-testnet" ||
+        entry.networkKey === "litecoin" ||
+        entry.networkKey === "litecoin-testnet";
+
+      const addr = isUtxo ? null : entry.overrideAddress;
+      const xpub = isUtxo ? (typeof entry.xpub === "string" ? entry.xpub : null) : null;
+
       if (
+        !isUtxo &&
         addr !== null &&
         addr !== undefined &&
-        addr !== "" &&
-        !/^0x[a-fA-F0-9]{40}$/.test(addr)
+        addr !== ""
       ) {
+        const okEvm = /^0x[a-fA-F0-9]{40}$/.test(addr);
+        const okSolana = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+        const ok = isSolana ? okSolana : okEvm;
+        if (!ok) {
+          return NextResponse.json(
+            {
+              error: {
+                code: "invalid_wallet",
+                message: `Invalid override address for ${entry.networkKey}. Expected ${isSolana ? "a base58 pubkey" : "a 0x-prefixed Ethereum address"}.`,
+              },
+            },
+            { status: 400 },
+          );
+        }
+      }
+
+      if (isUtxo && xpub && xpub.length < 100) {
         return NextResponse.json(
-          { error: { code: "invalid_wallet", message: `Invalid override address for ${entry.networkKey}` } },
+          {
+            error: {
+              code: "invalid_xpub",
+              message: `Invalid xpub for ${entry.networkKey}. Expected an extended public key (xpub / zpub / Ltub / tpub / ...).`,
+            },
+          },
           { status: 400 },
         );
       }
@@ -201,6 +238,7 @@ export async function PATCH(request: Request) {
           networkKey: entry.networkKey,
           enabled: entry.enabled,
           walletAddress: addr || null,
+          xpub: xpub || null,
         })
         .onConflictDoUpdate({
           target: [
@@ -210,6 +248,7 @@ export async function PATCH(request: Request) {
           set: {
             enabled: entry.enabled,
             walletAddress: addr || null,
+            xpub: xpub || null,
           },
         });
     }
