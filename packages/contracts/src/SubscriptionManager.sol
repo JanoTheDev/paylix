@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "./interfaces/IPermit2.sol";
 
 /// @title SubscriptionManager
 /// @notice Non-custodial recurring USDC billing with keeper-driven charges.
@@ -91,6 +92,15 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// wallet that can cover the charge.
     mapping(uint256 => address[]) public subscriptionBackups;
     uint256 public constant MAX_BACKUP_PAYERS = 5;
+
+    // Permit2 canonical deployment. Same address on every EVM chain Paylix
+    // supports. Used for the AllowanceTransfer recurring-charge path.
+    IPermit2 public constant PERMIT2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
+
+    /// @dev Subscriptions created via createSubscriptionWithPermit2. The
+    /// buyer pre-granted Permit2 allowance; chargeSubscription dispatches
+    /// to `_chargePermit2` for these instead of the ERC20-allowance path.
+    mapping(uint256 => bool) public isPermit2Subscription;
 
     event SubscriptionCreated(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 interval, bytes32 productId, bytes32 customerId);
     event PaymentReceived(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 fee, uint256 timestamp);
@@ -409,6 +419,111 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         );
     }
 
+    /// @dev Packed params for createSubscriptionWithPermit2 — same stack-depth
+    /// concern as PaymentVault.Permit2Payment.
+    struct CreateSubPermit2Params {
+        address token;
+        address buyer;
+        address merchant;
+        uint256 amount;
+        uint256 interval;
+        bytes32 productId;
+        bytes32 customerId;
+        /// Expected to match permit2Permit.sigDeadline so one deadline value
+        /// gates the intent as well as the Permit2 signature.
+        uint256 deadline;
+    }
+
+    /// @notice Create a subscription backed by a Permit2 AllowanceTransfer
+    ///         grant. The buyer signs the allowance once; the keeper charges
+    ///         via Permit2.transferFrom each cycle.
+    /// @param p                 Packed subscription params
+    /// @param permit2Permit     Permit2 PermitSingle (spender must be this contract)
+    /// @param permit2Signature  Buyer's Permit2 signature
+    /// @param intentSignature   EIP-712 SubscriptionIntent signature
+    function createSubscriptionWithPermit2(
+        CreateSubPermit2Params calldata p,
+        IPermit2.PermitSingle calldata permit2Permit,
+        bytes calldata permit2Signature,
+        bytes calldata intentSignature
+    ) external nonReentrant whenNotPaused returns (uint256) {
+        require(msg.sender == relayer, "Only relayer");
+        require(!gaslessPaused, "Gasless paused");
+        require(acceptedTokens[p.token], "Token not accepted");
+        require(p.amount > 0, "Amount must be > 0");
+        require(p.merchant != address(0), "Invalid merchant");
+        require(p.interval > 0, "Invalid interval");
+        require(block.timestamp <= p.deadline, "Intent expired");
+        require(permit2Permit.spender == address(this), "Permit2 spender mismatch");
+        require(permit2Permit.details.token == p.token, "Permit2 token mismatch");
+
+        _consumeSubscriptionIntent(
+            SubIntentParams({
+                buyer: p.buyer,
+                token: p.token,
+                merchant: p.merchant,
+                amount: p.amount,
+                interval: p.interval,
+                productId: p.productId,
+                customerId: p.customerId,
+                // permitValue is part of the legacy (EIP-2612) SubscriptionIntent
+                // typehash; for Permit2 subs we reuse the allowance amount so the
+                // intent signature still binds the buyer to a concrete number.
+                permitValue: permit2Permit.details.amount,
+                deadline: p.deadline
+            }),
+            intentSignature
+        );
+
+        // Grant Permit2 allowance from buyer to this contract. Permit2 verifies
+        // the signature over its own EIP-712 domain and reverts on failure.
+        PERMIT2.permit(p.buyer, permit2Permit, permit2Signature);
+
+        uint256 subId = _storePermit2Subscription(p);
+        _chargePermit2(subId, p.amount);
+        _emitSubscriptionCreated(subId, subscriptions[subId]);
+        return subId;
+    }
+
+    function _storePermit2Subscription(CreateSubPermit2Params calldata p) internal returns (uint256) {
+        uint256 subId = nextSubscriptionId++;
+        subscriptions[subId] = Subscription({
+            subscriber: p.buyer,
+            merchant: p.merchant,
+            token: p.token,
+            amount: p.amount,
+            interval: p.interval,
+            nextChargeDate: block.timestamp + p.interval,
+            productId: p.productId,
+            customerId: p.customerId,
+            createdAt: block.timestamp,
+            status: Status.Active,
+            totalCharged: 0
+        });
+        isPermit2Subscription[subId] = true;
+        return subId;
+    }
+
+    /// @dev Charges via Permit2.transferFrom against the allowance granted at
+    /// creation time. Splits fee identically to the ERC20-allowance path.
+    function _chargePermit2(uint256 subscriptionId, uint256 amount) internal {
+        Subscription storage sub = subscriptions[subscriptionId];
+        uint256 fee = 0;
+        if (platformFee > 0 && platformWallet != address(0)) {
+            fee = (amount * platformFee) / 10000;
+        }
+        uint256 merchantAmount = amount - fee;
+        require(merchantAmount > 0, "Amount too small for fee");
+
+        PERMIT2.transferFrom(sub.subscriber, sub.merchant, uint160(merchantAmount), sub.token);
+        if (fee > 0) {
+            require(platformWallet != address(0), "Invalid platform wallet");
+            PERMIT2.transferFrom(sub.subscriber, platformWallet, uint160(fee), sub.token);
+        }
+        sub.totalCharged += amount;
+        emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
+    }
+
     /// @notice Charge a subscription that is due. Callable by subscriber, merchant,
     ///         or relayer. Moves subscription to PastDue on payment failure instead
     ///         of reverting, so the keeper stays healthy.
@@ -423,6 +538,20 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         );
         require(sub.status == Status.Active, "Not active");
         require(block.timestamp >= sub.nextChargeDate, "Not due yet");
+
+        if (isPermit2Subscription[subscriptionId]) {
+            // Permit2 path: pull directly via Permit2.transferFrom. Let the
+            // revert propagate — the keeper is expected to handle allowance
+            // exhaustion off-chain by looping status into PastDue via a
+            // follow-up call. Simpler than the try/catch dance the ERC20
+            // path needs because there's no backup-payer concept here yet.
+            uint256 amount = _resolveChargeAmount(subscriptionId);
+            require(amount > 0, "Charge amount is zero");
+            _chargePermit2(subscriptionId, amount);
+            require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
+            sub.nextChargeDate = sub.nextChargeDate + sub.interval;
+            return;
+        }
 
         bool success = _tryProcessPayment(subscriptionId);
         if (success) {

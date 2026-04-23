@@ -43,4 +43,45 @@ interface IPermit2 {
 
     /// EIP-712 domain separator — used off-chain to build the signature.
     function DOMAIN_SEPARATOR() external view returns (bytes32);
+
+    // ── AllowanceTransfer (recurring subscriptions) ────────────────
+    //
+    // SignatureTransfer above is single-use. For subscriptions where the
+    // keeper charges on a schedule without the buyer being online, Permit2's
+    // AllowanceTransfer pattern is the right primitive: the buyer signs one
+    // allowance grant up front, and the spender can pull up to `amount` until
+    // `expiration`. The keeper calls `transferFrom` each cycle.
+
+    struct PermitDetails {
+        address token;
+        uint160 amount;
+        uint48 expiration;
+        uint48 nonce;
+    }
+
+    struct PermitSingle {
+        PermitDetails details;
+        address spender;
+        uint256 sigDeadline;
+    }
+
+    /// Set an allowance for `spender` on `owner`'s `token` balance via the
+    /// buyer's off-chain signature. Reverts on bad sig, expired deadline,
+    /// or reused nonce.
+    function permit(
+        address owner,
+        PermitSingle memory permitSingle,
+        bytes calldata signature
+    ) external;
+
+    /// Spend against a previously-granted allowance. The spender (msg.sender)
+    /// must be the one named in the permit; Permit2 decrements the allowance
+    /// and performs the ERC-20 transfer. Reverts if allowance is insufficient
+    /// or expired.
+    function transferFrom(
+        address from,
+        address to,
+        uint160 amount,
+        address token
+    ) external;
 }
