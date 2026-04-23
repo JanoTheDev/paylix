@@ -48,7 +48,7 @@
     "@paylix/config": "workspace:*",
     "@types/node": "25.5.2",
     "tsup": "^8",
-    "typescript": "^5.5",
+    "typescript": "^6.0",
     "vitest": "^4.1.4"
   }
 }

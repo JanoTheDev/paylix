@@ -23,7 +23,7 @@
     "@types/node": "25.5.2",
     "@types/nodemailer": "^6.4.17",
     "@types/react": "^19",
-    "typescript": "^5.5",
+    "typescript": "^6.0",
     "vitest": "^4.1.4"
   }
 }
