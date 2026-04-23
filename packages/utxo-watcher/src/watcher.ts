@@ -1,13 +1,11 @@
 /**
- * High-level UTXO watcher service. Consumes a list of active checkout
- * sessions (from @paylix/db), subscribes to their derived addresses via
- * Electrum, and emits payment events back to the indexer so a payment row
- * is created and the webhook fires.
+ * High-level UTXO watcher service. Consumes active checkout sessions,
+ * subscribes to their derived addresses via Electrum, accumulates credits
+ * per session, and fires `onPayment` once the configured confirmation
+ * threshold is reached.
  *
- * Runtime model mirrors the EVM indexer: single long-running Node process
- * that shares the same Postgres tables, keyed by `network_key = 'bitcoin'`
- * or `'litecoin'` (or the testnet variants). Runs alongside — not as a
- * replacement for — the EVM indexer.
+ * Runtime model: single Node process per chain × network pair, shares the
+ * Postgres tables with the EVM indexer under `network_key='bitcoin'` (etc).
  */
 
 import type { UtxoChainDescriptor } from "./descriptors";
@@ -21,17 +19,20 @@ export interface WatcherSession {
 }
 
 export interface WatcherCallbacks {
-  /** Fired on every scanned transaction that credits a watched address. */
+  /** Fires when a session reaches the configured confirmation threshold. */
   onPayment(session: WatcherSession, hit: AddressPaymentHit): Promise<void>;
-  /** Fired when a session reaches expiresAt without a matching tx. */
+  /** Fires when a session reaches expiresAt without a matching tx. */
   onExpire(session: WatcherSession): Promise<void>;
 }
 
 export interface WatcherOptions {
   descriptor: UtxoChainDescriptor;
   client: ElectrumClient;
+  /** Override the descriptor's default confirmation threshold. */
   confirmations?: number;
   callbacks: WatcherCallbacks;
+  /** How often to sweep expired sessions (default 60s). */
+  expireSweepMs?: number;
 }
 
 export interface WatcherHandle {
@@ -40,16 +41,86 @@ export interface WatcherHandle {
   stop(): Promise<void>;
 }
 
-/**
- * Start a watcher service. Implementation stub — the session ↔ address
- * subscription bookkeeping, confirmation threshold math, and the graceful-
- * shutdown dance are tracked in issue #58's implementation PR. The
- * interface above is what the indexer integration layer targets.
- */
-export function startWatcher(_opts: WatcherOptions): WatcherHandle {
-  throw new Error(
-    "startWatcher is not implemented yet — tracked in issue #58. " +
-      "This interface is the stable contract between the watcher package " +
-      "and the indexer's UTXO integration layer.",
-  );
+interface WatchedSession extends WatcherSession {
+  unsubscribe: () => void;
+  firedFor: Set<string>; // txids we've already reported
+}
+
+class WatcherService implements WatcherHandle {
+  private sessions = new Map<string, WatchedSession>();
+  private expireInterval: NodeJS.Timeout | null = null;
+  private stopped = false;
+  private readonly confirmations: number;
+
+  constructor(private opts: WatcherOptions) {
+    this.confirmations = opts.confirmations ?? opts.descriptor.defaultConfirmations;
+    const sweepMs = opts.expireSweepMs ?? 60_000;
+    this.expireInterval = setInterval(() => void this.sweepExpired(), sweepMs);
+  }
+
+  async watch(session: WatcherSession): Promise<void> {
+    if (this.stopped) throw new Error("Watcher stopped");
+    if (this.sessions.has(session.sessionId)) return;
+
+    const firedFor = new Set<string>();
+    const unsubscribe = await this.opts.client.subscribeAddress(
+      session.address,
+      async (hit) => {
+        if (hit.confirmations < this.confirmations) return;
+        if (hit.valueSats < session.expectedSats) return;
+        if (firedFor.has(hit.txid)) return;
+        firedFor.add(hit.txid);
+
+        try {
+          await this.opts.callbacks.onPayment(session, hit);
+        } finally {
+          // Once we've reported the payment, stop watching this address —
+          // never reuse, never double-credit.
+          await this.unwatch(session.sessionId).catch(() => {});
+        }
+      },
+    );
+
+    this.sessions.set(session.sessionId, {
+      ...session,
+      unsubscribe,
+      firedFor,
+    });
+  }
+
+  async unwatch(sessionId: string): Promise<void> {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) return;
+    entry.unsubscribe();
+    this.sessions.delete(sessionId);
+  }
+
+  private async sweepExpired(): Promise<void> {
+    if (this.stopped) return;
+    const now = Date.now();
+    const expired: WatchedSession[] = [];
+    for (const s of this.sessions.values()) {
+      if (s.expiresAt.getTime() < now) expired.push(s);
+    }
+    for (const s of expired) {
+      try {
+        await this.opts.callbacks.onExpire(s);
+      } catch {
+        // Don't let one merchant callback failure block sweeping others.
+      }
+      await this.unwatch(s.sessionId).catch(() => {});
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.expireInterval) clearInterval(this.expireInterval);
+    for (const s of this.sessions.values()) s.unsubscribe();
+    this.sessions.clear();
+    await this.opts.client.close();
+  }
+}
+
+export function startWatcher(opts: WatcherOptions): WatcherHandle {
+  return new WatcherService(opts);
 }
