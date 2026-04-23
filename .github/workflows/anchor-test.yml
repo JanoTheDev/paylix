@@ -72,9 +72,13 @@ jobs:
           toolchain: stable
 
       - name: Install Solana CLI
+        # Install Solana and commit its bin dir to GITHUB_PATH so every
+        # subsequent step in this job can find `solana-keygen` and `solana`.
         run: |
           sh -c "$(curl -sSfL https://release.solana.com/v${SOLANA_VERSION}/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          SOL_BIN="$HOME/.local/share/solana/install/active_release/bin"
+          echo "$SOL_BIN" >> $GITHUB_PATH
+          "$SOL_BIN/solana" --version
 
       - name: Install Anchor CLI
         run: |
@@ -83,13 +87,14 @@ jobs:
           avm use ${ANCHOR_VERSION}
 
       - name: Generate local keypair
-        run: solana-keygen new --no-bip39-passphrase --force --silent --outfile ~/.config/solana/id.json
+        run: |
+          mkdir -p ~/.config/solana
+          solana-keygen new --no-bip39-passphrase --force --silent --outfile ~/.config/solana/id.json
 
       - name: anchor build
         run: anchor build
 
-      # Integration tests (tests/*.ts) — enabled once issue #63's test harness
-      # lands. Until then, this job validates builds + Rust unit tests only.
+      # Integration tests (tests/*.ts) — run against a local validator.
       - name: anchor test (if tests/*.ts exists)
         run: |
           if ls tests/*.ts >/dev/null 2>&1; then

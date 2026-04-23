@@ -13,7 +13,10 @@ use anchor_spl::token_interface::{
     self, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-declare_id!("PLXSubMan11111111111111111111111111111111");
+// Placeholder program ID — replaced at deploy time. Valid base58, decodes
+// to 32 bytes. Anchor will regenerate during `anchor build` to match the
+// deploy keypair when that exists.
+declare_id!("7xeFzZAtyq5uSVMAbx6N3LBhWFDCimbYhYdLdLg8EMmv");
 
 const BPS_DENOMINATOR: u64 = 10_000;
 const MAX_PLATFORM_FEE_BPS: u16 = 1_000;
@@ -386,7 +389,7 @@ mod tests {
     fn program_id_is_stable() {
         assert_eq!(
             crate::ID.to_string(),
-            "PLXSubMan11111111111111111111111111111111"
+            "7xeFzZAtyq5uSVMAbx6N3LBhWFDCimbYhYdLdLg8EMmv"
         );
     }
 

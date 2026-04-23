@@ -12,7 +12,10 @@ use anchor_spl::token_interface::{
     self, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-declare_id!("PLXPayVau1t1111111111111111111111111111111");
+// Placeholder program ID — replaced at deploy time. Valid base58, decodes
+// to 32 bytes (Anchor docs example). `anchor deploy` generates a real
+// keypair at packages/solana-program/target/deploy/ and syncs it here.
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 const BPS_DENOMINATOR: u64 = 10_000;
 const MAX_PLATFORM_FEE_BPS: u16 = 1_000; // 10%
@@ -243,7 +246,7 @@ mod tests {
     fn program_id_is_stable() {
         assert_eq!(
             crate::ID.to_string(),
-            "PLXPayVau1t1111111111111111111111111111111"
+            "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
         );
     }
 

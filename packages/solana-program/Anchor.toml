@@ -10,12 +10,12 @@ seeds = false
 skip-lint = false
 
 [programs.devnet]
-paylix_payment_vault = "PLXPayVau1t1111111111111111111111111111111"
-paylix_subscription_manager = "PLXSubMan11111111111111111111111111111111"
+paylix_payment_vault = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+paylix_subscription_manager = "7xeFzZAtyq5uSVMAbx6N3LBhWFDCimbYhYdLdLg8EMmv"
 
 [programs.localnet]
-paylix_payment_vault = "PLXPayVau1t1111111111111111111111111111111"
-paylix_subscription_manager = "PLXSubMan11111111111111111111111111111111"
+paylix_payment_vault = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+paylix_subscription_manager = "7xeFzZAtyq5uSVMAbx6N3LBhWFDCimbYhYdLdLg8EMmv"
 
 [registry]
 url = "https://api.apr.dev"

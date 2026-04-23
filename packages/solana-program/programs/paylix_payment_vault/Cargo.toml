@@ -16,5 +16,9 @@ cpi = ["no-entrypoint"]
 default = []
 
 [dependencies]
-anchor-lang = "0.30.1"
+# init-if-needed enables the SetAcceptedToken context's account init pattern.
+# Reviewed in context — we gate the setter on has_one=owner, so the
+# re-initialization attack surface is limited to the owner re-asserting
+# their own AcceptedToken row.
+anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
 anchor-spl = "0.30.1"
