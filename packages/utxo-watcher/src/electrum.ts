@@ -36,6 +36,12 @@ export interface ElectrumClient {
     onHit: (hit: AddressPaymentHit) => void | Promise<void>,
   ): Promise<() => void>;
   getTipHeight(): Promise<number>;
+  /**
+   * Returns the current block height for `txid`, or null if the tx is not
+   * found in any block (dropped, reorged out, or never confirmed). Used by
+   * the reorg monitor to re-verify completed payments — see #76.
+   */
+  getTransactionHeight(txid: string): Promise<number | null>;
   close(): Promise<void>;
 }
 
@@ -263,6 +269,24 @@ class ElectrumWsClient implements ElectrumClient {
       return res.height;
     }
     return 0;
+  }
+
+  async getTransactionHeight(txid: string): Promise<number | null> {
+    try {
+      const tx = await this.request<{ confirmations?: number; blockhash?: string }>(
+        "blockchain.transaction.get",
+        [txid, true],
+      );
+      if (!tx?.blockhash) return null;
+      const conf = typeof tx.confirmations === "number" ? tx.confirmations : 0;
+      if (conf <= 0) return null;
+      const tip = await this.getTipHeight();
+      if (!tip) return null;
+      return tip - conf + 1;
+    } catch {
+      // `missing transaction` / server error → treat as reorged-out.
+      return null;
+    }
   }
 
   async close(): Promise<void> {

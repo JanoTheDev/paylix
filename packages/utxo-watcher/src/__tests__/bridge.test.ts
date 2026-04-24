@@ -8,19 +8,25 @@ const BITCOIN_TEST_XPUB =
 
 function makeFakeClient(): ElectrumClient & {
   _fire: (address: string, hit: AddressPaymentHit) => Promise<void>;
+  _setTxHeight: (txid: string, height: number | null) => void;
 } {
   const subs = new Map<string, (hit: AddressPaymentHit) => void | Promise<void>>();
+  const txHeights = new Map<string, number | null>();
   return {
     async subscribeAddress(address, onHit) {
       subs.set(address, onHit);
       return () => { subs.delete(address); };
     },
     async getTipHeight() { return 1000; },
+    async getTransactionHeight(txid) {
+      return txHeights.has(txid) ? (txHeights.get(txid) ?? null) : null;
+    },
     async close() {},
     async _fire(address, hit) {
       const cb = subs.get(address);
       if (cb) await cb(hit);
     },
+    _setTxHeight(txid, height) { txHeights.set(txid, height); },
   };
 }
 
@@ -149,6 +155,57 @@ describe("bridge", () => {
     });
 
     expect(paid).not.toHaveBeenCalled();
+    await handle.stop();
+  });
+
+  it("fires onReorg when a confirmed tx disappears from chain", async () => {
+    const session: BridgeSessionRow = {
+      sessionId: "sess-4",
+      xpub: BITCOIN_TEST_XPUB,
+      receiveAddress: null,
+      sessionIndex: null,
+      expectedSats: 10_000n,
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+
+    const reorged = vi.fn(async () => {});
+    const client = makeFakeClient();
+    const handle = startBridge({
+      descriptor: DESCRIPTORS.bitcoin,
+      client,
+      pollMs: 3_600_000,
+      confirmations: 2,
+      reorgCheckMs: 10,
+      callbacks: {
+        loadSessions: async () => [session],
+        persistDerivedAddress: async () => {},
+        onPayment: async () => {},
+        onExpire: async () => {},
+        onReorg: reorged,
+        nextSessionIndex: async () => 3,
+      },
+    });
+
+    await handle.tick();
+    const { deriveSessionAddress } = await import("../hd");
+    const derived = deriveSessionAddress(
+      { key: BITCOIN_TEST_XPUB, descriptor: DESCRIPTORS.bitcoin },
+      3,
+    );
+    const txid = "r".repeat(64);
+    // Pretend the tx is initially at height 998; fire the payment.
+    client._setTxHeight(txid, 998);
+    await client._fire(derived.address, {
+      txid,
+      blockHeight: 998,
+      confirmations: 3,
+      vout: 0,
+      valueSats: 10_000n,
+    });
+    // Now simulate reorg: tx no longer on chain.
+    client._setTxHeight(txid, null);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(reorged).toHaveBeenCalledWith("sess-4", txid);
     await handle.stop();
   });
 });

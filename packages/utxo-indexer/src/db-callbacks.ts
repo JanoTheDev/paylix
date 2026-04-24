@@ -146,6 +146,28 @@ export function makeUtxoDbCallbacks(opts: UtxoDbCallbacksOptions): BridgeCallbac
         );
     },
 
+    async onReorg(sessionId: string, txid: string): Promise<void> {
+      // Drop the confirmed payment row + flip the session back to active so
+      // the watcher can re-detect if funds still exist. If the session is
+      // past its expiry by now, it will be swept by onExpire on the next
+      // cycle. See #76.
+      console.warn(
+        `[utxo-indexer] reorg detected for session=${sessionId} tx=${txid}; reverting`,
+      );
+      await db
+        .delete(payments)
+        .where(and(eq(payments.txHash, txid), eq(payments.chain, networkKey)));
+      await db
+        .update(checkoutSessions)
+        .set({ status: "active", completedAt: null })
+        .where(
+          and(
+            eq(checkoutSessions.id, sessionId),
+            eq(checkoutSessions.status, "completed"),
+          ),
+        );
+    },
+
     async nextSessionIndex(xpub: string, sessionId: string): Promise<number> {
       // Monotonic per xpub. Concurrent tick()s would otherwise read the same
       // MAX and hand out duplicate indices — see issue #74. Hold a txn-scoped

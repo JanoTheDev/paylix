@@ -42,6 +42,12 @@ export interface BridgeCallbacks {
   /** Called when a session expires without a payment. */
   onExpire(sessionId: string): Promise<void>;
   /**
+   * Called when a previously-completed payment tx is no longer at its
+   * original block height (reorg/orphan). Optional; callers that omit it
+   * opt out of reorg monitoring.
+   */
+  onReorg?(sessionId: string, txid: string): Promise<void>;
+  /**
    * Atomically reserves the next BIP44 session index for `xpub` and writes it
    * onto the `sessionId` row, so concurrent callers never receive the same
    * index. Returns the reserved index.
@@ -57,6 +63,10 @@ export interface BridgeOptions {
   confirmations?: number;
   /** How often to re-read active sessions from storage (default 15s). */
   pollMs?: number;
+  /** Passed through to the watcher — how often to re-check reorgs (default 120s). */
+  reorgCheckMs?: number;
+  /** Passed through to the watcher — reorg-window depth in blocks (default 100). */
+  reorgWindowBlocks?: number;
 }
 
 export interface BridgeHandle {
@@ -71,6 +81,8 @@ export function startBridge(opts: BridgeOptions): BridgeHandle {
     descriptor: opts.descriptor,
     client: opts.client,
     confirmations: opts.confirmations,
+    reorgCheckMs: opts.reorgCheckMs,
+    reorgWindowBlocks: opts.reorgWindowBlocks,
     callbacks: {
       onPayment: async (session: WatcherSession, hit: AddressPaymentHit) => {
         await opts.callbacks.onPayment(session.sessionId, hit);
@@ -80,6 +92,11 @@ export function startBridge(opts: BridgeOptions): BridgeHandle {
         await opts.callbacks.onExpire(session.sessionId);
         tracked.delete(session.sessionId);
       },
+      onReorg: opts.callbacks.onReorg
+        ? async (sessionId: string, txid: string) => {
+            await opts.callbacks.onReorg!(sessionId, txid);
+          }
+        : undefined,
     },
   });
 
