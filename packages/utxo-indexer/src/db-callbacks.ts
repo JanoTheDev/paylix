@@ -146,25 +146,45 @@ export function makeUtxoDbCallbacks(opts: UtxoDbCallbacksOptions): BridgeCallbac
         );
     },
 
-    async nextSessionIndex(xpub: string): Promise<number> {
-      // Monotonic per xpub — pick MAX(btc_session_index) + 1 so each
-      // session gets a unique BIP44 path even across merchants sharing a
-      // watcher instance (they won't in practice; one indexer per chain).
-      const [row] = await db
-        .select({
-          maxIdx: max(checkoutSessions.btcSessionIndex),
-        })
-        .from(checkoutSessions)
-        .innerJoin(
-          merchantPayoutWallets,
-          and(
-            eq(merchantPayoutWallets.organizationId, checkoutSessions.organizationId),
-            eq(merchantPayoutWallets.xpub, xpub),
-          ),
-        )
-        .where(sql`${checkoutSessions.btcSessionIndex} is not null`);
-      const current = row?.maxIdx ?? -1;
-      return Number(current) + 1;
+    async nextSessionIndex(xpub: string, sessionId: string): Promise<number> {
+      // Monotonic per xpub. Concurrent tick()s would otherwise read the same
+      // MAX and hand out duplicate indices — see issue #74. Hold a txn-scoped
+      // advisory lock keyed on the xpub while we read-max and immediately
+      // write the reserved index back to the session row; any second caller
+      // blocks on the lock and then reads the updated MAX.
+      return await db.transaction(async (tx) => {
+        const lockKey = xpubLockKey(xpub);
+        await tx.execute(sql`select pg_advisory_xact_lock(${lockKey})`);
+        const [row] = await tx
+          .select({ maxIdx: max(checkoutSessions.btcSessionIndex) })
+          .from(checkoutSessions)
+          .innerJoin(
+            merchantPayoutWallets,
+            and(
+              eq(merchantPayoutWallets.organizationId, checkoutSessions.organizationId),
+              eq(merchantPayoutWallets.xpub, xpub),
+            ),
+          )
+          .where(sql`${checkoutSessions.btcSessionIndex} is not null`);
+        const next = Number(row?.maxIdx ?? -1) + 1;
+        await tx
+          .update(checkoutSessions)
+          .set({ btcSessionIndex: next })
+          .where(eq(checkoutSessions.id, sessionId));
+        return next;
+      });
     },
   };
+}
+
+/** 64-bit signed advisory-lock key from an xpub — stable across processes. */
+function xpubLockKey(xpub: string): bigint {
+  let h = 0xcbf29ce484222325n; // FNV-1a 64-bit offset basis
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < xpub.length; i++) {
+    h = (h ^ BigInt(xpub.charCodeAt(i))) * prime;
+    h &= 0xffffffffffffffffn;
+  }
+  // Convert to signed 64-bit for pg_advisory_xact_lock(bigint).
+  return h > 0x7fffffffffffffffn ? h - 0x10000000000000000n : h;
 }

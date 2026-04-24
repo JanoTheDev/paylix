@@ -66,10 +66,13 @@ const BITCOIN_TESTNET_NETWORK: UtxoNetworkMagic = {
 };
 
 // ── Litecoin ──────────────────────────────────────────────────────
+// Ltub/Ltpv BIP32 version bytes. Using Bitcoin's (0x0488b21e/0x0488ade4)
+// here would silently accept a Bitcoin xpub as a Litecoin xpub and derive
+// LTC addresses from BTC keys — see issue #73.
 const LITECOIN_MAINNET_NETWORK: UtxoNetworkMagic = {
   messagePrefix: "\x19Litecoin Signed Message:\n",
   bech32: "ltc",
-  bip32: { public: 0x0488b21e, private: 0x0488ade4 },
+  bip32: { public: 0x019da462, private: 0x019d9cfe },
   pubKeyHash: 0x30,
   scriptHash: 0x32,
   wif: 0xb0,
@@ -91,7 +94,9 @@ export const DESCRIPTORS: Record<UtxoChainKey, UtxoChainDescriptor> = {
     environment: "mainnet",
     bip44CoinType: 0,
     satoshisPerCoin: 100_000_000n,
-    defaultConfirmations: 2,
+    // 6 confs (~1 hour) is the standard merchant threshold. Operators can
+    // lower via UTXO_CONFIRMATIONS but the default must be safe — see #77.
+    defaultConfirmations: 6,
     explorerTxUrl: "https://mempool.space/tx/{txid}",
     defaultElectrumEndpoint: "wss://electrum.blockstream.info:50002",
     network: BITCOIN_MAINNET_NETWORK,

@@ -76,11 +76,39 @@ export function addressToScriptHash(
     wif: descriptor.network.wif,
   };
   const script = bitcoin.address.toOutputScript(address, network);
+  return scriptToElectrumScripthash(script);
+}
+
+function scriptToElectrumScripthash(script: Uint8Array): string {
   const digest = sha256(script);
   // Electrum expects little-endian; reverse byte order.
   const reversed = new Uint8Array(digest.length);
   for (let i = 0; i < digest.length; i++) reversed[i] = digest[digest.length - 1 - i];
   return bytesToHex(reversed);
+}
+
+/** Hash a raw scriptPubKey hex string to its Electrum scripthash. */
+export function hashScriptToElectrumScripthash(scriptHex: string): string {
+  const clean = scriptHex.startsWith("0x") ? scriptHex.slice(2) : scriptHex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return scriptToElectrumScripthash(bytes);
+}
+
+/**
+ * Convert a decimal BTC amount (possibly a string from verbose Electrum
+ * responses) to satoshis without losing precision. Avoids the IEEE-754
+ * rounding that `Number(x) * 1e8` introduces for large outputs.
+ */
+export function btcStringToSats(value: number | string): bigint {
+  const raw = typeof value === "string" ? value : value.toFixed(8);
+  const [whole, frac = ""] = raw.split(".");
+  const padded = (frac + "00000000").slice(0, 8);
+  const sign = whole.startsWith("-") ? -1n : 1n;
+  const absWhole = whole.replace(/^-/, "") || "0";
+  return sign * (BigInt(absWhole) * 100_000_000n + BigInt(padded || "0"));
 }
 
 class ElectrumWsClient implements ElectrumClient {
@@ -186,23 +214,28 @@ class ElectrumWsClient implements ElectrumClient {
     for (const entry of history) {
       if (entry.height <= 0) continue; // mempool only
       const confirmations = Math.max(0, tip - entry.height + 1);
-      const tx = await this.request<{ vout?: Array<{ value: number; n: number; scriptPubKey?: { hex?: string } }> }>(
+      const tx = await this.request<{ vout?: Array<{ value: number | string; n: number; scriptPubKey?: { hex?: string } }> }>(
         "blockchain.transaction.get",
         [entry.tx_hash, true],
       );
       const outs = tx.vout ?? [];
       for (const out of outs) {
-        // Filter: include any vout whose script matches our scripthash. For
-        // simplicity we emit every vout and let the watcher sum them by
-        // scripthash — real Electrum servers already filter server-side.
+        // Only emit vouts whose scriptPubKey hashes to the scripthash we
+        // subscribed to. Without this check any tx containing a vout of the
+        // right value could be attributed to an unrelated session — see
+        // issue #72.
+        const scriptHex = out.scriptPubKey?.hex;
+        if (!scriptHex) continue;
+        if (hashScriptToElectrumScripthash(scriptHex) !== scripthash) continue;
         await cb({
           txid: entry.tx_hash,
           blockHeight: entry.height,
           confirmations,
           vout: out.n,
-          // Electrum reports values in whole BTC; convert to satoshis with
-          // bigint precision. Third-party servers sometimes return a string.
-          valueSats: BigInt(Math.round(Number(out.value) * 1e8)),
+          // Convert decimal BTC to satoshis via string arithmetic. Routing
+          // through Number() loses precision for large outputs or dust —
+          // see issue #75.
+          valueSats: btcStringToSats(out.value),
         });
       }
     }

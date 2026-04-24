@@ -43,6 +43,7 @@ describe("bridge", () => {
       descriptor: DESCRIPTORS.bitcoin,
       client,
       pollMs: 3_600_000,
+      confirmations: 2,
       callbacks: {
         loadSessions: async () => [session],
         persistDerivedAddress: async (id, addr, idx) => { persisted.push({ id, addr, idx }); },

@@ -41,8 +41,12 @@ export interface BridgeCallbacks {
   onPayment(sessionId: string, hit: AddressPaymentHit): Promise<void>;
   /** Called when a session expires without a payment. */
   onExpire(sessionId: string): Promise<void>;
-  /** Returns the next BIP44 session index to use for a fresh derivation. */
-  nextSessionIndex(xpub: string): Promise<number>;
+  /**
+   * Atomically reserves the next BIP44 session index for `xpub` and writes it
+   * onto the `sessionId` row, so concurrent callers never receive the same
+   * index. Returns the reserved index.
+   */
+  nextSessionIndex(xpub: string, sessionId: string): Promise<number>;
 }
 
 export interface BridgeOptions {
@@ -91,7 +95,7 @@ export function startBridge(opts: BridgeOptions): BridgeHandle {
       let address = row.receiveAddress;
       let index = row.sessionIndex;
       if (!address || index === null) {
-        const nextIndex = await opts.callbacks.nextSessionIndex(row.xpub);
+        const nextIndex = await opts.callbacks.nextSessionIndex(row.xpub, row.sessionId);
         const derived = deriveSessionAddress(
           { key: row.xpub, descriptor: opts.descriptor },
           nextIndex,
