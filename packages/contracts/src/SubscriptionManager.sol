@@ -452,6 +452,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(acceptedTokens[p.token], "Token not accepted");
         require(p.amount > 0, "Amount must be > 0");
         require(p.merchant != address(0), "Invalid merchant");
+        require(p.buyer != address(0), "Invalid buyer");
         require(p.interval > 0, "Invalid interval");
         require(block.timestamp <= p.deadline, "Intent expired");
         require(permit2Permit.spender == address(this), "Permit2 spender mismatch");
@@ -506,6 +507,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     /// @dev Charges via Permit2.transferFrom against the allowance granted at
     /// creation time. Splits fee identically to the ERC20-allowance path.
+    /// Reverts on failure (used for sub creation where revert is correct).
     function _chargePermit2(uint256 subscriptionId, uint256 amount) internal {
         Subscription storage sub = subscriptions[subscriptionId];
         uint256 fee = 0;
@@ -524,6 +526,34 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
     }
 
+    /// @dev Non-reverting Permit2 charge for the keeper path. Returns true on
+    /// success, false if the Permit2 pull reverts (expired allowance, funds
+    /// gone, etc.) so caller can transition to PastDue.
+    function _tryChargePermit2(uint256 subscriptionId, uint256 amount) internal returns (bool) {
+        Subscription storage sub = subscriptions[subscriptionId];
+        uint256 fee = 0;
+        if (platformFee > 0 && platformWallet != address(0)) {
+            fee = (amount * platformFee) / 10000;
+        }
+        uint256 merchantAmount = amount - fee;
+        if (merchantAmount == 0) return false;
+
+        try PERMIT2.transferFrom(sub.subscriber, sub.merchant, uint160(merchantAmount), sub.token) {
+            if (fee > 0 && platformWallet != address(0)) {
+                try PERMIT2.transferFrom(sub.subscriber, platformWallet, uint160(fee), sub.token) {} catch {
+                    // Merchant leg succeeded but fee leg failed. Count the cycle
+                    // paid (subscriber's intent honored) and skip the fee this cycle.
+                    fee = 0;
+                }
+            }
+            sub.totalCharged += amount;
+            emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /// @notice Charge a subscription that is due. Callable by subscriber, merchant,
     ///         or relayer. Moves subscription to PastDue on payment failure instead
     ///         of reverting, so the keeper stays healthy.
@@ -540,16 +570,20 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(block.timestamp >= sub.nextChargeDate, "Not due yet");
 
         if (isPermit2Subscription[subscriptionId]) {
-            // Permit2 path: pull directly via Permit2.transferFrom. Let the
-            // revert propagate — the keeper is expected to handle allowance
-            // exhaustion off-chain by looping status into PastDue via a
-            // follow-up call. Simpler than the try/catch dance the ERC20
-            // path needs because there's no backup-payer concept here yet.
+            // Permit2 path: pull via Permit2.transferFrom inside try/catch so
+            // expired allowance or insufficient balance flips status to
+            // PastDue instead of reverting — the keeper stays healthy and the
+            // subscription becomes cancelable through the normal PastDue flow.
             uint256 amount = _resolveChargeAmount(subscriptionId);
             require(amount > 0, "Charge amount is zero");
-            _chargePermit2(subscriptionId, amount);
-            require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
-            sub.nextChargeDate = sub.nextChargeDate + sub.interval;
+            bool paid = _tryChargePermit2(subscriptionId, amount);
+            if (paid) {
+                require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
+                sub.nextChargeDate = sub.nextChargeDate + sub.interval;
+            } else {
+                sub.status = Status.PastDue;
+                emit SubscriptionPastDue(subscriptionId, sub.subscriber, sub.merchant);
+            }
             return;
         }
 
