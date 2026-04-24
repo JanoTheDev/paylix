@@ -314,8 +314,21 @@ export default function ErrorCodesPage() {
             </DocTableCell>
             <DocTableCell>
               <span className="text-foreground-muted">
-                Permit signature deadline is in the past or too far in the
-                future.
+                Permit signature deadline has already elapsed (now ≥ deadline).
+              </span>
+            </DocTableCell>
+          </DocTableRow>
+          <DocTableRow>
+            <DocTableCell mono>
+              <span className="text-foreground">deadline_out_of_window</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">400</span>
+            </DocTableCell>
+            <DocTableCell>
+              <span className="text-foreground-muted">
+                Deadline is further in the future than the relay's configured
+                acceptance window (e.g. trial-length + grace).
               </span>
             </DocTableCell>
           </DocTableRow>

@@ -146,9 +146,15 @@ used so the workspace compiles cleanly in CI.
 
 **Bitcoin / Litecoin.** UTXO watcher (`@paylix/utxo-watcher`) is callback-
 driven; wire your `loadSessions` / `persistDerivedAddress` / `onPayment` /
-`onExpire` / `nextSessionIndex` against whatever storage you run. Default
-Electrum endpoints are baked into the descriptors; override per merchant
-via `${CHAIN}_ELECTRUM_URL` env.
+`onExpire` / `nextSessionIndex(xpub, sessionId)` / `onReorg?` against
+whatever storage you run. `nextSessionIndex` must be atomic — the default
+Drizzle implementation uses a Postgres advisory lock keyed on the xpub to
+prevent two concurrent sessions from being handed the same BIP32 index.
+`onReorg` is optional but recommended: it fires when a confirmed tx is no
+longer on chain at its original height (rolled back by a reorg). Default
+confirmation threshold is 6 on Bitcoin mainnet; override with
+`UTXO_CONFIRMATIONS`. Default Electrum endpoints are baked into the
+descriptors; override per merchant via `${CHAIN}_ELECTRUM_URL` env.
 
 ## Step 4 — Start services
 
