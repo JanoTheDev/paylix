@@ -132,6 +132,7 @@ describe("paylix_subscription_manager", () => {
           merchantAta,
           platformAta,
           tokenProgram: TOKEN_PROGRAM_ID,
+          caller: provider.wallet.publicKey,
         })
         .rpc();
     } catch (err) {

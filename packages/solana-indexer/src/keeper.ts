@@ -135,6 +135,7 @@ async function chargeOne(
       { pubkey: sub.merchantAta, isSigner: false, isWritable: true },
       { pubkey: sub.platformAta, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: keeper.publicKey, isSigner: true, isWritable: false },
     ],
     // No extra args beyond the discriminator — charge_subscription takes
     // no parameters; everything comes from the subscription PDA's state.

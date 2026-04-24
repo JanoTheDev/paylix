@@ -112,15 +112,19 @@ pub mod paylix_subscription_manager {
     }
 
     /// Charge a subscription whose `next_charge_at` has passed. Callable
-    /// by subscriber, keeper, or anyone (the authority check for the
-    /// pull is the delegate grant on buyer_ata, not this signer). Seeding
-    /// `keeper` in `config` narrows the allowed callers — the account
-    /// constraint enforces `signer == config.keeper OR signer == subscriber`.
+    /// by the configured keeper or by the subscriber themselves — enforced
+    /// at the account-validation layer via the `caller` signer and the
+    /// `constraint` on ChargeSubscription.
     pub fn charge_subscription(ctx: Context<ChargeSubscription>) -> Result<()> {
         let cfg = &ctx.accounts.config;
         require!(!cfg.paused, ErrorCode::Paused);
 
         let sub = &mut ctx.accounts.subscription;
+        require!(
+            ctx.accounts.caller.key() == cfg.keeper
+                || ctx.accounts.caller.key() == sub.subscriber,
+            ErrorCode::Unauthorized
+        );
         require!(sub.status == SubStatus::Active as u8, ErrorCode::NotActive);
 
         let now = Clock::get()?.unix_timestamp;
@@ -350,11 +354,15 @@ pub struct ChargeSubscription<'info> {
     #[account(mut)]
     pub platform_ata: InterfaceAccount<'info, TokenAccount>,
     pub token_program: Interface<'info, TokenInterface>,
+
+    /// Keeper or subscriber must sign. Authorization is asserted inside
+    /// `charge_subscription` against `config.keeper` / `subscription.subscriber`.
+    pub caller: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct CancelSubscription<'info> {
-    #[account(mut)]
+    #[account(mut, seeds = [b"sub", subscription.id.to_le_bytes().as_ref()], bump = subscription.bump)]
     pub subscription: Account<'info, Subscription>,
     pub authority: Signer<'info>,
 }
