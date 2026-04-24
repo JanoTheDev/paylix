@@ -149,7 +149,8 @@ export function SolanaPay(props: SolanaPayProps) {
         );
       }
 
-      const { blockhash } = await connection.getLatestBlockhash("finalized");
+      const { blockhash, lastValidBlockHeight } =
+        await connection.getLatestBlockhash("finalized");
       const msg = new TransactionMessage({
         payerKey: buyer,
         recentBlockhash: blockhash,
@@ -166,7 +167,10 @@ export function SolanaPay(props: SolanaPayProps) {
       );
       setTxSig(sig);
       setPayStep("confirming");
-      await connection.confirmTransaction(sig, "confirmed");
+      await connection.confirmTransaction(
+        { signature: sig, blockhash, lastValidBlockHeight },
+        "confirmed",
+      );
       setPayStep("complete");
       props.onComplete(sig);
     } catch (err) {
