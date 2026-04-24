@@ -377,6 +377,22 @@ export default function SettingsPage() {
   }
 
   async function saveNetworks() {
+    // Reject malformed EVM/Solana override addresses before hitting the API.
+    // Without this the user would only learn of a typo after the round-trip
+    // (issue #81).
+    for (const n of networks) {
+      if (!n.enabled || n.usesDefault) continue;
+      const kind = addressKind(n.networkKey);
+      if (kind === "utxo") continue;
+      const override = (n.overrideAddress ?? "").trim();
+      if (!override) continue;
+      const regex = ADDRESS_HINT[kind].regex;
+      if (regex && !regex.test(override)) {
+        toast.error(`Invalid ${kind.toUpperCase()} address for ${n.displayLabel}`);
+        return;
+      }
+    }
+
     setNetworksSaving(true);
     try {
       const res = await fetch("/api/settings", {

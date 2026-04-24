@@ -889,10 +889,16 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       // EIP-2612 branch (USDC / PYUSD / subscriptions today)
       // ──────────────────────────────────────────────────────────────────
 
+      // Resolve the actual token address for this session. Until the fix for
+      // issue #78 this branch assumed USDC everywhere, which broke non-USDC
+      // EIP-2612 tokens (PYUSD, bridged DAI) because the permit nonce was
+      // read from USDC and the intent signed against USDC's address.
+      const tokenAddress = (activeToken.address ?? usdcAddress) as `0x${string}`;
+
       // Fetch the current on-chain permit nonce
       const [nonce] = await Promise.all([
         publicClient.readContract({
-          address: usdcAddress,
+          address: tokenAddress,
           abi: ERC20_PERMIT_ABI,
           functionName: "nonces",
           args: [address as `0x${string}`],
@@ -906,7 +912,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
           name: tokenName as string,
           version: tokenVersion as string,
           chainId,
-          verifyingContract: usdcAddress,
+          verifyingContract: tokenAddress,
         },
         types: {
           Permit: [
@@ -999,7 +1005,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             primaryType: "SubscriptionIntentDiscount",
             message: {
               buyer: address as `0x${string}`,
-              token: usdcAddress,
+              token: tokenAddress,
               merchant: session.merchantWallet as `0x${string}`,
               amount: usdcAmount,
               interval: intervalSeconds,
@@ -1037,7 +1043,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             primaryType: "SubscriptionIntent",
             message: {
               buyer: address as `0x${string}`,
-              token: usdcAddress,
+              token: tokenAddress,
               merchant: session.merchantWallet as `0x${string}`,
               amount: usdcAmount,
               interval: intervalSeconds,
@@ -1072,7 +1078,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
           primaryType: "PaymentIntent",
           message: {
             buyer: address as `0x${string}`,
-            token: usdcAddress,
+            token: tokenAddress,
             merchant: session.merchantWallet as `0x${string}`,
             amount: usdcAmount,
             productId: productIdBytes,

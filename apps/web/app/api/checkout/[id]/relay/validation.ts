@@ -84,7 +84,8 @@ export type ValidationError =
   | { code: "session_expired" }
   | { code: "session_not_payable"; status: string }
   | { code: "session_already_relayed" }
-  | { code: "deadline_passed" };
+  | { code: "deadline_passed" }
+  | { code: "deadline_out_of_window" };
 
 const HEX_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const HEX_BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -427,7 +428,7 @@ export function validateDeadline(
     return { ok: false, error: { code: "deadline_passed" } };
   }
   if (deadline - nowSeconds > BigInt(actualMaxWindowSeconds)) {
-    return { ok: false, error: { code: "deadline_passed" } };
+    return { ok: false, error: { code: "deadline_out_of_window" } };
   }
   return { ok: true };
 }

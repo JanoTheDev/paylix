@@ -8,7 +8,6 @@
 
 import {
   getActiveNetwork,
-  NETWORKS,
   type NetworkConfig,
   type NetworkKey,
   type TokenConfig,
@@ -46,19 +45,21 @@ export const USDC_ADDRESS: `0x${string}` = (USDC_TOKEN.address ??
 /**
  * Resolves a network config based on the caller's current mode.
  *
- * Test mode → base-sepolia
- * Live mode → base (mainnet)
- *
- * This is the per-request equivalent of the module-level `NETWORK` constant,
- * suitable for server components and API routes where mode is known at
- * request time. Client components stuck with build-time NEXT_PUBLIC_NETWORK
- * continue to use the `NETWORK` / `CHAIN` / etc. constants above until
- * Phase 3's checkout page retrofit lands.
- *
- * When additional chains are added, extend this mapping (or grow the signature
- * to take an optional `networkKey` parameter) so mode + chain pick the right
- * entry from `NETWORKS`.
+ * Per the CLAUDE.md invariant ("flipping NEXT_PUBLIC_NETWORK must switch the
+ * whole app at once"), this deployment serves exactly one network — the one
+ * pinned via `NEXT_PUBLIC_NETWORK`. If the caller's mode doesn't match the
+ * active network's environment, that's a deployment/config mismatch and we
+ * throw loudly instead of silently returning the wrong chain.
  */
 export function getNetworkForMode(livemode: boolean): NetworkConfig {
-  return livemode ? NETWORKS["base"] : NETWORKS["base-sepolia"];
+  const wantsMainnet = livemode;
+  const isMainnet = NETWORK.environment === "mainnet";
+  if (wantsMainnet !== isMainnet) {
+    throw new Error(
+      `getNetworkForMode(${livemode}): active network '${NETWORK.key}' is ${NETWORK.environment}; ` +
+        `livemode='${livemode}' requires a ${wantsMainnet ? "mainnet" : "testnet"} deployment. ` +
+        `Set NEXT_PUBLIC_NETWORK accordingly.`,
+    );
+  }
+  return NETWORK;
 }
