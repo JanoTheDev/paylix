@@ -57,16 +57,24 @@ function makeInsertChain(table: string) {
 // Table objects imported from @paylix/db/schema are distinct object
 // identities; we tag which table an insert/select targets by object
 // reference so the mock can route correctly.
-import { payments, checkoutSessions, unmatchedEvents } from "@paylix/db/schema";
+import { payments, checkoutSessions, unmatchedEvents, subscriptions } from "@paylix/db/schema";
+
+const mockDbInsertRouter = vi.fn((table: unknown) => {
+  const name =
+    table === payments
+      ? "payments"
+      : table === subscriptions
+        ? "subscriptions"
+        : table === unmatchedEvents
+          ? "unmatchedEvents"
+          : "checkoutSessions";
+  return makeInsertChain(name);
+});
 
 const mockDb = {
   select: vi.fn(() => makeSelectChain()),
   update: vi.fn((_table: unknown) => makeUpdateChain()),
-  insert: vi.fn((table: unknown) => {
-    const name =
-      table === payments ? "payments" : table === unmatchedEvents ? "unmatchedEvents" : "checkoutSessions";
-    return makeInsertChain(name);
-  }),
+  insert: mockDbInsertRouter,
 };
 
 beforeEach(() => {
@@ -186,5 +194,68 @@ describe("makeSolanaDbCallbacks().recordPayment", () => {
     expect(unmatchedInsert).toBeDefined();
     expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaPaymentReceivedUnknownMint" });
     expect(insertCalls.find((c) => c.table === "payments")).toBeUndefined();
+  });
+});
+
+const baseSubCreatedEvent = {
+  signature: "sig_sub_1",
+  slot: 200,
+  programId: "prog_manager",
+  subscriptionId: 42n,
+  subscriber: "subscriber_pubkey",
+  merchantAta: "merchant_ata",
+  mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  amount: 1_000_000n,
+  intervalSeconds: 2_592_000n, // 30 days
+  productId: keccak256(stringToBytes("prod_1")),
+  customerId: keccak256(stringToBytes(SESSION_ID)),
+};
+
+describe("makeSolanaDbCallbacks().recordSubscriptionCreated", () => {
+  it("inserts a subscription row and completes the session on a match", async () => {
+    selectResults.push([matchingSession({ status: "active" })]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCreated(baseSubCreatedEvent);
+
+    const subInsert = insertCalls.find((c) => c.table === "subscriptions");
+    expect(subInsert).toBeDefined();
+    expect(subInsert!.values).toMatchObject({
+      productId: "prod_1",
+      organizationId: "org_1",
+      customerId: CUSTOMER_UUID,
+      subscriberAddress: "subscriber_pubkey",
+      contractAddress: "prog_manager",
+      networkKey: "solana",
+      tokenSymbol: "USDC",
+      status: "active",
+      onChainId: "42",
+      intervalSeconds: 2_592_000,
+      livemode: false,
+    });
+    expect(updateCalls[0].set).toMatchObject({ status: "completed" });
+  });
+
+  it("records an unmatched event when no session matches", async () => {
+    selectResults.push([]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCreated(baseSubCreatedEvent);
+
+    const unmatchedInsert = insertCalls.find((c) => c.table === "unmatchedEvents");
+    expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaSubscriptionCreated" });
+  });
+
+  it("records an unmatched event when the matched session has no customerId", async () => {
+    selectResults.push([matchingSession({ customerId: null })]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCreated(baseSubCreatedEvent);
+
+    // subscriptions.customerId is NOT NULL — unlike a one-time payment, there
+    // is no valid row to write, so this must not silently drop the event.
+    const unmatchedInsert = insertCalls.find((c) => c.table === "unmatchedEvents");
+    expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaSubscriptionCreatedNoCustomer" });
+    expect(insertCalls.find((c) => c.table === "subscriptions")).toBeUndefined();
   });
 });

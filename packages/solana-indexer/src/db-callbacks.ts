@@ -10,7 +10,7 @@
 import { and, desc, eq, or } from "drizzle-orm";
 import { keccak256, stringToBytes } from "viem";
 import type { Database } from "@paylix/db/client";
-import { payments, checkoutSessions, unmatchedEvents } from "@paylix/db/schema";
+import { payments, checkoutSessions, unmatchedEvents, subscriptions } from "@paylix/db/schema";
 import type { WriterCallbacks } from "./writer";
 import { resolveMint } from "./token-registry";
 
@@ -112,8 +112,53 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         .where(eq(checkoutSessions.id, session.id));
     },
 
-    async recordSubscriptionCreated(): Promise<void> {
-      throw new Error("not implemented"); // Task 3
+    async recordSubscriptionCreated(ev): Promise<void> {
+      const session = await findMatchingSession(ev.customerId, "subscription");
+      if (!session) {
+        await recordUnmatched("SolanaSubscriptionCreated", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      if (!session.customerId) {
+        // subscriptions.customerId is NOT NULL — unlike recordPayment, there
+        // is no valid row to write without one. Retain for investigation
+        // rather than silently dropping.
+        await recordUnmatched("SolanaSubscriptionCreatedNoCustomer", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      let token;
+      try {
+        token = resolveMint(networkKey, ev.mint);
+      } catch {
+        await recordUnmatched("SolanaSubscriptionCreatedUnknownMint", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      const intervalSeconds = Number(ev.intervalSeconds);
+      const now = new Date();
+      const nextChargeDate = new Date(now.getTime() + intervalSeconds * 1000);
+
+      await db.insert(subscriptions).values({
+        productId: session.productId,
+        organizationId: session.organizationId,
+        customerId: session.customerId,
+        subscriberAddress: ev.subscriber,
+        contractAddress: ev.programId,
+        networkKey,
+        tokenSymbol: token.symbol,
+        status: "active",
+        onChainId: ev.subscriptionId.toString(),
+        intervalSeconds,
+        currentPeriodStart: now,
+        nextChargeDate,
+        livemode: session.livemode,
+      });
+
+      await db
+        .update(checkoutSessions)
+        .set({ status: "completed", completedAt: new Date() })
+        .where(eq(checkoutSessions.id, session.id));
     },
     async recordSubscriptionCharged(): Promise<void> {
       throw new Error("not implemented"); // Task 4
