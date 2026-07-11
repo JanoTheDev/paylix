@@ -228,8 +228,27 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         })
         .where(eq(subscriptions.id, subscription.id));
     },
-    async recordSubscriptionCancelled(): Promise<void> {
-      throw new Error("not implemented"); // Task 5
+    async recordSubscriptionCancelled(ev): Promise<void> {
+      const [subscription] = await db
+        .select()
+        .from(subscriptions)
+        .where(
+          and(
+            eq(subscriptions.contractAddress, ev.programId),
+            eq(subscriptions.onChainId, ev.subscriptionId.toString()),
+          ),
+        )
+        .limit(1);
+
+      if (!subscription) {
+        await recordUnmatched("SolanaSubscriptionCancelled", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      await db
+        .update(subscriptions)
+        .set({ status: "cancelled" })
+        .where(eq(subscriptions.id, subscription.id));
     },
   };
 }

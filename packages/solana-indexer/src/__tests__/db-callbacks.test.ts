@@ -344,3 +344,39 @@ describe("makeSolanaDbCallbacks().recordSubscriptionCharged", () => {
     expect(updateCalls.length).toBe(0);
   });
 });
+
+const baseSubCancelledEvent = {
+  signature: "sig_cancel_1",
+  slot: 400,
+  programId: "prog_manager",
+  subscriptionId: 42n,
+};
+
+describe("makeSolanaDbCallbacks().recordSubscriptionCancelled", () => {
+  it("flips the subscription to cancelled on a match", async () => {
+    selectResults.push([matchingSubscription()]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCancelled(baseSubCancelledEvent);
+
+    expect(updateCalls[0].set).toMatchObject({ status: "cancelled" });
+  });
+
+  it("records an unmatched event when no subscription matches", async () => {
+    selectResults.push([]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCancelled(baseSubCancelledEvent);
+
+    const unmatchedInsert = insertCalls.find((c) => c.table === "unmatchedEvents");
+    expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaSubscriptionCancelled" });
+  });
+
+  it("is idempotent on redelivery — re-cancelling an already-cancelled subscription does not throw", async () => {
+    selectResults.push([matchingSubscription({ status: "cancelled" })]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await expect(callbacks.recordSubscriptionCancelled(baseSubCancelledEvent)).resolves.not.toThrow();
+    expect(updateCalls[0].set).toMatchObject({ status: "cancelled" });
+  });
+});
