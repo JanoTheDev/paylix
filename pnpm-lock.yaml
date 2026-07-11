@@ -374,6 +374,12 @@ importers:
       '@solana/web3.js':
         specifier: ^1.95.0
         version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      drizzle-orm:
+        specifier: ^0.38.4
+        version: 0.38.4(@opentelemetry/api@1.9.1)(@types/react@19.2.14)(kysely@0.28.15)(postgres@3.4.9)(react@19.2.5)
+      viem:
+        specifier: ^2
+        version: 2.47.11(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
     devDependencies:
       '@types/node':
         specifier: ^20
@@ -18165,7 +18171,7 @@ snapshots:
     dependencies:
       ws: 8.18.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
-  isows@1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
+  isows@1.0.7(ws@8.18.3(bufferutil@4.1.0)):
     dependencies:
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
@@ -20739,7 +20745,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.22.4)
-      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0))
       ox: 0.14.13(typescript@5.9.3)(zod@3.22.4)
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
@@ -20756,7 +20762,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
-      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0))
       ox: 0.14.13(typescript@5.9.3)(zod@3.25.76)
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
@@ -20773,7 +20779,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@4.3.6)
-      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      isows: 1.0.7(ws@8.18.3(bufferutil@4.1.0))
       ox: 0.14.13(typescript@5.9.3)(zod@4.3.6)
       ws: 8.18.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
