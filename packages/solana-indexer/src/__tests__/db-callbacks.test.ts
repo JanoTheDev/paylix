@@ -274,3 +274,72 @@ describe("makeSolanaDbCallbacks().recordSubscriptionCreated", () => {
     expect(updateCalls[0].set).toMatchObject({ status: "completed" });
   });
 });
+
+function matchingSubscription(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "sub_row_1",
+    productId: "prod_1",
+    organizationId: "org_1",
+    customerId: CUSTOMER_UUID,
+    contractAddress: "prog_manager",
+    onChainId: "42",
+    intervalSeconds: 2_592_000,
+    tokenSymbol: "USDC",
+    networkKey: "solana",
+    livemode: false,
+    ...overrides,
+  };
+}
+
+const baseSubChargedEvent = {
+  signature: "sig_charge_1",
+  slot: 300,
+  programId: "prog_manager",
+  subscriptionId: 42n,
+  subscriber: "subscriber_pubkey",
+  merchantAta: "merchant_ata",
+  mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  amount: 1_000_000n,
+};
+
+describe("makeSolanaDbCallbacks().recordSubscriptionCharged", () => {
+  it("inserts a payment row and advances the subscription on a match", async () => {
+    selectResults.push([matchingSubscription()]); // subscription lookup
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCharged(baseSubChargedEvent);
+
+    const paymentInsert = insertCalls.find((c) => c.table === "payments");
+    expect(paymentInsert!.values).toMatchObject({
+      productId: "prod_1",
+      organizationId: "org_1",
+      customerId: CUSTOMER_UUID,
+      amount: 100,
+      status: "confirmed",
+      txHash: "sig_charge_1",
+      chain: "solana",
+      token: "USDC",
+    });
+    expect(updateCalls[0].set.nextChargeDate).toBeInstanceOf(Date);
+    expect(updateCalls[0].set).toMatchObject({ pastDueSince: null, chargeFailureCount: 0 });
+  });
+
+  it("records an unmatched event when no subscription matches", async () => {
+    selectResults.push([]);
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await callbacks.recordSubscriptionCharged(baseSubChargedEvent);
+
+    const unmatchedInsert = insertCalls.find((c) => c.table === "unmatchedEvents");
+    expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaSubscriptionCharged" });
+    expect(insertCalls.find((c) => c.table === "payments")).toBeUndefined();
+  });
+
+  it("does not throw on a duplicate charge signature", async () => {
+    selectResults.push([matchingSubscription()]);
+    insertResults.push(new Error("duplicate key value violates unique constraint \"payments_chain_tx_idx\""));
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await expect(callbacks.recordSubscriptionCharged(baseSubChargedEvent)).resolves.not.toThrow();
+  });
+});

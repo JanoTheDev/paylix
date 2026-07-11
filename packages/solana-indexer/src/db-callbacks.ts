@@ -166,8 +166,67 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(checkoutSessions.id, session.id));
     },
-    async recordSubscriptionCharged(): Promise<void> {
-      throw new Error("not implemented"); // Task 4
+    async recordSubscriptionCharged(ev): Promise<void> {
+      const [subscription] = await db
+        .select()
+        .from(subscriptions)
+        .where(
+          and(
+            eq(subscriptions.contractAddress, ev.programId),
+            eq(subscriptions.onChainId, ev.subscriptionId.toString()),
+          ),
+        )
+        .limit(1);
+
+      if (!subscription) {
+        // Could be a race with recordSubscriptionCreated on the same slot.
+        await recordUnmatched("SolanaSubscriptionCharged", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      let token;
+      try {
+        token = resolveMint(networkKey, ev.mint);
+      } catch {
+        await recordUnmatched("SolanaSubscriptionChargedUnknownMint", ev.signature, ev.slot, ev);
+        return;
+      }
+
+      const amountCents = Math.round(Number(ev.amount) / 10 ** (token.decimals - 2));
+
+      try {
+        await db.insert(payments).values({
+          productId: subscription.productId,
+          organizationId: subscription.organizationId,
+          customerId: subscription.customerId,
+          amount: amountCents,
+          fee: 0,
+          status: "confirmed",
+          txHash: ev.signature,
+          chain: networkKey,
+          token: token.symbol,
+          fromAddress: ev.subscriber,
+          toAddress: ev.merchantAta,
+          blockNumber: ev.slot,
+          livemode: subscription.livemode,
+        });
+      } catch (err) {
+        console.warn(`[solana-db-callbacks] recurring payment insert for sub ${subscription.id} failed:`, err);
+        return;
+      }
+
+      const intervalMs = (subscription.intervalSeconds ?? 0) * 1000;
+      const now = new Date();
+      await db
+        .update(subscriptions)
+        .set({
+          currentPeriodStart: now,
+          currentPeriodEnd: new Date(now.getTime() + intervalMs),
+          nextChargeDate: new Date(now.getTime() + intervalMs),
+          pastDueSince: null,
+          chargeFailureCount: 0,
+        })
+        .where(eq(subscriptions.id, subscription.id));
     },
     async recordSubscriptionCancelled(): Promise<void> {
       throw new Error("not implemented"); // Task 5
