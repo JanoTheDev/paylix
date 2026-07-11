@@ -139,21 +139,27 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
       const now = new Date();
       const nextChargeDate = new Date(now.getTime() + intervalSeconds * 1000);
 
-      await db.insert(subscriptions).values({
-        productId: session.productId,
-        organizationId: session.organizationId,
-        customerId: session.customerId,
-        subscriberAddress: ev.subscriber,
-        contractAddress: ev.programId,
-        networkKey,
-        tokenSymbol: token.symbol,
-        status: "active",
-        onChainId: ev.subscriptionId.toString(),
-        intervalSeconds,
-        currentPeriodStart: now,
-        nextChargeDate,
-        livemode: session.livemode,
-      });
+      try {
+        await db.insert(subscriptions).values({
+          productId: session.productId,
+          organizationId: session.organizationId,
+          customerId: session.customerId,
+          subscriberAddress: ev.subscriber,
+          contractAddress: ev.programId,
+          networkKey,
+          tokenSymbol: token.symbol,
+          status: "active",
+          onChainId: ev.subscriptionId.toString(),
+          intervalSeconds,
+          currentPeriodStart: now,
+          nextChargeDate,
+          livemode: session.livemode,
+        });
+      } catch (err) {
+        // subscriptions_contract_on_chain_id_idx unique index rejects duplicates — expected
+        // on redelivery of the same subscription event.
+        console.warn(`[solana-db-callbacks] subscription insert for ${session.id} failed:`, err);
+      }
 
       await db
         .update(checkoutSessions)

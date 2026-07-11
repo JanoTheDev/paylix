@@ -258,4 +258,19 @@ describe("makeSolanaDbCallbacks().recordSubscriptionCreated", () => {
     expect(unmatchedInsert!.values).toMatchObject({ eventType: "SolanaSubscriptionCreatedNoCustomer" });
     expect(insertCalls.find((c) => c.table === "subscriptions")).toBeUndefined();
   });
+
+  it("does not throw when the subscription insert hits a duplicate unique constraint", async () => {
+    selectResults.push([matchingSession({ status: "active" })]);
+    insertResults.push(
+      new Error(
+        'duplicate key value violates unique constraint "subscriptions_contract_on_chain_id_idx"',
+      ),
+    );
+
+    const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
+    await expect(callbacks.recordSubscriptionCreated(baseSubCreatedEvent)).resolves.not.toThrow();
+
+    // Session still gets flipped to completed even though the subscription insert raced.
+    expect(updateCalls[0].set).toMatchObject({ status: "completed" });
+  });
 });
