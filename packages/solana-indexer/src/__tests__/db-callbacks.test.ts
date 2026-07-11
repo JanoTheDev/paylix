@@ -341,5 +341,6 @@ describe("makeSolanaDbCallbacks().recordSubscriptionCharged", () => {
 
     const callbacks = makeSolanaDbCallbacks({ db: mockDb as never, networkKey: "solana" });
     await expect(callbacks.recordSubscriptionCharged(baseSubChargedEvent)).resolves.not.toThrow();
+    expect(updateCalls.length).toBe(0);
   });
 });
