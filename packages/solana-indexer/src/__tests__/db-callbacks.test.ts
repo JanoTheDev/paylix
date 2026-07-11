@@ -124,7 +124,7 @@ describe("makeSolanaDbCallbacks().recordPayment", () => {
       organizationId: "org_1",
       customerId: CUSTOMER_UUID,
       amount: 100, // 1_000_000 / 10^(6-2) = 100 cents
-      fee: 0.5, // see rounding note in implementation step
+      fee: 1, // 5_000 / 10^(6-2) = 0.5, rounded to nearest cent
       status: "confirmed",
       txHash: "sig_1",
       chain: "solana",

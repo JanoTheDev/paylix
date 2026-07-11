@@ -81,8 +81,8 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
       }
 
       if (session.customerId) {
-        const amountCents = Number(ev.amount) / 10 ** (token.decimals - 2);
-        const feeCents = Number(ev.fee) / 10 ** (token.decimals - 2);
+        const amountCents = Math.round(Number(ev.amount) / 10 ** (token.decimals - 2));
+        const feeCents = Math.round(Number(ev.fee) / 10 ** (token.decimals - 2));
         try {
           await db.insert(payments).values({
             productId: session.productId,
