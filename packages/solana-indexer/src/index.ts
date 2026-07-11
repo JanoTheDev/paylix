@@ -11,8 +11,11 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
+import { createDb } from "@paylix/db/client";
 import { startListener } from "./listener";
 import { startKeeper } from "./keeper";
+import { makeSolanaDbCallbacks } from "./db-callbacks";
+import { makeEventHandler } from "./writer";
 
 function requireEnv(key: string): string {
   const v = process.env[key];
@@ -20,8 +23,17 @@ function requireEnv(key: string): string {
   return v;
 }
 
+function requireNetworkKey(): "solana" | "solana-devnet" {
+  const v = requireEnv("SOLANA_NETWORK_KEY");
+  if (v !== "solana" && v !== "solana-devnet") {
+    throw new Error(`SOLANA_NETWORK_KEY must be "solana" or "solana-devnet", got "${v}"`);
+  }
+  return v;
+}
+
 async function main(): Promise<void> {
   const rpcUrl = requireEnv("SOLANA_RPC_URL");
+  const networkKey = requireNetworkKey();
   const commitment =
     (process.env.SOLANA_COMMITMENT as "finalized" | "confirmed" | undefined) ??
     "finalized";
@@ -38,22 +50,26 @@ async function main(): Promise<void> {
     );
   }
 
+  console.log(`[solana-indexer] starting on network_key=${networkKey} rpc=${rpcUrl}`);
+  const db = createDb(requireEnv("DATABASE_URL"));
+  const dbCallbacks = makeSolanaDbCallbacks({ db, networkKey });
+  const onEvent = makeEventHandler(dbCallbacks);
+
   const listener = await startListener({
     connection,
     programIds,
     commitment,
     onEvent: async (ev) => {
-      // Hook point for the DB writer — real integration in the #57 follow-up
-      // PR that adds Postgres bindings for Solana network_key tables.
-      console.log(`[solana-listener] ${ev.kind} at slot ${ev.slot} sig=${ev.signature}`);
+      console.log(`[solana-listener] ${ev.event.kind} at slot ${ev.slot} sig=${ev.signature}`);
+      await onEvent(ev);
     },
   });
 
   const keeper = await startKeeper({
     connection,
-    // Full wiring (keeper keypair load, due-subscription query) needs the
-    // DB bindings above. Running in skeleton mode here lets the service
-    // boot cleanly until that lands.
+    // Keeper charging (keypair load + due-subscription query) is a separate
+    // follow-up — see docs/superpowers/specs/2026-07-11-solana-indexer-db-writer-design.md.
+    // Listener-side DB wiring above is complete; this is the keeper's own gap.
   });
 
   const shutdown = async (): Promise<void> => {
