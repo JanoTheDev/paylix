@@ -71,8 +71,7 @@ function extract(file) {
   const headings = [];
   const headingRe =
     /<(SectionHeading|SubsectionHeading)[^>]*>([\s\S]*?)<\/\1>/g;
-  let m;
-  while ((m = headingRe.exec(src))) {
+  for (let m = headingRe.exec(src); m; m = headingRe.exec(src)) {
     const text = cleanInnerText(m[2]);
     if (!text) continue;
     headings.push({ text, anchor: slugify(text) });
@@ -80,7 +79,7 @@ function extract(file) {
 
   // Plain <h1>...<h3> too (some pages use raw elements).
   const hRe = /<(h1|h2|h3)[^>]*>([\s\S]*?)<\/\1>/g;
-  while ((m = hRe.exec(src))) {
+  for (let m = hRe.exec(src); m; m = hRe.exec(src)) {
     const text = cleanInnerText(m[2]);
     if (!text) continue;
     if (headings.some((h) => h.text === text)) continue;

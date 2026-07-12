@@ -38,6 +38,7 @@ export async function CodeBlock({
       <div className="relative">
         <div
           className="[&_pre]:overflow-x-auto [&_pre]:px-4 [&_pre]:py-4 [&_pre]:text-[13px] [&_pre]:leading-relaxed [&_code]:font-mono"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: html is generated at build time by shiki's codeToHtml() from local MDX source, not user input
           dangerouslySetInnerHTML={{ __html: html }}
         />
         <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">

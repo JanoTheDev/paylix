@@ -135,13 +135,15 @@ export function SearchDialog() {
       </button>
 
       {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm"
-          onClick={close}
-        >
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            onClick={close}
+            aria-label="Close search"
+          />
           <div
-            className="mt-[12vh] w-full max-w-[560px] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="relative z-10 mt-[12vh] w-full max-w-[560px] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-2xl"
           >
             <div className="flex items-center gap-3 border-b border-border px-4 py-3">
               <Search className="size-4 text-foreground-muted" />
@@ -188,7 +190,7 @@ export function SearchDialog() {
                     const crumb =
                       r.kind === "heading" ? r.entry.title : undefined;
                     return (
-                      <li key={`${href}-${i}`}>
+                      <li key={href}>
                         <Link
                           href={href}
                           onClick={close}

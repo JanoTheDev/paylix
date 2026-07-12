@@ -80,6 +80,7 @@ export function MobileNav() {
           Paylix Docs
         </Link>
         <button
+          type="button"
           onClick={() => setOpen(!open)}
           aria-label={open ? "Close navigation" : "Open navigation"}
           className="inline-flex size-10 items-center justify-center rounded-lg text-foreground-muted hover:bg-surface-2 hover:text-foreground"

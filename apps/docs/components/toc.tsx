@@ -15,6 +15,7 @@ export function Toc() {
   const [items, setItems] = useState<TocItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname isn't read in the body but is needed to re-run this effect and rescan headings whenever the route changes
   useEffect(() => {
     const main = document.querySelector("main");
     if (!main) return;
@@ -60,7 +61,9 @@ export function Toc() {
       },
       { rootMargin: "-80px 0px -60% 0px", threshold: 0 },
     );
-    headings.forEach((h) => observer.observe(h));
+    headings.forEach((h) => {
+      observer.observe(h);
+    });
     return () => observer.disconnect();
   }, [pathname]);
 
