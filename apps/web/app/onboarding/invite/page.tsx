@@ -6,16 +6,20 @@ import { OnboardingStepper } from "@/components/onboarding-stepper";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+function makeRow(): { id: string; email: string } {
+  return { id: crypto.randomUUID(), email: "" };
+}
+
 export default function InvitePage() {
   const router = useRouter();
-  const [rows, setRows] = useState<string[]>(["", "", ""]);
+  const [rows, setRows] = useState(() => [makeRow(), makeRow(), makeRow()]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
     setSubmitting(true);
     setError(null);
-    const emails = rows.map((r) => r.trim()).filter(Boolean);
+    const emails = rows.map((r) => r.email.trim()).filter(Boolean);
     const results = await Promise.all(
       emails.map((email) =>
         authClient.organization.inviteMember({ email, role: "member" }),
@@ -47,14 +51,15 @@ export default function InvitePage() {
         </p>
       </div>
       <div className="space-y-3">
-        {rows.map((email, i) => (
+        {rows.map((row) => (
           <Input
-            key={i}
+            key={row.id}
             type="email"
-            value={email}
+            value={row.email}
             onChange={(e) => {
-              const next = [...rows];
-              next[i] = e.target.value;
+              const next = rows.map((r) =>
+                r.id === row.id ? { ...r, email: e.target.value } : r,
+              );
               setRows(next);
             }}
             placeholder="teammate@example.com"
@@ -62,7 +67,7 @@ export default function InvitePage() {
         ))}
         <button
           type="button"
-          onClick={() => setRows([...rows, ""])}
+          onClick={() => setRows([...rows, makeRow()])}
           className="text-sm text-slate-400 hover:text-slate-200"
         >
           + Add another

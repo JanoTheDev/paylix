@@ -47,10 +47,7 @@ const columns = [
   col.text<CustomerRow>("paymentCount", "Payments", { align: "right" }),
   col.date<CustomerRow>("lastPayment", "Last Payment"),
   col.actions<CustomerRow>((row) => (
-    <div
-      className="flex items-center gap-2"
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div className="flex items-center gap-2">
       {row.activeSubscriptionCount > 0 && (
         <Badge variant="success">Subscriber</Badge>
       )}

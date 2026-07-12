@@ -10,8 +10,8 @@ export function LoadingState({ variant = "card" }: LoadingStateProps) {
   if (variant === "table") {
     return (
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-1 p-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-10 w-full" />
+        {["row-1", "row-2", "row-3", "row-4", "row-5"].map((rowKey) => (
+          <Skeleton key={rowKey} className="h-10 w-full" />
         ))}
       </div>
     );

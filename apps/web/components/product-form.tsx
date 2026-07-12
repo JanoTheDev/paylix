@@ -181,10 +181,11 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
   }, [hasTrial]);
 
   const [metadataRows, setMetadataRows] = useState<
-    { key: string; value: string }[]
+    { id: string; key: string; value: string }[]
   >(
     initialData?.metadata
       ? Object.entries(initialData.metadata).map(([key, value]) => ({
+          id: crypto.randomUUID(),
           key,
           value,
         }))
@@ -199,11 +200,11 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
   });
 
   const [prices, setPrices] = useState<
-    Array<{ networkKey: string; tokenSymbol: string; amount: string }>
+    Array<{ id: string; networkKey: string; tokenSymbol: string; amount: string }>
   >(
     initialData?.prices && initialData.prices.length > 0
-      ? initialData.prices
-      : [{ networkKey: "", tokenSymbol: "", amount: "" }],
+      ? initialData.prices.map((p) => ({ id: crypto.randomUUID(), ...p }))
+      : [{ id: crypto.randomUUID(), networkKey: "", tokenSymbol: "", amount: "" }],
   );
 
   const [enabledNetworks, setEnabledNetworks] = useState<
@@ -299,7 +300,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
   function addPrice() {
     setPrices((prev) => [
       ...prev,
-      { networkKey: "", tokenSymbol: "", amount: "" },
+      { id: crypto.randomUUID(), networkKey: "", tokenSymbol: "", amount: "" },
     ]);
   }
 
@@ -322,7 +323,10 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
     setMetadataRows((prev) => prev.filter((_, i) => i !== index));
   }
   function addMetadataRow() {
-    setMetadataRows((prev) => [...prev, { key: "", value: "" }]);
+    setMetadataRows((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), key: "", value: "" },
+    ]);
   }
   function toggleCheckoutField(field: keyof typeof checkoutFields) {
     setCheckoutFields((prev) => ({ ...prev, [field]: !prev[field] }));
@@ -613,7 +617,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
               <div className="space-y-3">
                 {prices.map((p, i) => (
                   <div
-                    key={i}
+                    key={p.id}
                     className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end"
                   >
                     <div>
@@ -719,7 +723,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
             <div className="space-y-2">
               {metadataRows.map((row, i) => (
                 <div
-                  key={i}
+                  key={row.id}
                   className="flex flex-col gap-2 sm:flex-row sm:items-center"
                 >
                   <Input

@@ -36,8 +36,8 @@ export function ActionMenu({ items, label = "Actions" }: ActionMenuProps) {
         <MoreHorizontal className="h-4 w-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[180px]">
-        {items.map((item, i) => (
-          <Fragment key={`${item.label}-${i}`}>
+        {items.map((item) => (
+          <Fragment key={item.label}>
             {item.separatorBefore && <DropdownMenuSeparator />}
             <DropdownMenuItem
               onSelect={item.onSelect}

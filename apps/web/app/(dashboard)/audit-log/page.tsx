@@ -147,6 +147,7 @@ export default function AuditLogPage() {
         {RESOURCE_FILTERS.map((f) => (
           <button
             key={f.value}
+            type="button"
             onClick={() => setFilter(f.value)}
             className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               filter === f.value
@@ -162,10 +163,14 @@ export default function AuditLogPage() {
       {/* Search + action + date range */}
       <div className="mb-6 flex flex-wrap items-end gap-3">
         <div className="flex flex-1 min-w-[200px] flex-col gap-1">
-          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+          <label
+            htmlFor="audit-log-search"
+            className="text-[11px] uppercase tracking-wide text-foreground-muted"
+          >
             Search
           </label>
           <input
+            id="audit-log-search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Resource ID, email, or details…"
@@ -173,10 +178,14 @@ export default function AuditLogPage() {
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+          <label
+            htmlFor="audit-log-action"
+            className="text-[11px] uppercase tracking-wide text-foreground-muted"
+          >
             Action
           </label>
           <select
+            id="audit-log-action"
             value={action}
             onChange={(e) => setAction(e.target.value)}
             className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
@@ -190,10 +199,14 @@ export default function AuditLogPage() {
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+          <label
+            htmlFor="audit-log-from"
+            className="text-[11px] uppercase tracking-wide text-foreground-muted"
+          >
             From
           </label>
           <input
+            id="audit-log-from"
             type="date"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
@@ -201,10 +214,14 @@ export default function AuditLogPage() {
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] uppercase tracking-wide text-foreground-muted">
+          <label
+            htmlFor="audit-log-to"
+            className="text-[11px] uppercase tracking-wide text-foreground-muted"
+          >
             To
           </label>
           <input
+            id="audit-log-to"
             type="date"
             value={to}
             onChange={(e) => setTo(e.target.value)}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Rocket, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,8 +48,19 @@ export function OnboardingWizard({
   const [productName, setProductName] = useState("");
   const [productType, setProductType] = useState<"one_time" | "subscription">("one_time");
   const [billingInterval, setBillingInterval] = useState("");
-  type PriceEntry = { networkKey: string; tokenSymbol: string; amount: string };
-  const [prices, setPrices] = useState<PriceEntry[]>([{ networkKey: "", tokenSymbol: "", amount: "" }]);
+  type PriceEntry = {
+    id: string;
+    networkKey: string;
+    tokenSymbol: string;
+    amount: string;
+  };
+  const makePriceEntry = (): PriceEntry => ({
+    id: crypto.randomUUID(),
+    networkKey: "",
+    tokenSymbol: "",
+    amount: "",
+  });
+  const [prices, setPrices] = useState<PriceEntry[]>([makePriceEntry()]);
   const [trialDays, setTrialDays] = useState("");
   const [enabledNetworks, setEnabledNetworks] = useState<NetworkInfo[]>([]);
 
@@ -214,17 +225,21 @@ export function OnboardingWizard({
 
   const totalSteps = hasWallet ? 3 : 4;
   const displayStep = hasWallet && step >= 3 ? step - 1 : step;
+  const stepDotIds = useMemo(
+    () => Array.from({ length: totalSteps }, () => crypto.randomUUID()),
+    [totalSteps],
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col items-center px-4 py-16">
       <div className="mb-8 flex items-center gap-2">
-        {Array.from({ length: totalSteps }, (_, i) => {
+        {stepDotIds.map((dotId, i) => {
           const stepNum = i + 1;
           const isCurrent = displayStep === stepNum;
           const isPast = displayStep > stepNum;
           return (
             <div
-              key={i}
+              key={dotId}
               className={
                 "h-2 w-8 rounded-full transition-colors " +
                 (isCurrent
@@ -346,13 +361,13 @@ export function OnboardingWizard({
               ) : (
                 <>
                   {prices.map((price, idx) => (
-                    <div key={idx} className="rounded-lg border border-border p-3 space-y-2">
+                    <div key={price.id} className="rounded-lg border border-border p-3 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-foreground-muted">Price {idx + 1}</span>
                         {prices.length > 1 && (
                           <button
                             type="button"
-                            onClick={() => setPrices((p) => p.filter((_, i) => i !== idx))}
+                            onClick={() => setPrices((p) => p.filter((entry) => entry.id !== price.id))}
                             className="text-xs text-destructive hover:underline"
                           >
                             Remove
@@ -363,9 +378,13 @@ export function OnboardingWizard({
                         <Select
                           value={price.networkKey}
                           onValueChange={(v) => {
-                            const next = [...prices];
-                            next[idx] = { ...next[idx], networkKey: v, tokenSymbol: "" };
-                            setPrices(next);
+                            setPrices((prev) =>
+                              prev.map((entry) =>
+                                entry.id === price.id
+                                  ? { ...entry, networkKey: v, tokenSymbol: "" }
+                                  : entry,
+                              ),
+                            );
                           }}
                         >
                           <SelectTrigger><SelectValue placeholder="Network" /></SelectTrigger>
@@ -378,9 +397,11 @@ export function OnboardingWizard({
                         <Select
                           value={price.tokenSymbol}
                           onValueChange={(v) => {
-                            const next = [...prices];
-                            next[idx] = { ...next[idx], tokenSymbol: v };
-                            setPrices(next);
+                            setPrices((prev) =>
+                              prev.map((entry) =>
+                                entry.id === price.id ? { ...entry, tokenSymbol: v } : entry,
+                              ),
+                            );
                           }}
                         >
                           <SelectTrigger><SelectValue placeholder="Token" /></SelectTrigger>
@@ -399,9 +420,12 @@ export function OnboardingWizard({
                           className="font-mono"
                           value={price.amount}
                           onChange={(e) => {
-                            const next = [...prices];
-                            next[idx] = { ...next[idx], amount: e.target.value };
-                            setPrices(next);
+                            const val = e.target.value;
+                            setPrices((prev) =>
+                              prev.map((entry) =>
+                                entry.id === price.id ? { ...entry, amount: val } : entry,
+                              ),
+                            );
                           }}
                         />
                       </div>
@@ -411,7 +435,7 @@ export function OnboardingWizard({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setPrices((p) => [...p, { networkKey: "", tokenSymbol: "", amount: "" }])}
+                    onClick={() => setPrices((p) => [...p, makePriceEntry()])}
                   >
                     + Add price
                   </Button>

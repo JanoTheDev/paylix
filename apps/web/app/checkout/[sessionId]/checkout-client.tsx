@@ -1521,6 +1521,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 {g.items.map((p) => (
                   <button
                     key={`${p.networkKey}:${p.tokenSymbol}`}
+                    type="button"
                     onClick={() =>
                       handlePickCurrency(p.networkKey, p.tokenSymbol)
                     }
@@ -1857,6 +1858,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                     {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ""}
                   </MonoText>
                   <button
+                    type="button"
                     onClick={() => open()}
                     className="text-xs text-muted-foreground hover:text-foreground"
                   >
@@ -1875,6 +1877,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                         return (
                           <button
                             key={`${p.networkKey}:${p.tokenSymbol}`}
+                            type="button"
                             onClick={() =>
                               !selected &&
                               handlePickCurrency(p.networkKey, p.tokenSymbol)

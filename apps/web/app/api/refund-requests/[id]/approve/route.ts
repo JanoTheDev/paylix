@@ -72,7 +72,7 @@ export async function POST(
     transport: http(deployment.rpcUrl),
   });
 
-  let receipt;
+  let receipt: Awaited<ReturnType<typeof publicClient.getTransactionReceipt>>;
   try {
     receipt = await publicClient.getTransactionReceipt({
       hash: parsed.data.txHash as `0x${string}`,

@@ -103,9 +103,9 @@ export function GenerateLinkButton({ productId }: { productId: string }) {
 
         {url && (
           <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
+            <span className="text-xs font-medium text-muted-foreground">
               Checkout URL
-            </label>
+            </span>
             <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
               <span className="flex-1 truncate font-mono text-[13px] text-foreground">
                 {url}

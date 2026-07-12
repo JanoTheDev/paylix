@@ -152,7 +152,7 @@ async function handleRefund(
   // Atomic record + increment. On the off chance two merchants hit this
   // route concurrently with the same tx, the unique index on tx_hash
   // prevents double-recording.
-  let refundRow;
+  let refundRow: typeof refunds.$inferSelect;
   try {
     [refundRow] = await db
       .insert(refunds)
