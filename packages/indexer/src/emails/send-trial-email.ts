@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { eq } from "drizzle-orm";
 import { sendMail } from "@paylix/mailer";
 import { createDb } from "@paylix/db/client";
@@ -152,7 +152,7 @@ export async function sendTrialEmail(args: SendTrialEmailArgs): Promise<void> {
     }
 
     let subject: string;
-    let react;
+    let react: ReactElement;
 
     if (args.kind === "trial-started") {
       const { TrialStartedEmail } = await import("./trial-started");

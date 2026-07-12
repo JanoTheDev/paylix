@@ -12,7 +12,7 @@ import { keccak256, stringToBytes } from "viem";
 import type { Database } from "@paylix/db/client";
 import { payments, checkoutSessions, unmatchedEvents, subscriptions } from "@paylix/db/schema";
 import type { WriterCallbacks } from "./writer";
-import { resolveMint } from "./token-registry";
+import { resolveMint, type SolanaTokenInfo } from "./token-registry";
 
 export interface SolanaDbCallbacksOptions {
   db: Database;
@@ -72,7 +72,7 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         return;
       }
 
-      let token;
+      let token: SolanaTokenInfo | undefined;
       try {
         token = resolveMint(networkKey, ev.mint);
       } catch {
@@ -127,7 +127,7 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         return;
       }
 
-      let token;
+      let token: SolanaTokenInfo | undefined;
       try {
         token = resolveMint(networkKey, ev.mint);
       } catch {
@@ -185,7 +185,7 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
         return;
       }
 
-      let token;
+      let token: SolanaTokenInfo | undefined;
       try {
         token = resolveMint(networkKey, ev.mint);
       } catch {

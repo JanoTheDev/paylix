@@ -12,6 +12,7 @@ function makeSelectChain() {
   const chain: Record<string, unknown> = {};
   const methods = ["from", "where", "limit"];
   for (const m of methods) chain[m] = () => chain;
+  // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (resolve: (v: QueryResult) => void) => void }).then = (resolve) => {
     resolve(selectResults.shift() ?? []);
   };
@@ -27,6 +28,7 @@ function makeUpdateChain() {
     },
     where: () => chain,
   };
+  // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (resolve: (v: QueryResult) => void) => void }).then = (resolve) => {
     updateCalls.push(captured);
     resolve([]);

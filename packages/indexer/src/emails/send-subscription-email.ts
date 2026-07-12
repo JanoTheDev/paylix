@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { eq } from "drizzle-orm";
 import { sendMail } from "@paylix/mailer";
 import { createDb } from "@paylix/db/client";
@@ -108,7 +108,7 @@ export async function sendSubscriptionEmail(args: SendSubscriptionEmailArgs): Pr
     }
 
     let subject: string;
-    let react;
+    let react: ReactElement;
 
     if (args.kind === "subscription-created") {
       const { SubscriptionCreatedEmail } = await import("./subscription-created");

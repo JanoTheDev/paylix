@@ -13,6 +13,7 @@ function makeSelectChain() {
   const chain: Record<string, unknown> = {};
   const methods = ["from", "where", "orderBy", "limit", "innerJoin"];
   for (const m of methods) chain[m] = () => chain;
+  // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (resolve: (v: QueryResult) => void) => void }).then = (resolve) => {
     resolve(selectResults.shift() ?? []);
   };
@@ -28,6 +29,7 @@ function makeUpdateChain() {
     },
     where: () => chain,
   };
+  // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (resolve: (v: QueryResult) => void) => void }).then = (resolve) => {
     updateCalls.push(captured);
     resolve([]);
@@ -43,6 +45,7 @@ function makeInsertChain(table: string) {
       return chain;
     },
   };
+  // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as {
     then: (resolve: (v: QueryResult) => void, reject: (e: unknown) => void) => void;
   }).then = (resolve, reject) => {
