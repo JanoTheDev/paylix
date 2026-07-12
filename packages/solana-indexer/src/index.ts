@@ -14,10 +14,11 @@ import { readFileSync } from "node:fs";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { createDb } from "@paylix/db/client";
 import { startListener } from "./listener";
-import { startKeeper } from "./keeper";
+import { startKeeper, configPda } from "./keeper";
 import { makeSolanaDbCallbacks } from "./db-callbacks";
 import { makeSolanaKeeperCallbacks } from "./keeper-callbacks";
 import { makeEventHandler } from "./writer";
+import { fetchPlatformWallet } from "./subscription-account";
 
 function requireEnv(key: string): string {
   const v = process.env[key];
@@ -72,12 +73,23 @@ async function main(): Promise<void> {
     },
   });
 
-  const keeperKeypair = loadKeeperKeypair(requireEnv("SOLANA_KEEPER_KEYPAIR_PATH"));
-  const platformWallet = new PublicKey(requireEnv("SOLANA_PLATFORM_WALLET"));
   const subscriptionManagerProgramId = mgrId ? new PublicKey(mgrId) : undefined;
-  const keeperCallbacks = subscriptionManagerProgramId
-    ? makeSolanaKeeperCallbacks({ db, connection, networkKey, platformWallet })
-    : undefined;
+
+  let keeperKeypair: Keypair | undefined;
+  let keeperCallbacks: ReturnType<typeof makeSolanaKeeperCallbacks> | undefined;
+  if (subscriptionManagerProgramId) {
+    keeperKeypair = loadKeeperKeypair(requireEnv("SOLANA_KEEPER_KEYPAIR_PATH"));
+    const platformWallet = await fetchPlatformWallet(
+      connection,
+      configPda(subscriptionManagerProgramId),
+    );
+    if (!platformWallet) {
+      throw new Error(
+        "SubscriptionManager config account not found on-chain — has `initialize` been called for this program?",
+      );
+    }
+    keeperCallbacks = makeSolanaKeeperCallbacks({ db, connection, networkKey, platformWallet });
+  }
 
   const keeper = await startKeeper({
     connection,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
-import { subscriptionPda, fetchSubscriptionAccount } from "../subscription-account";
+import { subscriptionPda, fetchSubscriptionAccount, fetchPlatformWallet } from "../subscription-account";
 
 function buildSubscriptionAccountData(fields: {
   id: bigint;
@@ -83,6 +83,32 @@ describe("fetchSubscriptionAccount", () => {
     } as unknown as Connection;
 
     const result = await fetchSubscriptionAccount(connection, Keypair.generate().publicKey);
+    expect(result).toBeNull();
+  });
+});
+
+describe("fetchPlatformWallet", () => {
+  it("decodes the platform_wallet field from a config account", async () => {
+    const owner = Keypair.generate().publicKey;
+    const platformWallet = Keypair.generate().publicKey;
+    const buf = Buffer.alloc(8 + 32 + 32); // discriminator + owner + platform_wallet (only fields we read)
+    owner.toBuffer().copy(buf, 8);
+    platformWallet.toBuffer().copy(buf, 40);
+
+    const connection = {
+      getAccountInfo: vi.fn(async () => ({ data: buf, executable: false, lamports: 0, owner: PublicKey.default, rentEpoch: 0 })),
+    } as unknown as Connection;
+
+    const result = await fetchPlatformWallet(connection, Keypair.generate().publicKey);
+    expect(result?.toBase58()).toBe(platformWallet.toBase58());
+  });
+
+  it("returns null when the config account doesn't exist", async () => {
+    const connection = {
+      getAccountInfo: vi.fn(async () => null),
+    } as unknown as Connection;
+
+    const result = await fetchPlatformWallet(connection, Keypair.generate().publicKey);
     expect(result).toBeNull();
   });
 });

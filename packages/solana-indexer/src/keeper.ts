@@ -119,7 +119,7 @@ function chargeSubscriptionDiscriminator(): Buffer {
 
 const CHARGE_SUBSCRIPTION_DISC = chargeSubscriptionDiscriminator();
 
-function configPda(programId: PublicKey): PublicKey {
+export function configPda(programId: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync([Buffer.from("sub_config")], programId);
   return pda;
 }

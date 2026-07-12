@@ -56,3 +56,25 @@ export async function fetchSubscriptionAccount(
 
   return { id, subscriber, merchantAta, mint, amount, intervalSeconds, nextChargeAt, status };
 }
+
+/**
+ * Fetch + Borsh-decode just the `platform_wallet` field of the
+ * SubscriptionManagerConfig account. This is the authority the Rust program
+ * actually checks (`platform_ata.owner == config.platform_wallet`), so the
+ * keeper reads it on-chain at startup rather than trusting an env var that
+ * could drift from the deployed config. Returns null if the config account
+ * doesn't exist (e.g. `initialize` was never called on this program).
+ */
+export async function fetchPlatformWallet(
+  connection: Connection,
+  configPda: PublicKey,
+): Promise<PublicKey | null> {
+  const info = await connection.getAccountInfo(configPda);
+  if (!info) return null;
+
+  // 8-byte Anchor discriminator, then: owner: Pubkey, platform_wallet: Pubkey, ...
+  const reader = new BorshReader(info.data.subarray(8));
+  reader.pubkey(); // owner — unused here
+  const platformWallet = reader.pubkey();
+  return new PublicKey(platformWallet);
+}
