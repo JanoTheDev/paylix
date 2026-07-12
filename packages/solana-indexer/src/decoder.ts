@@ -73,7 +73,7 @@ for (const name of [
 }
 
 /** Borsh reader — only the primitives Paylix events use. */
-class BorshReader {
+export class BorshReader {
   private offset = 0;
   constructor(private buf: Buffer) {}
 
@@ -96,6 +96,11 @@ class BorshReader {
     const slice = this.buf.subarray(this.offset, this.offset + 32);
     this.offset += 32;
     return "0x" + slice.toString("hex");
+  }
+  u8(): number {
+    const v = this.buf.readUInt8(this.offset);
+    this.offset += 1;
+    return v;
   }
 }
 
