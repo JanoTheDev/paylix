@@ -19,6 +19,8 @@ export interface KeeperOptions {
    * Postgres shared schema (network_key='solana') and pushes due IDs here.
    */
   dueSubscriptions?: () => Promise<SolanaDueSubscription[]>;
+  onChargeSubmitted?: (subscriptionId: bigint) => Promise<void>;
+  onChargeFailed?: (subscriptionId: bigint, error: string) => Promise<void>;
   /** Polling interval in ms (default 60s). */
   intervalMs?: number;
 }
@@ -55,10 +57,16 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
     let charged = 0;
     for (const sub of due) {
       try {
-        await chargeOne(opts.connection, opts.keeper, opts.subscriptionManagerProgramId, sub);
+        const signature = await chargeOne(opts.connection, opts.keeper, opts.subscriptionManagerProgramId, sub);
+        console.log(`[solana-keeper] charged ${sub.subscriptionPda.toBase58()} sig=${signature}`);
+        await opts.onChargeSubmitted?.(sub.subscriptionId);
         charged++;
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         console.error(`[solana-keeper] charge for ${sub.subscriptionPda.toBase58()} failed:`, err);
+        await opts.onChargeFailed?.(sub.subscriptionId, message).catch((cbErr) =>
+          console.error(`[solana-keeper] onChargeFailed callback failed:`, cbErr),
+        );
       }
     }
     return charged;
@@ -124,7 +132,7 @@ async function chargeOne(
   keeper: Keypair,
   programId: PublicKey,
   sub: SolanaDueSubscription,
-): Promise<void> {
+): Promise<string> {
   const ix = new TransactionInstruction({
     programId,
     keys: [
@@ -142,7 +150,7 @@ async function chargeOne(
     data: CHARGE_SUBSCRIPTION_DISC,
   });
 
-  const { blockhash } = await connection.getLatestBlockhash("finalized");
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
   const msg = new TransactionMessage({
     payerKey: keeper.publicKey,
     recentBlockhash: blockhash,
@@ -151,5 +159,7 @@ async function chargeOne(
 
   const tx = new VersionedTransaction(msg);
   tx.sign([keeper]);
-  await connection.sendTransaction(tx);
+  const signature = await connection.sendTransaction(tx);
+  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+  return signature;
 }
