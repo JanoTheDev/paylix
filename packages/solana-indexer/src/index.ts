@@ -10,11 +10,13 @@
  * schema keyed by network_key.
  */
 
-import { Connection, PublicKey } from "@solana/web3.js";
+import { readFileSync } from "node:fs";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { createDb } from "@paylix/db/client";
 import { startListener } from "./listener";
 import { startKeeper } from "./keeper";
 import { makeSolanaDbCallbacks } from "./db-callbacks";
+import { makeSolanaKeeperCallbacks } from "./keeper-callbacks";
 import { makeEventHandler } from "./writer";
 
 function requireEnv(key: string): string {
@@ -29,6 +31,11 @@ function requireNetworkKey(): "solana" | "solana-devnet" {
     throw new Error(`SOLANA_NETWORK_KEY must be "solana" or "solana-devnet", got "${v}"`);
   }
   return v;
+}
+
+function loadKeeperKeypair(path: string): Keypair {
+  const raw = JSON.parse(readFileSync(path, "utf-8"));
+  return Keypair.fromSecretKey(Uint8Array.from(raw));
 }
 
 async function main(): Promise<void> {
@@ -65,11 +72,20 @@ async function main(): Promise<void> {
     },
   });
 
+  const keeperKeypair = loadKeeperKeypair(requireEnv("SOLANA_KEEPER_KEYPAIR_PATH"));
+  const platformWallet = new PublicKey(requireEnv("SOLANA_PLATFORM_WALLET"));
+  const subscriptionManagerProgramId = mgrId ? new PublicKey(mgrId) : undefined;
+  const keeperCallbacks = subscriptionManagerProgramId
+    ? makeSolanaKeeperCallbacks({ db, connection, networkKey, platformWallet })
+    : undefined;
+
   const keeper = await startKeeper({
     connection,
-    // Keeper charging (keypair load + due-subscription query) is a separate
-    // follow-up — see docs/superpowers/specs/2026-07-11-solana-indexer-db-writer-design.md.
-    // Listener-side DB wiring above is complete; this is the keeper's own gap.
+    keeper: keeperKeypair,
+    subscriptionManagerProgramId,
+    dueSubscriptions: keeperCallbacks?.dueSubscriptions,
+    onChargeSubmitted: keeperCallbacks?.onChargeSubmitted,
+    onChargeFailed: keeperCallbacks?.onChargeFailed,
   });
 
   const shutdown = async (): Promise<void> => {
