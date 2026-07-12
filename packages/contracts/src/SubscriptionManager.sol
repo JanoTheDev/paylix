@@ -90,6 +90,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// the primary subscriber runs out of USDC balance/allowance,
     /// _tryProcessPayment walks this list and pulls from the first
     /// wallet that can cover the charge.
+    // slither-disable-next-line uninitialized-state
     mapping(uint256 => address[]) public subscriptionBackups;
     uint256 public constant MAX_BACKUP_PAYERS = 5;
 
@@ -598,7 +599,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     }
 
     /// @notice Cancel a subscription. Callable by subscriber or merchant.
-    function cancelSubscription(uint256 subscriptionId) external {
+    function cancelSubscription(uint256 subscriptionId) external nonReentrant {
         Subscription storage sub = subscriptions[subscriptionId];
         require(msg.sender == sub.subscriber || msg.sender == sub.merchant, "Not authorized");
         require(sub.status == Status.Active || sub.status == Status.PastDue, "Already inactive");
@@ -611,7 +612,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     function cancelSubscriptionByRelayerForSubscriber(
         uint256 subscriptionId,
         address subscriber
-    ) external {
+    ) external nonReentrant {
         require(msg.sender == relayer, "Only relayer");
         Subscription storage sub = subscriptions[subscriptionId];
         require(sub.subscriber == subscriber, "Not the subscriber");
@@ -628,7 +629,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     function cancelSubscriptionByRelayerForMerchant(
         uint256 subscriptionId,
         address merchant
-    ) external {
+    ) external nonReentrant {
         require(msg.sender == relayer, "Only relayer");
         Subscription storage sub = subscriptions[subscriptionId];
         require(sub.merchant == merchant, "Not the merchant");
@@ -643,7 +644,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     /// @notice Request migrating a subscription to a new wallet. The new wallet
     ///         must call acceptSubscriptionWalletUpdate to complete the transfer.
-    function requestSubscriptionWalletUpdate(uint256 subscriptionId, address newSubscriber) external {
+    function requestSubscriptionWalletUpdate(uint256 subscriptionId, address newSubscriber) external nonReentrant {
         Subscription storage sub = subscriptions[subscriptionId];
         require(msg.sender == sub.subscriber, "Not subscriber");
         require(newSubscriber != address(0), "Invalid address");
@@ -654,7 +655,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     }
 
     /// @notice Accept a pending wallet migration. Caller becomes the new subscriber.
-    function acceptSubscriptionWalletUpdate(uint256 subscriptionId) external {
+    function acceptSubscriptionWalletUpdate(uint256 subscriptionId) external nonReentrant {
         require(pendingWalletUpdates[subscriptionId] == msg.sender, "Not pending for caller");
 
         Subscription storage sub = subscriptions[subscriptionId];
@@ -936,6 +937,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     ///         wallet they control (the primary).
     function removeSubscriptionBackupPayer(uint256 subscriptionId, address backup)
         external
+        nonReentrant
     {
         Subscription storage sub = subscriptions[subscriptionId];
         require(msg.sender == sub.subscriber, "Not subscriber");

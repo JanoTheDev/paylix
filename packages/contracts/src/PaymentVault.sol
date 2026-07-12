@@ -236,11 +236,11 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         // deadline)` tuple. A compromised relayer cannot vary any field —
         // recover() would fail. See test_reverts_if_relayer_swaps_merchant
         // in test/PaymentVaultPermit.t.sol.
-        // slither-disable-next-line arbitrary-send-erc20-permit
+        // slither-disable-next-line arbitrary-send-erc20
         IERC20(token).safeTransferFrom(buyer, merchant, merchantAmount);
         if (fee > 0) {
             require(platformWallet != address(0), "Invalid platform wallet");
-            // slither-disable-next-line arbitrary-send-erc20-permit
+            // slither-disable-next-line arbitrary-send-erc20
             IERC20(token).safeTransferFrom(buyer, platformWallet, fee);
         }
 
@@ -395,11 +395,11 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         uint256 merchantAmount = p.amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
 
-        // slither-disable-next-line arbitrary-send-erc20-permit
+        // slither-disable-next-line arbitrary-send-erc20
         IERC20(p.token).safeTransferFrom(p.buyer, p.merchant, merchantAmount);
         if (fee > 0) {
             require(platformWallet != address(0), "Invalid platform wallet");
-            // slither-disable-next-line arbitrary-send-erc20-permit
+            // slither-disable-next-line arbitrary-send-erc20
             IERC20(p.token).safeTransferFrom(p.buyer, platformWallet, fee);
         }
 
