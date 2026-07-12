@@ -349,9 +349,9 @@ pub struct ChargeSubscription<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
     #[account(mut)]
     pub buyer_ata: InterfaceAccount<'info, TokenAccount>,
-    #[account(mut)]
+    #[account(mut, address = subscription.merchant_ata)]
     pub merchant_ata: InterfaceAccount<'info, TokenAccount>,
-    #[account(mut)]
+    #[account(mut, constraint = platform_ata.owner == config.platform_wallet @ ErrorCode::PlatformAtaMismatch)]
     pub platform_ata: InterfaceAccount<'info, TokenAccount>,
     pub token_program: Interface<'info, TokenInterface>,
 
@@ -387,6 +387,8 @@ pub enum ErrorCode {
     Unauthorized,
     #[msg("Math overflow")]
     MathOverflow,
+    #[msg("platform_ata does not belong to the configured platform wallet")]
+    PlatformAtaMismatch,
 }
 
 #[cfg(test)]

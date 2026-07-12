@@ -141,6 +141,110 @@ describe("paylix_subscription_manager", () => {
     assert.strictEqual(threw, true);
   });
 
+  it("reverts chargeSubscription with a merchant_ata that doesn't match the subscription", async () => {
+    const amount = new anchor.BN(5_000_000);
+    const interval = new anchor.BN(1); // 1 second, so it's due almost immediately
+    const productId = Buffer.alloc(32, 5);
+    const customerId = Buffer.alloc(32, 6);
+    const sub = subPda(1n);
+
+    await approve(provider.connection, buyer, buyerAta, sub, buyer.publicKey, 10_000_000_000);
+    await program.methods
+      .createSubscription(amount, interval, Array.from(productId), Array.from(customerId))
+      .accounts({
+        config: subConfig,
+        subscription: sub,
+        mint,
+        buyer: buyer.publicKey,
+        buyerAta,
+        merchantAta,
+        platformAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([buyer])
+      .rpc();
+
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+
+    const rogueAta = await createAssociatedTokenAccount(
+      provider.connection,
+      owner,
+      mint,
+      Keypair.generate().publicKey,
+    );
+
+    let threw = false;
+    try {
+      await program.methods
+        .chargeSubscription()
+        .accounts({
+          config: subConfig,
+          subscription: sub,
+          mint,
+          buyerAta,
+          merchantAta: rogueAta, // wrong — should be `merchantAta`
+          platformAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          caller: provider.wallet.publicKey,
+        })
+        .rpc();
+    } catch (err) {
+      threw = /ConstraintAddress|address/i.test(String(err));
+    }
+    assert.strictEqual(threw, true, "expected chargeSubscription to reject a mismatched merchant_ata");
+  });
+
+  it("reverts chargeSubscription with a platform_ata not owned by the platform wallet", async () => {
+    const sub = subPda(1n); // still due — the previous test's rejected call didn't consume it
+
+    const rogueAta = await createAssociatedTokenAccount(
+      provider.connection,
+      owner,
+      mint,
+      Keypair.generate().publicKey,
+    );
+
+    let threw = false;
+    try {
+      await program.methods
+        .chargeSubscription()
+        .accounts({
+          config: subConfig,
+          subscription: sub,
+          mint,
+          buyerAta,
+          merchantAta,
+          platformAta: rogueAta, // wrong — should be `platformAta`
+          tokenProgram: TOKEN_PROGRAM_ID,
+          caller: provider.wallet.publicKey,
+        })
+        .rpc();
+    } catch (err) {
+      threw = /PlatformAtaMismatch/i.test(String(err));
+    }
+    assert.strictEqual(threw, true, "expected chargeSubscription to reject a mismatched platform_ata");
+  });
+
+  it("charges successfully with the correct merchant_ata and platform_ata", async () => {
+    const sub = subPda(1n);
+    await program.methods
+      .chargeSubscription()
+      .accounts({
+        config: subConfig,
+        subscription: sub,
+        mint,
+        buyerAta,
+        merchantAta,
+        platformAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        caller: provider.wallet.publicKey,
+      })
+      .rpc();
+    const s = await program.account.subscription.fetch(sub);
+    assert.strictEqual(s.totalCharged.toNumber(), 10_000_000); // 5_000_000 at creation + 5_000_000 at charge
+  });
+
   it("cancel marks the subscription as cancelled", async () => {
     const sub = subPda(0n);
     await program.methods
