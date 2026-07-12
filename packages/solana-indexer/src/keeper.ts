@@ -59,7 +59,11 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
       try {
         const signature = await chargeOne(opts.connection, opts.keeper, opts.subscriptionManagerProgramId, sub);
         console.log(`[solana-keeper] charged ${sub.subscriptionPda.toBase58()} sig=${signature}`);
-        await opts.onChargeSubmitted?.(sub.subscriptionId);
+        try {
+          await opts.onChargeSubmitted?.(sub.subscriptionId);
+        } catch (cbErr) {
+          console.error(`[solana-keeper] onChargeSubmitted callback failed (charge itself succeeded):`, cbErr);
+        }
         charged++;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

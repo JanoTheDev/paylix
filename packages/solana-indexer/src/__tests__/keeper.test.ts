@@ -89,4 +89,29 @@ describe("startKeeper tick()", () => {
 
     await handle.stop();
   });
+
+  it("still counts the charge as successful when onChargeSubmitted itself throws", async () => {
+    const due = fakeDueSubscription();
+    const onChargeSubmitted = vi.fn(async () => {
+      throw new Error("transient DB write error");
+    });
+    const onChargeFailed = vi.fn(async () => {});
+
+    const handle = await startKeeper({
+      connection: fakeConnection(),
+      keeper: Keypair.generate(),
+      subscriptionManagerProgramId: Keypair.generate().publicKey,
+      dueSubscriptions: async () => [due],
+      onChargeSubmitted,
+      onChargeFailed,
+    });
+
+    const charged = await handle.tick();
+
+    expect(charged).toBe(1);
+    expect(onChargeSubmitted).toHaveBeenCalledWith(42n);
+    expect(onChargeFailed).not.toHaveBeenCalled();
+
+    await handle.stop();
+  });
 });
