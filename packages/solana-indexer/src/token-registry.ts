@@ -5,9 +5,8 @@
  * an invalid key). Three tokens, two clusters; a full registry would be
  * over-engineering for this surface.
  *
- * Devnet mint addresses are placeholders from the paylix devnet token
- * deployment tracked alongside the Anchor program deploy scripts — update
- * this map if those addresses change.
+ * Devnet mint addresses are placeholders — verify against the live devnet
+ * token deployment before relying on this table for devnet testing.
  */
 
 export interface SolanaTokenInfo {

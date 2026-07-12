@@ -152,6 +152,7 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
           onChainId: ev.subscriptionId.toString(),
           intervalSeconds,
           currentPeriodStart: now,
+          currentPeriodEnd: nextChargeDate,
           nextChargeDate,
           livemode: session.livemode,
         });
@@ -217,6 +218,11 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
 
       const intervalMs = (subscription.intervalSeconds ?? 0) * 1000;
       const now = new Date();
+      // TODO(keeper): once the Solana keeper is wired, match the EVM
+      // indexer's semantics — advance nextChargeDate from the subscription's
+      // existing nextChargeDate (not `now`) to avoid schedule drift, and set
+      // lastPaymentId to the newly-inserted payment's id. Dormant until then
+      // since this only runs on a real charge event.
       await db
         .update(subscriptions)
         .set({
