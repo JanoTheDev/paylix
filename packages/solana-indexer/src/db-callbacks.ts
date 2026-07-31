@@ -66,13 +66,20 @@ export function makeSolanaDbCallbacks(opts: SolanaDbCallbacksOptions): WriterCal
     slot: number,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    await db.insert(unmatchedEvents).values({
-      eventType,
-      txHash,
-      blockNumber: slot,
-      payload: serializeArgs(payload),
-      livemode,
-    });
+    // Solana rows carry a NULL log_index and the dedup constraint is
+    // NULLS NOT DISTINCT, so a re-recorded signature collides. Without this the
+    // second catch-up pass throws 23505, the dispatch fails and the cursor
+    // never advances past the first unmatchable event.
+    await db
+      .insert(unmatchedEvents)
+      .values({
+        eventType,
+        txHash,
+        blockNumber: slot,
+        payload: serializeArgs(payload),
+        livemode,
+      })
+      .onConflictDoNothing();
   }
 
   async function findMatchingSession(

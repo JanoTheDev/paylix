@@ -186,19 +186,25 @@ export function makeSettlement(opts: SettlementOptions) {
     session: SettlementSession,
     transfer: ConfirmedTransfer,
   ): Promise<void> {
-    await db.insert(unmatchedEvents).values({
-      eventType: NO_FIAT_RATE_EVENT,
-      txHash: transfer.txid,
-      blockNumber: transfer.blockHeight,
-      payload: {
-        sessionId: session.id,
-        chain: networkKey,
-        receivedSats: transfer.receivedSats.toString(),
-        expectedSats: session.amount.toString(),
-        vout: transfer.vout,
-      },
-      livemode: session.livemode,
-    });
+    // Re-recorded on every backfill pass until a rate exists, so the collision
+    // is the normal path here, not the exception: NULL log_index under a
+    // NULLS NOT DISTINCT constraint would otherwise 23505 and abort the drain.
+    await db
+      .insert(unmatchedEvents)
+      .values({
+        eventType: NO_FIAT_RATE_EVENT,
+        txHash: transfer.txid,
+        blockNumber: transfer.blockHeight,
+        payload: {
+          sessionId: session.id,
+          chain: networkKey,
+          receivedSats: transfer.receivedSats.toString(),
+          expectedSats: session.amount.toString(),
+          vout: transfer.vout,
+        },
+        livemode: session.livemode,
+      })
+      .onConflictDoNothing();
   }
 
   /**

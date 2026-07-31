@@ -73,12 +73,15 @@ interface CheckoutSession {
    * Bound into every signed intent (SC-03) so an owner raising `platformFee`
    * cannot settle an already-signed intent at a worse rate.
    *
-   * MUST be supplied by the server — see `audit/_requests-web-pages.md`. It is
-   * deliberately optional in this type and validated at pay time rather than
+   * MUST be supplied by the server. Validated at pay time rather than
    * defaulted, because a client-invented ceiling is a signature the buyer did
    * not knowingly give.
+   *
+   * Non-optional on purpose (though nullable): when this was `?:`, the server
+   * component omitted it from its `select()` and every gasless checkout broke
+   * silently — legal TypeScript, and invisible to lint, build and the tests.
    */
-  maxFeeBps?: number | null;
+  maxFeeBps: number | null;
   couponDuration?: "once" | "forever" | "repeating" | null;
   /** UTXO-chain receive address. Null on EVM/Solana sessions. */
   btcReceiveAddress?: string | null;

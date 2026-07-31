@@ -145,19 +145,24 @@ export function makeUtxoDbCallbacks(opts: UtxoDbCallbacksOptions): BridgeCallbac
         .from(checkoutSessions)
         .where(eq(checkoutSessions.id, sessionId))
         .limit(1);
-      await db.insert(unmatchedEvents).values({
-        eventType: "UtxoUnderpayment",
-        txHash: hit.txid,
-        blockNumber: hit.blockHeight,
-        payload: {
-          sessionId,
-          chain: networkKey,
-          receivedSats: hit.valueSats.toString(),
-          shortfallSats: shortfallSats.toString(),
-          vout: hit.vout,
-        },
-        livemode: session?.livemode ?? false,
-      });
+      // NULL log_index + NULLS NOT DISTINCT means a re-recorded txid collides;
+      // without this a repeat pass throws 23505 instead of being a no-op.
+      await db
+        .insert(unmatchedEvents)
+        .values({
+          eventType: "UtxoUnderpayment",
+          txHash: hit.txid,
+          blockNumber: hit.blockHeight,
+          payload: {
+            sessionId,
+            chain: networkKey,
+            receivedSats: hit.valueSats.toString(),
+            shortfallSats: shortfallSats.toString(),
+            vout: hit.vout,
+          },
+          livemode: session?.livemode ?? false,
+        })
+        .onConflictDoNothing();
     },
 
     async onExpire(sessionId: string): Promise<void> {

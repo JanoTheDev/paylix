@@ -46,6 +46,9 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
       id: checkoutSessions.id,
       status: checkoutSessions.status,
       amount: checkoutSessions.amount,
+      // Required before the buyer can sign: the client refuses to build an
+      // intent without the fee ceiling it will bind into the typehash.
+      maxFeeBps: checkoutSessions.maxFeeBps,
       networkKey: checkoutSessions.networkKey,
       tokenSymbol: checkoutSessions.tokenSymbol,
       type: checkoutSessions.type,

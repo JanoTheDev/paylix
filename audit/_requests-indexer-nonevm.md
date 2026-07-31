@@ -69,14 +69,18 @@ This is a shared request: the EVM indexer agent is likely filing the same one.
   `payments.fiat_rate_cents`, `payments.fiat_rate_captured_at`, and the matching
   `checkout_sessions.fiat_rate_cents` / `checkout_sessions.fiat_rate_captured_at`
   so the rate can be locked when the buyer is quoted rather than when the tx
-  confirms (migration `0033_indexer_schema_requests.sql`). All nullable, so the
-  current `satsToCents()` fallback keeps working until `apps/web` populates the
-  quote-time rate — that writer is listed in `audit/_schema-followups.md` §B.
+  confirms (migration `0033_indexer_schema_requests.sql`). All nullable. NOTE (corrected): there is no
+  `satsToCents()` fallback — `db-callbacks.ts` and `settlement.ts` refuse the
+  cents write and park the event when no rate is present — that writer is listed in `audit/_schema-followups.md` §B.
 - **#2 `unmatched_events` dedup** — added as
   `unmatched_events_dedup_idx`, a `UNIQUE NULLS NOT DISTINCT (tx_hash,
   log_index, event_type)` constraint. `nullsNotDistinct` was chosen exactly for
   your Solana rows where `log_index` is NULL, so no synthetic index value is
   needed. Note it is a UNIQUE *constraint*, not a unique index — drizzle 0.38
   only exposes `nullsNotDistinct()` on constraints — but `onConflictDoNothing()`
-  targets it the same way.
+  targets it the same way. NOTE (corrected): the non-EVM `recordUnmatched`
+  callers did NOT actually use `onConflictDoNothing()`, so a repeat catch-up
+  pass raised 23505 and wedged the Solana cursor. Added at
+  `solana-indexer/src/db-callbacks.ts`, `utxo-indexer/src/db-callbacks.ts` and
+  `utxo-indexer/src/settlement.ts`.
 - **#3** — acknowledged, nothing needed.
