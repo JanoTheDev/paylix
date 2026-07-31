@@ -1,9 +1,12 @@
 # Paylix SDK — Complete Reference
-# Version: 0.2.0
-# Last updated: 2026-04-13
+# Package: @paylix/sdk (see packages/sdk/package.json for the exact version)
 #
 # Paylix is an open-source, self-hostable crypto payment platform.
-# Accept USDC payments and subscriptions on Base with TypeScript.
+# Accept one-time and recurring crypto payments with TypeScript across
+# 7 EVM chains — Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain
+# and Avalanche — plus scaffolded Solana, Bitcoin and Litecoin support.
+# Tokens: USDC, USDT, DAI, WETH, WBTC, PYUSD (availability varies by chain;
+# see https://docs.paylix.io/supported-chains).
 # Funds go directly to your wallet — no custodial intermediary.
 
 ## Installation
@@ -23,12 +26,40 @@ import { Paylix, webhooks, NETWORKS } from "@paylix/sdk";
 
 const paylix = new Paylix({
   apiKey: "sk_live_...",           // Secret API key from dashboard
-  network: "base",                 // "base" (mainnet) or "base-sepolia" (testnet)
+  network: "base",                 // any PaylixNetwork key — see "Network Configurations"
   backendUrl: "https://paylix.example.com", // Your Paylix backend URL
 });
 ```
 
 ## SDK Methods
+
+Complete public surface of the `Paylix` class. Anything not on this list does
+not exist — in particular there is NO `getSubscription`, `getProduct`,
+`listCustomers`, `pauseSubscription`, `listInvoices`, or `getInvoice`.
+
+  createCheckout, createSubscription, cancelSubscription,
+  updateSubscriptionWallet, scheduleSubscriptionCancellation,
+  resumeSubscriptionSchedule, giftSubscription, listSubscriptions,
+  verifyPayment, listPayments, getPayment, refundPayment,
+  createCustomer, getCustomer, updateCustomer, deleteCustomer,
+  getCustomerPortal, createPortalSession, listCustomerInvoices,
+  createProduct, updateProduct, listProducts,
+  createPaymentLink, listPaymentLinks, getPaymentLink, updatePaymentLink,
+  archivePaymentLink,
+  createCoupon, listCoupons, archiveCoupon, applyCouponToCheckout,
+  removeCouponFromCheckout,
+  listBlocklist, addBlocklistEntry, removeBlocklistEntry,
+  listWebhooks, createWebhook, getWebhook, updateWebhook, deleteWebhook,
+  replayWebhookDelivery, sendTestWebhook,
+  extendTrial, compCharge, rescheduleSubscription,
+  testFaucet
+
+Plus the `network` getter (metadata for the configured default network, or
+`undefined`) and the `webhooks` property (`webhooks.verify(params)`).
+
+List methods return bare arrays (`Product[]`, `PaymentSummary[]`,
+`SubscriptionSummary[]`, …), not `{ products: [...] }` wrappers. The one
+exception is `listCustomerInvoices`, which returns `{ invoices: [...] }`.
 
 ### paylix.createCheckout(params)
 
@@ -82,9 +113,9 @@ await paylix.cancelSubscription({
 
 ### paylix.updateSubscriptionWallet(params)
 
-Requests a wallet migration for a subscription. The new wallet owner
-must call acceptSubscriptionWalletUpdate on the SubscriptionManager
-contract to complete the migration.
+Points a subscription at a different payer wallet, in one call. The new
+wallet must ALREADY have signed a permit for the subscription's amount —
+there is no separate accept step on the SDK surface.
 
 ```typescript
 await paylix.updateSubscriptionWallet({
@@ -108,7 +139,7 @@ const result = await paylix.verifyPayment({
 //   amount: number;       — amount in USDC cents (1000 = $10.00)
 //   fee: number;          — platform fee in USDC cents
 //   txHash: string;       — on-chain transaction hash
-//   chain: string;        — "base" or "base-sepolia"
+//   chain: string;        — the network key, e.g. "base", "arbitrum-sepolia"
 //   customerId: string;
 //   productId: string;
 //   status: "confirmed" | "pending" | "failed";
@@ -187,12 +218,16 @@ for (const p of payments) {
 
 ### paylix.getPayment(id)
 
-Retrieves a single payment by ID, including the embedded customer object.
+Retrieves a single payment by ID. `getPayment` and `verifyPayment` are
+aliases over the same `GET /api/payments/{id}` endpoint and return the same
+narrow shape.
 
 ```typescript
 const payment = await paylix.getPayment("pay_abc123");
-console.log(payment.status, payment.customer.email);
-// Returns: PaymentSummary (same shape as listPayments entries)
+console.log(payment.verified, payment.status, payment.amount, payment.txHash);
+// Returns: VerifyPaymentResult — the shape documented under verifyPayment.
+// It does NOT carry id, token, fromAddress, toAddress, createdAt, or a
+// customer object. Use listPayments() when you need the full summary.
 ```
 
 ### paylix.listSubscriptions(params?)
@@ -251,15 +286,8 @@ for (const sub of active) {
 // }
 ```
 
-### paylix.getSubscription(id)
-
-Retrieves a single subscription by ID, including the embedded customer object.
-
-```typescript
-const sub = await paylix.getSubscription("sub_abc123");
-console.log(sub.status, sub.customer.email);
-// Returns: SubscriptionSummary (same shape as listSubscriptions entries)
-```
+NOTE: there is no `paylix.getSubscription(id)`. To fetch one subscription,
+filter the list: `(await paylix.listSubscriptions({ customerId })).find(s => s.id === id)`.
 
 ### paylix.getCustomerPortal(params)
 
@@ -271,9 +299,11 @@ const portal = await paylix.getCustomerPortal({
 });
 // Returns:
 // {
-//   customer: Customer;
-//   payments: Payment[];
-//   subscriptions: Subscription[];
+//   customer: {
+//     id; customerId; email; firstName; lastName; walletAddress;
+//   };                       // narrower than the full Customer record
+//   payments: { ... }[];     // anonymous inline shape, no fee/metadata
+//   subscriptions: { ... }[];
 // }
 ```
 
@@ -337,8 +367,8 @@ const updated = await paylix.updateCustomer("cust_xyz", {
   email: "newemail@example.com",
 });
 
-// List all customers
-const customers = await paylix.listCustomers();
+// NOTE: there is no paylix.listCustomers() — the SDK exposes no
+// customer-list endpoint.
 
 // Soft-delete a customer
 await paylix.deleteCustomer("cust_xyz");
@@ -355,7 +385,8 @@ const product = await paylix.createProduct({
   prices: [{                           // required — at least one price
     networkKey: "base-sepolia",
     tokenSymbol: "USDC",
-    amount: "1000",                    // in token units (1000 = 10.00 USDC)
+    amount: "10.00",                   // DECIMAL STRING in the token's own
+                                       // units — NOT cents. "10.00" = 10 USDC.
   }],
   trialDays: 14,                       // optional — free trial
   taxRateBps: 2000,                    // optional — 20% tax
@@ -363,10 +394,9 @@ const product = await paylix.createProduct({
   metadata: {},                        // optional
 });
 
-// Get, update, list
-const product = await paylix.getProduct("prod_abc123");
+// Update and list. There is no paylix.getProduct() — find it in the list.
 const updated = await paylix.updateProduct("prod_abc123", { name: "Pro Plan v2" });
-const products = await paylix.listProducts();
+const products = await paylix.listProducts();   // returns Product[], not { products }
 ```
 
 ### Webhook Management
@@ -414,10 +444,11 @@ const isValid = webhooks.verify({
 ### Test Faucet
 
 ```typescript
-// Mint test USDC on Base Sepolia (test mode only)
+// Mint mock USDC on a testnet deployment (test mode only — 400 on mainnet)
 const { txHash, amountMinted } = await paylix.testFaucet({
   address: "0xabcd...",  // required — wallet to mint to
-  amount: 10000,         // optional — amount in token units (default varies)
+  amount: 10000,         // optional — INTEGER CENTS. Defaults to the
+                         // deployment's per-request cap.
 });
 ```
 
@@ -816,25 +847,53 @@ await paylix.updateWebhook(hook.id, { isActive: true });
 
 ## Network Configurations
 
+`NETWORKS` is display metadata only — explorer base URLs, a public RPC, and
+the canonical USDC address where one exists. Contract addresses are NOT in
+this table; the backend resolves PaymentVault / SubscriptionManager from its
+own environment. `usdcAddress` is `null` on every testnet (each deployment
+mints its own MockUSDC) and on every non-EVM chain.
+
 ```typescript
 import { NETWORKS } from "@paylix/sdk";
 
-// Base Mainnet
-NETWORKS["base"] = {
+type NetworkConfig = {
+  chainId: number;          // 0 on non-EVM chains
+  isEvm: boolean;
+  rpcUrl: string;           // "" on Bitcoin / Litecoin
+  usdcAddress: string | null;
+  explorerUrl: string;
+};
+
+// EVM mainnet
+NETWORKS["ethereum"]  // chainId 1,     https://etherscan.io
+NETWORKS["base"]      // chainId 8453,  https://basescan.org
+NETWORKS["arbitrum"]  // chainId 42161, https://arbiscan.io
+NETWORKS["optimism"]  // chainId 10,    https://optimistic.etherscan.io
+NETWORKS["polygon"]   // chainId 137,   https://polygonscan.com
+NETWORKS["bnb"]       // chainId 56,    https://bscscan.com
+NETWORKS["avalanche"] // chainId 43114, https://snowtrace.io
+
+// EVM testnet (usdcAddress: null)
+NETWORKS["ethereum-sepolia"]  // chainId 11155111
+NETWORKS["base-sepolia"]      // chainId 84532
+NETWORKS["arbitrum-sepolia"]  // chainId 421614
+NETWORKS["op-sepolia"]        // chainId 11155420
+NETWORKS["polygon-amoy"]      // chainId 80002
+NETWORKS["bnb-testnet"]       // chainId 97
+NETWORKS["avalanche-fuji"]    // chainId 43113
+
+// Non-EVM (chainId 0, isEvm false, usdcAddress null)
+NETWORKS["solana"] / NETWORKS["solana-devnet"]
+NETWORKS["bitcoin"] / NETWORKS["bitcoin-testnet"]
+NETWORKS["litecoin"] / NETWORKS["litecoin-testnet"]
+
+// Example
+NETWORKS["base"] === {
   chainId: 8453,
-  name: "Base",
+  isEvm: true,
   rpcUrl: "https://mainnet.base.org",
   usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   explorerUrl: "https://basescan.org",
-};
-
-// Base Sepolia (Testnet)
-NETWORKS["base-sepolia"] = {
-  chainId: 84532,
-  name: "Base Sepolia",
-  rpcUrl: "https://sepolia.base.org",
-  usdcAddress: "0x...",  // MockUSDC contract
-  explorerUrl: "https://sepolia.basescan.org",
 };
 ```
 
@@ -843,10 +902,21 @@ NETWORKS["base-sepolia"] = {
 ```typescript
 // Configuration
 interface PaylixConfig {
-  apiKey: string;
-  network: "base" | "base-sepolia";
+  apiKey: string;           // sk_ secret key — server-side only
+  network?: PaylixNetwork;  // optional; metadata only, does NOT pick the
+                            // checkout chain (pass networkKey per call)
   backendUrl: string;
+  timeoutMs?: number;       // default 30000
 }
+
+type PaylixNetwork =
+  | "ethereum" | "base" | "arbitrum" | "optimism" | "polygon" | "bnb"
+  | "avalanche"
+  | "ethereum-sepolia" | "base-sepolia" | "arbitrum-sepolia" | "op-sepolia"
+  | "polygon-amoy" | "bnb-testnet" | "avalanche-fuji"
+  | "solana" | "solana-devnet"
+  | "bitcoin" | "bitcoin-testnet"
+  | "litecoin" | "litecoin-testnet";
 
 // Checkout
 interface CreateCheckoutParams {
@@ -1087,14 +1157,15 @@ interface WebhookEvent {
   data: Record<string, unknown>;
 }
 
-// Network
+// Network — display metadata only. Contract addresses are deliberately NOT
+// here; the backend resolves PaymentVault / SubscriptionManager from its own
+// environment. See the "Network Configurations" section above.
 interface NetworkConfig {
-  chainId: number;
-  rpcUrl: string;
-  paymentVaultAddress: string;
-  subscriptionManagerAddress: string;
-  usdcAddress: string;
-  basescanUrl: string;
+  chainId: number;            // 0 on non-EVM chains
+  isEvm: boolean;
+  rpcUrl: string;             // "" on Bitcoin / Litecoin
+  usdcAddress: string | null; // null on ALL testnets and non-EVM chains
+  explorerUrl: string;
 }
 
 type WebhookEventType =
@@ -1112,9 +1183,9 @@ type WebhookEventType =
 
 ## Key Concepts
 
-- **Amounts**: All amounts are in USDC cents (integer). 1000 = $10.00 USDC.
+- **Amounts**: Two conventions, do not mix them. Payment/refund/coupon/invoice amounts are **integer cents** (`1000` = $10.00). Product prices (`createProduct` → `prices[].amount`) are **decimal strings in the token's own units** (`"10.00"` = 10 USDC).
 - **API Keys**: `pk_` prefix for publishable (client-side), `sk_` prefix for secret (server-side).
-- **Networks**: `"base"` for mainnet, `"base-sepolia"` for testnet.
+- **Networks**: 20 keys in `PaylixNetwork` — 7 EVM mainnets, 7 EVM testnets, and Solana/Bitcoin/Litecoin (mainnet + testnet each). The `network` option on `PaylixConfig` is metadata only; pass `networkKey` per call to pick the chain a checkout settles on.
 - **Non-custodial**: Payments go directly to the merchant wallet. Paylix never holds funds.
 - **Webhook secrets**: `whsec_` prefix. Always verify signatures server-side.
 - **Webhook envelope**: Uses `event` (not `type`) as the event name key, plus `timestamp`, `livemode`, and `data`.

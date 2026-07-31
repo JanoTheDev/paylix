@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: { default: "Paylix Docs", template: "%s — Paylix Docs" },
   description:
-    "Accept USDC payments and subscriptions in your app with a few lines of TypeScript.",
+    "Accept one-time and recurring crypto payments in your app with a few lines of TypeScript. USDC, USDT, DAI and more, across 7 EVM chains.",
 };
 
 export default function RootLayout({

@@ -79,9 +79,8 @@ await paylix.resumeSubscriptionSchedule(subId);`}</CodeBlock>
           webhook fires exactly once — at the flip, not at the schedule.
         </li>
         <li>
-          <code>cancelSubscription</code> with{" "}
-          <code>when: "immediate"</code> clears the scheduled flag and
-          flips status now.
+          <code>cancelSubscription({'{ subscriptionId }'})</code> clears the
+          scheduled flag and flips status now.
         </li>
       </ul>
     </>

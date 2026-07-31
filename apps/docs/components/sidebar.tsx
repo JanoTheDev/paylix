@@ -64,6 +64,7 @@ const navGroups: (NavItem | NavGroup)[] = [
   {
     group: "Operations",
     items: [
+      { href: "/supported-chains", label: "Supported Chains" },
       { href: "/self-hosting", label: "Self-Hosting" },
       { href: "/test-mode", label: "Test Mode" },
       { href: "/testnet", label: "Testnet Setup" },
@@ -108,7 +109,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 className={cn(
                   "flex h-9 items-center rounded-md px-3 text-sm transition-colors",
                   active
-                    ? "bg-surface-3 text-foreground"
+                    ? "bg-primary/10 text-primary"
                     : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
                 )}
               >
@@ -135,7 +136,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       className={cn(
                         "flex h-9 items-center rounded-md px-3 text-sm transition-colors",
                         active
-                          ? "bg-surface-3 text-foreground"
+                          ? "bg-primary/10 text-primary"
                           : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
                       )}
                     >

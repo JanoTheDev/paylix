@@ -104,10 +104,16 @@ export default function TestMode() {
       <CodeBlock language="ts">{`import { Paylix } from "@paylix/sdk";
 
 // Test mode — uses Base Sepolia + MockUSDC
-const paylix = new Paylix({ apiKey: "sk_test_..." });
+const paylix = new Paylix({
+  apiKey: "sk_test_...",
+  backendUrl: "https://pay.example.com",
+});
 
 // Live mode — uses Base mainnet + real USDC
-const livePaylix = new Paylix({ apiKey: "sk_live_..." });`}</CodeBlock>
+const livePaylix = new Paylix({
+  apiKey: "sk_live_...",
+  backendUrl: "https://pay.example.com",
+});`}</CodeBlock>
 
       <SectionHeading>The faucet</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">

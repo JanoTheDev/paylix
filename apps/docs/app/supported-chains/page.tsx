@@ -47,9 +47,15 @@ export default function SupportedChains() {
       <Callout variant="tip" title="Adding a chain is a config change">
         New chains land by extending{" "}
         <code className="font-mono text-[13px]">packages/config/src/networks/</code>
-        {" "}plus deploying contracts with{" "}
-        <code className="font-mono text-[13px]">./deploy.sh &lt;chain&gt; mainnet</code>.
-        No business-logic edits required.
+        {" "}plus running{" "}
+        <code className="font-mono text-[13px]">
+          forge script script/DeployMainnet.s.sol
+        </code>{" "}
+        against that chain&apos;s RPC and filling in the matching{" "}
+        <code className="font-mono text-[13px]">
+          ${"{"}CHAIN_KEY{"}"}_*
+        </code>{" "}
+        env group. No business-logic edits required.
       </Callout>
 
       <SectionHeading>EVM Chains</SectionHeading>

@@ -21,7 +21,9 @@ and without requiring buyers to hold gas.
 ## Supported chains and coins
 
 Live at the code level; per-chain mainnet deploys require the operator to
-fund a deployer wallet and run `./deploy.sh <chain> mainnet`.
+fund a deployer wallet and run the Foundry deploy script in
+`packages/contracts/script/` against that chain (see
+[Deploying to a new chain](#deploying-to-a-new-chain)).
 
 | Chain              | Testnet                  | Mainnet | USDC | USDT | DAI  | WETH | WBTC | PYUSD |
 |--------------------|--------------------------|---------|------|------|------|------|------|-------|
@@ -135,45 +137,121 @@ packages/
   mailer/         Invoice email delivery
   config/         Network registry (7 EVM chains) + tsconfig utilities
   utxo-watcher/   Bitcoin + Litecoin UTXO watch-address service (skeleton)
+  utxo-indexer/   UTXO payment writer wiring utxo-watcher callbacks to the DB
   solana-program/ Anchor workspace (payment_vault + subscription_manager)
   solana-indexer/ Solana log listener + keeper (skeleton)
 ```
 
+## Prerequisites
+
+| Tool | Version | Needed for |
+|------|---------|------------|
+| Node.js | 20 (see [`.nvmrc`](.nvmrc)) | everything |
+| pnpm | 9.15.4 (pinned via `packageManager`; `corepack enable pnpm` installs it) | everything |
+| Docker + Docker Compose | any recent | Postgres, and the container self-host path |
+| PostgreSQL | 15+ | only if you don't use the bundled Postgres container |
+| Foundry (`forge`, `cast`) | latest via [`foundryup`](https://getfoundry.sh) | deploying or testing the Solidity contracts |
+| anchor-cli + solana-cli | anchor 0.30.1 | only for the Solana scaffold |
+
+On **Windows**, Foundry must run under WSL — native Windows Foundry is not
+supported by this repo's scripts. Also use `127.0.0.1` rather than `localhost`
+in `DATABASE_URL`: Windows resolves `localhost` to IPv6 first and Postgres auth
+fails.
+
 ## Self-hosting
 
-See **[SELFHOST.md](SELFHOST.md)** for the full guide.
+See **[SELFHOST.md](SELFHOST.md)** for the full guide, including contract
+deployment and the per-chain env groups.
 
-Quick version:
+Quick version (Docker):
 
 ```bash
-# 1. Clone + install
+# 1. Clone + configure
 git clone https://github.com/JanoTheDev/paylix.git && cd paylix
-cp .env.example .env                 # fill in keys (see SELFHOST)
-pnpm install
+cp .env.example .env                  # fill in keys — see SELFHOST.md
 
-# 2. Deploy contracts on your chain of choice
-# (deploy.sh lives outside the repo — copy it up one level first)
-./deploy.sh base testnet             # or any chain × testnet/mainnet
+# 2. Deploy the contracts for your chain and paste the printed addresses
+#    into .env (see "Deploying to a new chain" below, or SELFHOST.md step 3)
 
-# 3. Start everything
+# 3. Start web + indexer + postgres
 docker compose up -d
-pnpm --filter @paylix/web dev
-pnpm --filter @paylix/indexer dev
+
+# 4. Create the schema (run from the host — the web image ships a standalone
+#    Next.js server, not the pnpm workspace)
+pnpm install
+pnpm --filter @paylix/db db:push
 ```
+
+The dashboard is then on <http://localhost:3000>. For the pnpm dev-server path
+instead of containers, see [Local development](#local-development) — do not run
+both, they both bind port 3000.
 
 ### Deploying to a new chain
 
-`./deploy.sh <chain> <testnet|mainnet>` handles everything:
+There is no wrapper script in this repo: deployment is two Foundry scripts,
+[`script/DeployTestnet.s.sol`](packages/contracts/script/DeployTestnet.s.sol)
+(also deploys a MockUSDC) and
+[`script/DeployMainnet.s.sol`](packages/contracts/script/DeployMainnet.s.sol)
+(additionally requires `USDC_ADDRESS` and `MULTISIG_OWNER`). Both read
+`DEPLOYER_PRIVATE_KEY`, `PLATFORM_WALLET` and `RELAYER_ADDRESS` from the
+environment and call `setRelayer()` on both contracts.
 
+```bash
+cd packages/contracts
+set -a; . ../../.env; set +a          # load the root .env into the shell
+
+# TESTNET_RELAYER_ADDRESS is blank in .env.example — derive it once:
+export TESTNET_RELAYER_ADDRESS=$(cast wallet address \
+  --private-key "$TESTNET_RELAYER_PRIVATE_KEY")
+
+# Testnet — e.g. Arbitrum Sepolia
+DEPLOYER_PRIVATE_KEY=$TESTNET_DEPLOYER_PRIVATE_KEY \
+PLATFORM_WALLET=$TESTNET_PLATFORM_WALLET \
+RELAYER_ADDRESS=$TESTNET_RELAYER_ADDRESS \
+forge script script/DeployTestnet.s.sol \
+  --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" --broadcast -vv
 ```
-./deploy.sh ethereum testnet         # Ethereum Sepolia
-./deploy.sh arbitrum mainnet         # Arbitrum One
-./deploy.sh all testnet              # fan out to every configured chain
-./deploy.sh base testnet --mint-only 0xYourBuyer 1000000000  # faucet test USDC
+
+Copy the printed `PaymentVault` / `SubscriptionManager` / `MockUSDC` addresses
+into the matching `${CHAIN_KEY}_*` vars in `.env`, then run
+`packages/contracts/export-abi.sh` to refresh `packages/contracts/abi/` (it
+invokes `~/.foundry/bin/forge`, the WSL/`foundryup` default path).
+
+Mainnet uses `DeployMainnet.s.sol` and the `MAINNET_*` key group, plus two
+env vars the testnet script does not take:
+
+```bash
+DEPLOYER_PRIVATE_KEY=$MAINNET_DEPLOYER_PRIVATE_KEY \
+PLATFORM_WALLET=$MAINNET_PLATFORM_WALLET \
+RELAYER_ADDRESS=$MAINNET_RELAYER_ADDRESS \
+USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
+MULTISIG_OWNER=0xYourSafeMultisigAddress \
+forge script script/DeployMainnet.s.sol \
+  --rpc-url "$BASE_RPC_URL" --broadcast -vv
 ```
+
+`USDC_ADDRESS` is the chain's canonical USDC from
+`packages/config/src/networks/<chain>.ts`. `MULTISIG_OWNER` has no default —
+omit it and the script aborts before broadcasting — and it must not equal the
+deployer EOA.
+
+**The mainnet deploy is not finished when the script exits.** The contracts
+are `Ownable2Step`, so the script only makes the multisig the *pending* owner.
+The multisig must then call `acceptOwnership()` on **both** contracts, or the
+hot deployer EOA remains the owner. See
+[SELFHOST.md](SELFHOST.md#mainnet-only--finish-the-ownership-handoff).
 
 Testnet and mainnet deployer / relayer / keeper / platform wallets are
-**separate** — `TESTNET_*` and `MAINNET_*` env groups enforce the split.
+**separate** — the `TESTNET_*` and `MAINNET_*` env groups enforce the split.
+
+To fund a test buyer with MockUSDC (the deployer owns the mint):
+
+```bash
+cast send "$BASE_SEPOLIA_MOCK_USDC_ADDRESS" "mint(address,uint256)" \
+  0xYourBuyer 1000000000 \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --private-key "$TESTNET_DEPLOYER_PRIVATE_KEY"
+```
 
 ## Local development
 
@@ -186,8 +264,15 @@ pnpm dev                              # all apps + packages via turbo
 
 ## Testing
 
+`pnpm test` fans out through turbo to every package with a `test` script.
+That includes `@paylix/contracts`, whose script is now a real `forge test` —
+so **a bare `pnpm test` fails unless `forge` is on your `PATH`**. On Windows,
+where Foundry lives in WSL, run the TypeScript packages you care about
+individually and drive `forge` separately (see below). `@paylix/solana-program`
+has no `test` script at all; its Anchor suite is `test:anchor`.
+
 ```bash
-pnpm test                             # all packages (527+ tests)
+pnpm test                             # everything — needs forge on PATH
 pnpm --filter @paylix/sdk test        # single package
 pnpm --filter @paylix/config test     # network registry
 pnpm --filter @paylix/utxo-watcher test
@@ -199,10 +284,13 @@ Solidity / Foundry tests run under WSL on Windows:
 wsl bash -lc "cd /mnt/c/path/to/paykit/packages/contracts && ~/.foundry/bin/forge test"
 ```
 
-Anchor (Solana) tests need `anchor-cli` installed:
+On macOS / Linux, `cd packages/contracts && forge test`.
+
+Anchor (Solana) tests need `anchor-cli` installed, and live behind a separate
+script name so `pnpm test` doesn't try to run them:
 
 ```bash
-cd packages/solana-program && anchor test
+pnpm --filter @paylix/solana-program test:anchor
 ```
 
 ## Rollout status
@@ -228,11 +316,11 @@ any other ORM in without changing the packages.
 
 ## Architecture deep-dive
 
-- [CLAUDE.md](CLAUDE.md) — architecture, invariants, gotchas
-- [docs/superpowers/specs/](docs/superpowers/specs/) — design specs for each major feature
-- [docs/superpowers/specs/2026-04-11-multi-chain-multi-token-design.md](docs/superpowers/specs/2026-04-11-multi-chain-multi-token-design.md) — multi-chain architecture
-- [docs/superpowers/specs/2026-04-23-bitcoin-integration.md](docs/superpowers/specs/2026-04-23-bitcoin-integration.md) — UTXO watcher design
-- [docs/superpowers/specs/2026-04-23-solana-integration.md](docs/superpowers/specs/2026-04-23-solana-integration.md) — Solana / Anchor design
+- [SELFHOST.md](SELFHOST.md) — operator guide: prerequisites, deploy, services, going live
+- [CONTRIBUTING.md](CONTRIBUTING.md) — setup-to-PR walkthrough
+- [SECURITY.md](SECURITY.md) — disclosure process and scope
+- [Docs site](apps/docs) — hand-rolled Next.js docs (`pnpm --filter @paylix/docs dev`, :3001)
+- [`packages/contracts/README.md`](packages/contracts/README.md) — contract layer notes
 
 ## License
 

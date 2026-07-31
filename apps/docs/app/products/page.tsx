@@ -81,16 +81,20 @@ export default function ProductsPage() {
         token units.
       </p>
       <CodeBlock language="ts">{`prices: [
-  { networkKey: "base", tokenSymbol: "USDC", amount: 1000 },
-  { networkKey: "base-sepolia", tokenSymbol: "USDC", amount: 1000 },
+  { networkKey: "base", tokenSymbol: "USDC", amount: "10.00" },
+  { networkKey: "base-sepolia", tokenSymbol: "USDC", amount: "10.00" },
 ]`}</CodeBlock>
 
-      <Callout variant="info" title="Prices are in cents">
-        Amounts are integers in the token&apos;s smallest unit. For USDC,{" "}
+      <Callout variant="info" title="Product prices are decimal strings">
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-          1000
+          prices[].amount
         </code>{" "}
-        means $10.00. Never store floats.
+        is a decimal string in the token&apos;s own units, not cents. For USDC,{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          &quot;10.00&quot;
+        </code>{" "}
+        means 10 USDC. Integer cents apply to other surfaces — payment amounts,
+        refunds, and coupon discounts — but not to product prices.
       </Callout>
 
       <SectionHeading>Trial support</SectionHeading>
@@ -134,16 +138,13 @@ export default function ProductsPage() {
       <CodeBlock language="ts">{`const product = await paylix.createProduct({
   name: "Pro Plan",
   type: "subscription",
-  interval: "monthly",
+  billingInterval: "monthly",
   prices: [
-    { networkKey: "base", tokenSymbol: "USDC", amount: 2000 },
+    { networkKey: "base", tokenSymbol: "USDC", amount: "20.00" },
   ],
   trialDays: 14,
-  checkoutFields: ["email", "firstName", "lastName"],
+  checkoutFields: { email: true, firstName: true, lastName: true },
 });`}</CodeBlock>
-
-      <SubsectionHeading>Get a product</SubsectionHeading>
-      <CodeBlock language="ts">{`const product = await paylix.getProduct("prod_abc123");`}</CodeBlock>
 
       <SubsectionHeading>Update a product</SubsectionHeading>
       <CodeBlock language="ts">{`const updated = await paylix.updateProduct("prod_abc123", {
@@ -152,7 +153,10 @@ export default function ProductsPage() {
 });`}</CodeBlock>
 
       <SubsectionHeading>List products</SubsectionHeading>
-      <CodeBlock language="ts">{`const { products } = await paylix.listProducts();`}</CodeBlock>
+      <CodeBlock language="ts">{`const products = await paylix.listProducts();
+
+// There is no getProduct — find the one you need from the list.
+const product = products.find((p) => p.id === "prod_abc123");`}</CodeBlock>
     </>
   );
 }

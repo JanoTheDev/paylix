@@ -399,10 +399,6 @@
         "anchor": "update-a-customer"
       },
       {
-        "text": "List customers",
-        "anchor": "list-customers"
-      },
-      {
         "text": "Delete a customer",
         "anchor": "delete-a-customer"
       },
@@ -944,10 +940,6 @@
         "anchor": "create-a-product"
       },
       {
-        "text": "Get a product",
-        "anchor": "get-a-product"
-      },
-      {
         "text": "Update a product",
         "anchor": "update-a-product"
       },
@@ -1271,10 +1263,6 @@
       {
         "text": "SubscriptionSummary",
         "anchor": "subscriptionsummary"
-      },
-      {
-        "text": "paylix.getSubscription()",
-        "anchor": "paylix-getsubscription"
       }
     ]
   },
@@ -1349,6 +1337,10 @@
       {
         "text": "Required Environment Variables",
         "anchor": "required-environment-variables"
+      },
+      {
+        "text": "Per-chain Variables",
+        "anchor": "per-chain-variables"
       },
       {
         "text": "3. Start with Docker Compose",

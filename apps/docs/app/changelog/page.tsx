@@ -665,10 +665,6 @@ await paylix.testFaucet({ address: "0xabc..." });
           </code>
           ,{" "}
           <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-            listCustomers
-          </code>
-          ,{" "}
-          <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
             deleteCustomer
           </code>
           )

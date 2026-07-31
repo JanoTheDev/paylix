@@ -37,7 +37,7 @@ export default function BlocklistReference() {
         <DocTableBody>
           <ParamRow name="id" type="string" description="Entry ID." />
           <ParamRow name="type" type='"wallet" | "email" | "country"' description="What kind of identifier this blocks." />
-          <ParamRow name="value" type="string" description="Canonicalized value: lowercase wallet, uppercase country, normalized email or bare domain." />
+          <ParamRow name="value" type="string" description="Canonicalized value: lowercase wallet address, uppercase ISO 3166-1 alpha-2 country code, or a normalized email address (Gmail dots stripped and +tag removed)." />
           <ParamRow name="reason" type="string | null" description="Free-form note from the merchant." />
           <ParamRow name="createdBy" type="string | null" description="User id of the dashboard operator who added the entry." />
           <ParamRow name="createdAt" type="string" description="ISO-8601 timestamp." />
@@ -51,8 +51,8 @@ export default function BlocklistReference() {
   reason: "Chargeback attempt",
 });
 
-paylix.addBlocklistEntry({ type: "email", value: "spam.com" }); // domain block
-paylix.addBlocklistEntry({ type: "country", value: "XX" });      // ISO 3166 alpha-2`}</CodeBlock>
+paylix.addBlocklistEntry({ type: "email", value: "spammer@gmail.com" }); // Gmail-normalized
+paylix.addBlocklistEntry({ type: "country", value: "XX" });              // ISO 3166 alpha-2`}</CodeBlock>
 
       <SectionHeading>paylix.removeBlocklistEntry(id)</SectionHeading>
       <CodeBlock language="ts">{`paylix.removeBlocklistEntry("blk_..."): Promise<void>`}</CodeBlock>

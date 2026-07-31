@@ -41,7 +41,10 @@ export async function CodeBlock({
           // biome-ignore lint/security/noDangerouslySetInnerHtml: html is generated at build time by shiki's codeToHtml() from local MDX source, not user input
           dangerouslySetInnerHTML={{ __html: html }}
         />
-        <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Always visible on touch/small screens (group-hover never fires
+            there); dims to hidden only on md+ pointer devices, and
+            focus-within brings it back for keyboard users. */}
+        <div className="absolute right-2 top-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
           <CopyButton value={code} />
         </div>
       </div>

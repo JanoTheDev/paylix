@@ -44,7 +44,7 @@ export default function Webhooks() {
         list, update, and delete endpoints without touching the dashboard.
         See the{" "}
         <a
-          href="/sdk-reference#paylix-createwebhook"
+          href="/sdk-reference/webhooks"
           className="font-medium text-primary underline underline-offset-2"
         >
           SDK Reference

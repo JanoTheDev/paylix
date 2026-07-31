@@ -33,17 +33,26 @@ export default function SelfHosting() {
 
       <SectionHeading>Prerequisites</SectionHeading>
       <ul className="mt-4 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-disc">
+        <li>Node.js 20 and pnpm 9.15.4 (<code>corepack enable pnpm</code>)</li>
         <li>Docker and Docker Compose installed</li>
         <li>A domain name (for HTTPS and webhooks)</li>
         <li>
-          An Ethereum wallet with a private key (for the indexer/keeper to
-          process subscription charges)
+          Two funded EOAs: a <strong className="text-foreground">relayer</strong>{" "}
+          (pays gas for gasless checkout) and a{" "}
+          <strong className="text-foreground">keeper</strong> (charges
+          subscriptions)
         </li>
-        <li>A Base RPC URL (Alchemy, Infura, or public RPC)</li>
+        <li>
+          An RPC URL for each chain you accept (Alchemy, Infura, or a public
+          RPC)
+        </li>
+        <li>
+          Foundry, to deploy the contracts — on Windows it must run under WSL
+        </li>
       </ul>
 
       <SectionHeading>1. Clone the Repository</SectionHeading>
-      <CodeBlock language="bash">{`git clone https://github.com/paylix/paylix.git
+      <CodeBlock language="bash">{`git clone https://github.com/JanoTheDev/paylix.git
 cd paylix`}</CodeBlock>
 
       <SectionHeading>2. Configure Environment</SectionHeading>
@@ -68,7 +77,12 @@ cd paylix`}</CodeBlock>
             <DocTableCell>
               <span className="text-foreground-muted">
                 PostgreSQL connection string. Use the Docker Compose default or
-                your own database.
+                your own database. On Windows use{" "}
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+                  127.0.0.1
+                </code>{" "}
+                rather than <code>localhost</code> — IPv6 resolution breaks
+                Postgres auth.
               </span>
             </DocTableCell>
           </DocTableRow>
@@ -80,7 +94,7 @@ cd paylix`}</CodeBlock>
               <span className="text-foreground-muted">
                 Random secret for authentication sessions. Generate with{" "}
                 <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-                  openssl rand -hex 32
+                  openssl rand -base64 32
                 </code>
                 .
               </span>
@@ -102,11 +116,15 @@ cd paylix`}</CodeBlock>
           </DocTableRow>
           <DocTableRow>
             <DocTableCell mono>
-              <span className="text-foreground">RPC_URL</span>
+              <span className="text-foreground">NEXT_PUBLIC_NETWORK</span>
             </DocTableCell>
             <DocTableCell>
               <span className="text-foreground-muted">
-                Base mainnet RPC URL (e.g. from Alchemy or Infura).
+                The network the checkout bundle is built for, e.g.{" "}
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+                  base-sepolia
+                </code>
+                . Inlined at build time — changing it requires a rebuild.
               </span>
             </DocTableCell>
           </DocTableRow>
@@ -117,34 +135,47 @@ cd paylix`}</CodeBlock>
             <DocTableCell>
               <span className="text-foreground-muted">
                 Private key for the keeper wallet that processes subscription
-                charges. Fund with a small amount of ETH for gas.
+                charges. Fund with a small amount of native gas. The indexer
+                refuses to boot without it.
               </span>
             </DocTableCell>
           </DocTableRow>
           <DocTableRow>
             <DocTableCell mono>
-              <span className="text-foreground">PAYMENT_CONTRACT_ADDRESS</span>
+              <span className="text-foreground">RELAYER_PRIVATE_KEY</span>
             </DocTableCell>
             <DocTableCell>
               <span className="text-foreground-muted">
-                Address of the deployed Paylix payment contract.
-              </span>
-            </DocTableCell>
-          </DocTableRow>
-          <DocTableRow>
-            <DocTableCell mono>
-              <span className="text-foreground">
-                SUBSCRIPTION_CONTRACT_ADDRESS
-              </span>
-            </DocTableCell>
-            <DocTableCell>
-              <span className="text-foreground-muted">
-                Address of the deployed Paylix subscription contract.
+                Private key for the relayer wallet that submits gasless
+                payments. Must match the address passed to{" "}
+                <code>setRelayer()</code> at deploy time.
               </span>
             </DocTableCell>
           </DocTableRow>
         </DocTableBody>
       </DocTable>
+
+      <SubsectionHeading>Per-chain Variables</SubsectionHeading>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Contract addresses and RPC URLs are namespaced per chain, not global.
+        The prefix is the network key uppercased with hyphens replaced by
+        underscores — <code>base-sepolia</code> becomes{" "}
+        <code>BASE_SEPOLIA</code>. A group becomes active as soon as any one of
+        its three variables is set, at which point all three are required.
+      </p>
+      <CodeBlock language="bash">{`# Fill in one group per chain you want to accept.
+BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_ALCHEMY_KEY
+BASE_SEPOLIA_PAYMENT_VAULT=0x...
+BASE_SEPOLIA_SUBSCRIPTION_MANAGER=0x...
+
+# Testnets only — the MockUSDC the deploy script printed. The NEXT_PUBLIC_
+# twin is what the checkout bundle reads.
+BASE_SEPOLIA_MOCK_USDC_ADDRESS=0x...
+NEXT_PUBLIC_MOCK_USDC_ADDRESS=0x...`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The indexer runs a listener for every group it finds — one process
+        covers all your chains.
+      </p>
 
       <SectionHeading>3. Start with Docker Compose</SectionHeading>
       <CodeBlock language="bash">{`# Start all services
@@ -156,8 +187,14 @@ docker compose up -d
 #   - Blockchain indexer + keeper`}</CodeBlock>
 
       <SectionHeading>4. Run Database Migrations</SectionHeading>
-      <CodeBlock language="bash">{`# Push schema to database
-docker compose exec web pnpm --filter @paylix/db db:push`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Run this from the host, not inside the container: the{" "}
+        <code>web</code> image ships a standalone Next.js server, so pnpm and
+        drizzle-kit are not in it. Docker Compose publishes Postgres on{" "}
+        <code>:5432</code>, so the host command reaches the same database.
+      </p>
+      <CodeBlock language="bash">{`pnpm install
+pnpm --filter @paylix/db db:push       # or db:migrate to apply the SQL migrations`}</CodeBlock>
 
       <SectionHeading>5. Access the Dashboard</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
@@ -215,26 +252,64 @@ http://localhost:3000`}</CodeBlock>
 
       <SubsectionHeading>2. Configure the .env</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        Add the relayer private key to your{" "}
-        <code>paykit/.env</code>. <code>RELAYER_ADDRESS</code> is derived
-        automatically by the deploy script — leave it blank.
+        Add the relayer private key to your <code>paykit/.env</code>. The
+        deploy script needs the matching <em>address</em> too — derive it from
+        the key rather than copy-pasting it.
       </p>
       <CodeBlock language="bash">{`RELAYER_PRIVATE_KEY=0xYourRelayerPrivateKey
-RELAYER_ADDRESS=`}</CodeBlock>
+RELAYER_ADDRESS=0xDeriveWithCastWalletAddress`}</CodeBlock>
 
       <SubsectionHeading>3. Deploy and fund</SubsectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Deploy the contracts and pass the relayer address through as an env
-        var — the deploy script will call <code>setRelayer()</code> on both
-        the PaymentVault and SubscriptionManager. Derive the address from
-        your relayer private key with{" "}
-        <code>cast wallet address</code>:
+        var — the Foundry script calls <code>setRelayer()</code> on both the
+        PaymentVault and SubscriptionManager. Derive the address from your
+        relayer private key with <code>cast wallet address</code>:
       </p>
       <CodeBlock language="bash">{`# From packages/contracts
+set -a; . ../../.env; set +a
 export RELAYER_ADDRESS=$(cast wallet address --private-key $RELAYER_PRIVATE_KEY)
 
+# DeployTestnet also deploys a MockUSDC.
+DEPLOYER_PRIVATE_KEY=$TESTNET_DEPLOYER_PRIVATE_KEY \\
+PLATFORM_WALLET=$TESTNET_PLATFORM_WALLET \\
 forge script script/DeployTestnet.s.sol \\
-  --rpc-url $RPC_URL --broadcast -v`}</CodeBlock>
+  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vv`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Mainnet uses <code>DeployMainnet.s.sol</code>, which additionally
+        requires <code>USDC_ADDRESS</code> (the chain&apos;s canonical USDC)
+        and <code>MULTISIG_OWNER</code>. Both are read with{" "}
+        <code>vm.envAddress</code> and have no default — omit either and the
+        script aborts before it broadcasts. <code>MULTISIG_OWNER</code> must
+        also differ from the deployer EOA.
+      </p>
+      <CodeBlock language="bash">{`DEPLOYER_PRIVATE_KEY=$MAINNET_DEPLOYER_PRIVATE_KEY \\
+PLATFORM_WALLET=$MAINNET_PLATFORM_WALLET \\
+RELAYER_ADDRESS=$MAINNET_RELAYER_ADDRESS \\
+USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \\
+MULTISIG_OWNER=0xYourSafeMultisigAddress \\
+forge script script/DeployMainnet.s.sol \\
+  --rpc-url $BASE_RPC_URL --broadcast -vv`}</CodeBlock>
+
+      <Callout
+        variant="warning"
+        title="Mainnet: the deploy is not done when the script exits"
+      >
+        The contracts are <code>Ownable2Step</code>. The script calls{" "}
+        <code>transferOwnership(MULTISIG_OWNER)</code>, which only makes the
+        multisig the <strong className="text-foreground">pending</strong>{" "}
+        owner. Until the multisig calls <code>acceptOwnership()</code> on{" "}
+        <strong className="text-foreground">both</strong> contracts, the hot
+        deployer EOA still owns them and can pause, re-fee, and rotate the
+        relayer. Verify before moving the deployer key to cold storage:
+      </Callout>
+      <CodeBlock language="bash">{`# From the multisig — two separate transactions
+acceptOwnership()   on <PAYMENT_VAULT_ADDRESS>
+acceptOwnership()   on <SUBSCRIPTION_MANAGER_ADDRESS>
+
+# Then confirm both return MULTISIG_OWNER, not the deployer
+cast call <PAYMENT_VAULT_ADDRESS>        "owner()(address)" --rpc-url $BASE_RPC_URL
+cast call <SUBSCRIPTION_MANAGER_ADDRESS> "owner()(address)" --rpc-url $BASE_RPC_URL`}</CodeBlock>
       <p className="text-sm leading-relaxed text-foreground-muted">
         Copy the printed PaymentVault and SubscriptionManager addresses into
         your <code>.env</code> (both the server-side and{" "}
@@ -267,17 +342,17 @@ cast wallet new
 
 # 2. Copy the new address; call setRelayer on both contracts
 cast send <PAYMENT_VAULT_ADDRESS> 'setRelayer(address)' <NEW_ADDRESS> \\
-  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $TESTNET_DEPLOYER_PRIVATE_KEY
 
 cast send <SUBSCRIPTION_MANAGER_ADDRESS> 'setRelayer(address)' <NEW_ADDRESS> \\
-  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $TESTNET_DEPLOYER_PRIVATE_KEY
 
 # 3. Update paykit/.env with the new private key
 # RELAYER_PRIVATE_KEY=0xNEW_PRIVATE_KEY
 
 # 4. Fund the new relayer wallet with ETH
 cast send <NEW_ADDRESS> --value 0.01ether \\
-  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $TESTNET_DEPLOYER_PRIVATE_KEY
 
 # 5. Restart the web server so it picks up the new key
 pnpm --filter @paylix/web dev`}</CodeBlock>
@@ -291,10 +366,10 @@ pnpm --filter @paylix/web dev`}</CodeBlock>
       </p>
       <CodeBlock language="bash">{`# Pause gasless on both contracts
 cast send <PAYMENT_VAULT_ADDRESS> 'setGaslessPaused(bool)' true \\
-  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $TESTNET_DEPLOYER_PRIVATE_KEY
 
 cast send <SUBSCRIPTION_MANAGER_ADDRESS> 'setGaslessPaused(bool)' true \\
-  --rpc-url $RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $TESTNET_DEPLOYER_PRIVATE_KEY
 
 # To unpause, pass false instead of true.`}</CodeBlock>
 
@@ -369,7 +444,8 @@ INDEXER_CONFIRMATIONS=5
           <DocTableRow>
             <DocTableCell mono>
               <span className="text-foreground">
-                MOCK_USDC_ADDRESS / NEXT_PUBLIC_MOCK_USDC_ADDRESS
+                BASE_SEPOLIA_MOCK_USDC_ADDRESS /
+                NEXT_PUBLIC_MOCK_USDC_ADDRESS
               </span>
             </DocTableCell>
             <DocTableCell>
@@ -377,7 +453,9 @@ INDEXER_CONFIRMATIONS=5
             </DocTableCell>
             <DocTableCell>
               <span className="text-foreground-muted">
-                Address of the MockUSDC contract on Base Sepolia.
+                Address of the MockUSDC contract the testnet deploy script
+                printed. Each testnet has its own pair — see{" "}
+                <code>packages/config/src/networks/</code>.
               </span>
             </DocTableCell>
           </DocTableRow>
@@ -419,10 +497,18 @@ INDEXER_CONFIRMATIONS=5
       </DocTable>
 
       <SectionHeading>Updating</SectionHeading>
-      <CodeBlock language="bash">{`git pull origin main
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        The default branch is <code>master</code>. Run the migration from the
+        host for the same reason as step 4 — the <code>web</code> container has
+        no pnpm workspace and no drizzle-kit.
+      </p>
+      <CodeBlock language="bash">{`git pull origin master
 docker compose down
 docker compose up -d --build
-docker compose exec web pnpm --filter @paylix/db db:push`}</CodeBlock>
+
+# From the host, against the Postgres published on :5432
+pnpm install
+pnpm --filter @paylix/db db:push`}</CodeBlock>
     </>
   );
 }

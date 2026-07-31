@@ -82,12 +82,12 @@ export default function SubscriptionsReference() {
 
       <SectionHeading>paylix.updateSubscriptionWallet()</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        Requests a wallet migration for a subscription. The new wallet owner
-        must call{" "}
-        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
-          acceptSubscriptionWalletUpdate
-        </code>{" "}
-        on the SubscriptionManager contract to complete the migration.
+        Points a subscription at a different payer wallet in a single call
+        (<code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          POST /api/subscriptions/&#123;id&#125;/update-wallet
+        </code>
+        ). The new wallet must <em>already</em> have signed a permit for the
+        subscription&apos;s amount — there is no separate acceptance step.
       </p>
       <CodeBlock language="ts">{`paylix.updateSubscriptionWallet(params: {
   subscriptionId: string;
@@ -122,7 +122,12 @@ export default function SubscriptionsReference() {
         <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
           customer
         </code>{" "}
-        object.
+        object. There is no single-subscription getter — fetch one by
+        filtering, e.g.{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          listSubscriptions(&#123; customerId &#125;)
+        </code>
+        .
       </p>
       <CodeBlock language="ts">{`paylix.listSubscriptions(params?: ListSubscriptionsParams): Promise<SubscriptionSummary[]>`}</CodeBlock>
 
@@ -184,15 +189,6 @@ const userSubs = await paylix.listSubscriptions({
 for (const sub of active) {
   console.log(sub.productName, sub.customer.email, sub.nextChargeDate);
 }`}</CodeBlock>
-
-      <SectionHeading>paylix.getSubscription()</SectionHeading>
-      <p className="text-sm leading-relaxed text-foreground-muted">
-        Retrieves a single subscription by ID, including the embedded customer object.
-      </p>
-      <CodeBlock language="ts">{`paylix.getSubscription(id: string): Promise<SubscriptionSummary>`}</CodeBlock>
-      <CodeBlock language="ts">{`const sub = await paylix.getSubscription("sub_abc123");
-console.log(sub.status, sub.nextChargeDate);
-console.log("Customer:", sub.customer.email, sub.customer.walletAddress);`}</CodeBlock>
     </>
   );
 }

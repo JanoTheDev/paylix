@@ -38,9 +38,9 @@ export default function PortalReference() {
           </DocTableRow>
         </DocTableHead>
         <DocTableBody>
-          <ParamRow name="customer" type="Customer" description="Customer profile object." />
-          <ParamRow name="payments" type="Payment[]" description="Array of all payments by this customer." />
-          <ParamRow name="subscriptions" type="Subscription[]" description="Array of active and past subscriptions." />
+          <ParamRow name="customer" type="object" description="Customer profile, narrowed to: id, customerId, email, firstName, lastName, walletAddress." />
+          <ParamRow name="payments" type="array" description="All payments by this customer. Each entry carries id, amount (integer cents), status, txHash, createdAt, productName — no fee or metadata." />
+          <ParamRow name="subscriptions" type="array" description="Active and past subscriptions. Each entry carries id, status, productName, nextChargeDate, trialEndsAt, createdAt." />
         </DocTableBody>
       </DocTable>
 

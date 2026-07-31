@@ -65,7 +65,7 @@ export default function FreeTrialsPage() {
   name: "Pro Plan",
   type: "subscription",
   prices: [
-    { networkKey: "base", tokenSymbol: "USDC", amount: 2000 },
+    { networkKey: "base", tokenSymbol: "USDC", amount: "20.00" },
   ],
   billingInterval: "monthly",
   trialDays: 14,           // 14-day free trial
@@ -87,7 +87,7 @@ export default function FreeTrialsPage() {
   name: "Pro Plan (test)",
   type: "subscription",
   prices: [
-    { networkKey: "base-sepolia", tokenSymbol: "USDC", amount: 2000 },
+    { networkKey: "base-sepolia", tokenSymbol: "USDC", amount: "20.00" },
   ],
   billingInterval: "minutely",
   trialMinutes: 1,         // converts after 1 minute
@@ -265,7 +265,7 @@ export default function FreeTrialsPage() {
         </code>
         :
       </p>
-      <CodeBlock language="ts">{`const { checkoutUrl, subscriptionId, trialEndsAt } =
+      <CodeBlock language="ts">{`const { checkoutUrl, checkoutId, trialEndsAt } =
   await paylix.createSubscription({
     productId: "prod_monthly_pro",
     customerId: "cust_xyz",
@@ -275,6 +275,14 @@ export default function FreeTrialsPage() {
 
 console.log(trialEndsAt);
 // "2026-04-26T00:00:00.000Z" (14 days from now)`}</CodeBlock>
+      <p className="mt-4 text-sm leading-relaxed text-foreground-muted">
+        The response carries no subscription id — the on-chain subscription id
+        arrives later via the{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
+          subscription.created
+        </code>{" "}
+        webhook.
+      </p>
 
       <SectionHeading>Quick test checklist</SectionHeading>
       <ol className="mt-4 space-y-2 pl-5 text-sm leading-relaxed text-foreground-muted [&>li]:list-decimal">
@@ -285,7 +293,7 @@ console.log(trialEndsAt);
           </code>{" "}
           and{" "}
           <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-primary">
-            interval: &quot;minutely&quot;
+            billingInterval: &quot;minutely&quot;
           </code>
           .
         </li>

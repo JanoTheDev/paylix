@@ -1,18 +1,60 @@
 # Paylix SDK
-> Open-source crypto payment SDK for developers. USDC on Base.
+> Open-source, self-hostable crypto payments. One-time payments and subscriptions across 7 EVM chains (Ethereum, Base, Arbitrum, Optimism, Polygon, BNB, Avalanche) plus scaffolded Solana, Bitcoin and Litecoin. Tokens: USDC, USDT, DAI, WETH, WBTC, PYUSD. Gasless checkout, non-custodial settlement.
 
-## Docs
+## Getting Started
 - Getting Started: /
+- Supported Chains & Tokens: /supported-chains
+- Test Mode: /test-mode
+- Testnet Setup: /testnet
+
+## SDK Reference
 - SDK Reference: /sdk-reference
   - Checkout & Verification: /sdk-reference/checkout
   - Payments: /sdk-reference/payments
   - Subscriptions: /sdk-reference/subscriptions
   - Portal & Invoices: /sdk-reference/portal
   - Webhook Management: /sdk-reference/webhooks
-- Webhooks: /webhooks
+  - Coupons: /sdk-reference/coupons
+  - Payment Links: /sdk-reference/payment-links
+  - Blocklist: /sdk-reference/blocklist
+- Products API: /products
+- Customer Management: /customers
+- Error Codes: /error-codes
+- Rate Limits: /rate-limits
+- API Changelog: /changelog
+
+## Frameworks
+- Overview: /frameworks
+- Next.js (App Router): /frameworks/nextjs-app-router
+- Next.js (Pages Router): /frameworks/nextjs-pages-router
+- React (Vite): /frameworks/react-vite
+- SvelteKit: /frameworks/sveltekit
+- Nuxt 3: /frameworks/nuxt
+- Remix: /frameworks/remix
+- Express / Fastify: /frameworks/express
+
+## Features
 - Subscriptions: /subscriptions
-- Customers: /customers
-- Products: /products
+- Free Trials: /free-trials
+- Coupons: /coupons
+- Payment Links: /payment-links
+- Analytics: /analytics
 - Invoices: /invoices
+- Email Notifications: /email-notifications
+- Branding: /branding
+- Blocklist: /blocklist
+- Scheduled Cancellation: /scheduled-cancellation
+- Gift Subscriptions: /gift-subscriptions
+- CSV Export: /csv-export
+- Refunds: /refunds
+- Tax: /tax
+- Webhooks: /webhooks
+- Webhook Verification: /webhook-verification
+
+## Operations
 - Self-Hosting: /self-hosting
+- API Keys: /api-keys
+- Audit Logs: /audit-logs
+
+## Optional
 - Full reference for LLMs: /llms-full.txt

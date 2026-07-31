@@ -78,16 +78,18 @@ export default function CustomersPage() {
 });`}</CodeBlock>
 
       <SubsectionHeading>Get a customer</SubsectionHeading>
-      <CodeBlock language="ts">{`const customer = await paylix.getCustomer("cust_abc123");`}</CodeBlock>
+      <p className="text-sm leading-relaxed text-foreground-muted">
+        Returns the customer record together with their payments,
+        subscriptions, and invoices.
+      </p>
+      <CodeBlock language="ts">{`const { customer, payments, subscriptions, invoices } =
+  await paylix.getCustomer("cust_abc123");`}</CodeBlock>
 
       <SubsectionHeading>Update a customer</SubsectionHeading>
       <CodeBlock language="ts">{`const updated = await paylix.updateCustomer("cust_abc123", {
   phone: "+1-555-0199",
   metadata: { plan: "enterprise" },
 });`}</CodeBlock>
-
-      <SubsectionHeading>List customers</SubsectionHeading>
-      <CodeBlock language="ts">{`const { customers } = await paylix.listCustomers();`}</CodeBlock>
 
       <SubsectionHeading>Delete a customer</SubsectionHeading>
       <CodeBlock language="ts">{`await paylix.deleteCustomer("cust_abc123");`}</CodeBlock>
@@ -120,7 +122,6 @@ export default function CustomersPage() {
       </p>
       <CodeBlock language="ts">{`const { url } = await paylix.createPortalSession({
   customerId: "cust_abc123",
-  returnUrl: "https://example.com/account",
 });
 
 // Redirect the customer to url`}</CodeBlock>

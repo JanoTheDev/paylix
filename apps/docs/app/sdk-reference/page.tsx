@@ -36,7 +36,6 @@ const sections = [
       "cancelSubscription()",
       "updateSubscriptionWallet()",
       "listSubscriptions()",
-      "getSubscription()",
     ],
   },
   {
@@ -134,16 +133,15 @@ export default function SdkReference() {
             description="Your secret API key (sk_live_... or sk_test_...)."
           />
           <ParamRow
-            name="network"
-            type={`"base" | "base-sepolia"`}
-            required
-            description="Target blockchain network."
-          />
-          <ParamRow
             name="backendUrl"
             type="string"
             required
             description="URL of your Paylix backend instance."
+          />
+          <ParamRow
+            name="network"
+            type="PaylixNetwork"
+            description={`Optional default network, used only for explorer/RPC metadata via the "network" accessor. It does NOT select the chain a checkout settles on — pass "networkKey" per call for that. One of: ethereum, base, arbitrum, optimism, polygon, bnb, avalanche, ethereum-sepolia, base-sepolia, arbitrum-sepolia, op-sepolia, polygon-amoy, bnb-testnet, avalanche-fuji, solana, solana-devnet, bitcoin, bitcoin-testnet, litecoin, litecoin-testnet.`}
           />
         </DocTableBody>
       </DocTable>
@@ -152,8 +150,8 @@ export default function SdkReference() {
 
 const paylix = new Paylix({
   apiKey: "sk_live_abc123",
-  network: "base",
   backendUrl: "https://paylix.example.com",
+  network: "base", // optional, metadata only
 });`}</CodeBlock>
 
       <SectionHeading>Methods</SectionHeading>
@@ -193,17 +191,24 @@ const paylix = new Paylix({
 // NETWORKS = {
 //   "base": {
 //     chainId: 8453,
-//     name: "Base",
+//     isEvm: true,
 //     rpcUrl: "https://mainnet.base.org",
 //     usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 //     explorerUrl: "https://basescan.org",
 //   },
 //   "base-sepolia": {
 //     chainId: 84532,
-//     name: "Base Sepolia",
+//     isEvm: true,
 //     rpcUrl: "https://sepolia.base.org",
-//     usdcAddress: "0x...",  // MockUSDC on testnet
+//     usdcAddress: null,  // null on every testnet
 //     explorerUrl: "https://sepolia.basescan.org",
+//   },
+//   "solana": {
+//     chainId: 0,        // 0 on every non-EVM chain
+//     isEvm: false,
+//     rpcUrl: "https://api.mainnet-beta.solana.com",
+//     usdcAddress: null,  // null on every non-EVM chain
+//     explorerUrl: "https://solscan.io",
 //   },
 // }`}</CodeBlock>
     </>

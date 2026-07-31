@@ -173,9 +173,11 @@ console.log(r.status, r.httpStatus);`}</CodeBlock>
         the Paylix class.
       </p>
       <CodeBlock language="ts">{`webhooks.verify(params: {
-  payload: string;
+  payload: string | Uint8Array;  // the raw body, never a re-serialized object
   signature: string;
   secret: string;
+  maxAgeSeconds?: number;        // freshness window for t=,v1= signatures. Default 300
+  nowSeconds?: number;           // override "now" in tests. Defaults to Date.now() / 1000
 }): boolean`}</CodeBlock>
       <CodeBlock language="ts">{`import { webhooks } from "@paylix/sdk";
 

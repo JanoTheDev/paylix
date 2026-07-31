@@ -63,8 +63,8 @@ export default function PaymentsReference() {
         </DocTableHead>
         <DocTableBody>
           <ParamRow name="id" type="string" description="Payment ID." />
-          <ParamRow name="amount" type="number" description="Payment amount in token units (e.g. 1000 = 10.00 USDC)." />
-          <ParamRow name="fee" type="number" description="Platform fee in token units." />
+          <ParamRow name="amount" type="number" description="Payment amount in integer cents (1000 = $10.00)." />
+          <ParamRow name="fee" type="number" description="Platform fee in integer cents." />
           <ParamRow name="status" type={`"pending" | "confirmed" | "failed"`} description="Current payment status." />
           <ParamRow name="txHash" type="string | null" description="On-chain transaction hash." />
           <ParamRow name="chain" type="string" description="Network the payment was made on." />
@@ -106,12 +106,53 @@ for (const p of payments) {
 
       <SectionHeading>paylix.getPayment()</SectionHeading>
       <p className="text-sm leading-relaxed text-foreground-muted">
-        Retrieves a single payment by ID, including the embedded customer object.
+        Retrieves a single payment by ID. It returns the same verification
+        shape as{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          verifyPayment
+        </code>{" "}
+        — the two are aliases over{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          GET /api/payments/&#123;id&#125;
+        </code>
+        . This shape is narrower than{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          PaymentSummary
+        </code>
+        : there is no{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          id
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          token
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          fromAddress
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          toAddress
+        </code>
+        ,{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          createdAt
+        </code>
+        , or{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          customer
+        </code>{" "}
+        object. Use{" "}
+        <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[12px] text-primary">
+          listPayments
+        </code>{" "}
+        when you need the full summary with the embedded customer.
       </p>
-      <CodeBlock language="ts">{`paylix.getPayment(id: string): Promise<PaymentSummary>`}</CodeBlock>
+      <CodeBlock language="ts">{`paylix.getPayment(id: string): Promise<VerifyPaymentResult>`}</CodeBlock>
       <CodeBlock language="ts">{`const payment = await paylix.getPayment("pay_abc123");
-console.log(payment.status, payment.txHash);
-console.log("Customer:", payment.customer.email);`}</CodeBlock>
+console.log(payment.verified, payment.status, payment.txHash);
+console.log(payment.amount, "cents on", payment.chain);`}</CodeBlock>
     </>
   );
 }

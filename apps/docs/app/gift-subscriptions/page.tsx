@@ -40,12 +40,12 @@ export default function GiftSubscriptionsPage() {
           <code>productId</code> — must be a subscription product.
         </li>
         <li>
-          <code>customerId</code> — the external customer id you use in
-          your app. The customer must already exist in Paylix.
+          <code>customerId</code> — the Paylix customer id (a UUID). The
+          customer must already exist in Paylix.
         </li>
         <li>
-          <code>expiresAt</code> — optional. If set, the keeper flips the
-          row to <code>cancelled</code> when the date passes and fires{" "}
+          <code>expiresAt</code> — optional. If set, the keeper lapses the
+          row to <code>expired</code> when the date passes and fires{" "}
           <code>subscription.cancelled</code> with{" "}
           <code>reason: "gift_expired"</code>. Omit for indefinite gifts.
         </li>

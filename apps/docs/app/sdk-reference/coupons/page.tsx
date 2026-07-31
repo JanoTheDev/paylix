@@ -44,7 +44,7 @@ export default function CouponsReference() {
         </DocTableHead>
         <DocTableBody>
           <ParamRow name="id" type="string" description="Coupon ID." />
-          <ParamRow name="code" type="string" description="Uppercase code buyers enter at checkout." />
+          <ParamRow name="code" type="string" description="Case-sensitive code buyers enter at checkout — it is stored exactly as you create it." />
           <ParamRow name="type" type='"percent" | "fixed"' description="Discount type." />
           <ParamRow name="percentOff" type="number | null" description="Percent off (1–100) for percent coupons." />
           <ParamRow name="amountOffCents" type="number | null" description="Integer cents off for fixed coupons." />
@@ -70,8 +70,10 @@ export default function CouponsReference() {
       <p className="text-sm leading-relaxed text-foreground-muted">
         Server-side apply. Useful when you host your own checkout UI.
         Mutates <code>session.amount</code> and records the original on{" "}
-        <code>subtotalAmount</code>. Returns the discount in the token&apos;s
-        base units as a string (BigInt-safe).
+        <code>subtotalAmount</code>. The discount comes back as{" "}
+        <code>discountCents</code> — a number in integer cents (500 = $5.00
+        off). Only <code>amount</code> and <code>subtotalAmount</code> are
+        decimal strings in the token&apos;s native units.
       </p>
       <CodeBlock language="ts">{`const r = await paylix.applyCouponToCheckout("chk_...", "SPRING25");
 console.log(r.discountCents, r.amount, r.subtotalAmount);`}</CodeBlock>
