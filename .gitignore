@@ -15,3 +15,22 @@ artifacts/
 typechain-types/
 broadcast/
 graphify-out/
+
+# AI assistant + planning artifacts
+.claude/
+CLAUDE.md
+**/CLAUDE.md
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.superpowers/
+docs/superpowers/
+docs/sdd/
+docs/plans/
+plans/
+specs/
+*.plan.md
+PLAN.md
+PLANNING.md
+TODO.local.md
