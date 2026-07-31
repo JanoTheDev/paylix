@@ -1,14 +1,60 @@
 /**
- * Pure helpers that verify an on-chain USDC transfer is a valid refund
- * for a given payment row. The API route fetches the receipt via viem;
- * this module just interprets the decoded logs.
+ * Helpers that verify an on-chain ERC-20 transfer is a valid refund for a
+ * given payment row. The API route fetches the receipt via viem;
+ * `decodeTransferLogs` turns it into `Erc20TransferLog[]` and `verifyRefund`
+ * interprets them.
  */
+
+import { erc20Abi, parseEventLogs, type Log } from "viem";
 
 export interface Erc20TransferLog {
   token: string;     // contract address of the token
   from: string;      // sender (merchant for a refund)
   to: string;        // recipient (original payer for a refund)
   value: bigint;     // transferred amount in token base units
+}
+
+/**
+ * Decode the ERC-20 `Transfer(address,address,uint256)` events out of a
+ * transaction receipt.
+ *
+ * This MUST go through viem's `parseEventLogs`, which matches `topics[0]`
+ * against the event signature hash. The hand-rolled decoder this replaces
+ * accepted any 3-topic log, so a USDC `Approval(owner,spender,value)` —
+ * same contract, same topic count, no funds moved — satisfied refund
+ * verification. Both refund routes call this so they cannot drift again.
+ */
+export function decodeTransferLogs(
+  source: readonly Log[] | { logs: readonly Log[] },
+): Erc20TransferLog[] {
+  const logs = Array.isArray(source) ? source : (source as { logs: readonly Log[] }).logs;
+  const parsed = parseEventLogs({
+    abi: erc20Abi,
+    eventName: "Transfer",
+    logs: logs as Log[],
+    // Malformed/oversized logs are skipped rather than thrown on: a single
+    // undecodable log must not make a legitimate refund unverifiable.
+    strict: false,
+  });
+
+  const out: Erc20TransferLog[] = [];
+  for (const log of parsed) {
+    const { from, to, value } = log.args as {
+      from?: string;
+      to?: string;
+      value?: bigint;
+    };
+    // `strict: false` can yield partially-decoded entries; drop them rather
+    // than coercing undefined into a match.
+    if (!from || !to || typeof value !== "bigint") continue;
+    out.push({
+      token: log.address.toLowerCase(),
+      from: from.toLowerCase(),
+      to: to.toLowerCase(),
+      value,
+    });
+  }
+  return out;
 }
 
 export type VerifyRefundInput = {
@@ -25,11 +71,15 @@ export type VerifyRefundInput = {
     /** Total charged in cents. */
     amountCents: number;
   };
-  /** Canonical USDC address for the payment's network (lowercased). */
+  /** Canonical token address for the payment's network (lowercased). */
   usdcAddress: string;
   /** Refund amount in cents the merchant is trying to record. */
   refundCents: number;
-  /** USDC-6-decimal conversion. base_units_per_cent = 10_000. */
+  /**
+   * Token base units per cent. Derive it from the token's decimals via
+   * `baseUnitsPerCent(decimals)` in `lib/amounts.ts` — never hardcode
+   * `10_000n`, which is only correct for 6-decimal tokens.
+   */
   baseUnitsPerCent: bigint;
 };
 
@@ -51,7 +101,20 @@ export function verifyRefund(input: VerifyRefundInput): VerifyResult {
   const { payment, refundCents, usdcAddress, transferLogs, baseUnitsPerCent } =
     input;
 
-  if (!Number.isFinite(refundCents) || refundCents <= 0) {
+  // Cents are always integers (CLAUDE.md invariant). Reject floats, NaN and
+  // Infinity explicitly rather than letting BigInt() throw further down.
+  if (!Number.isSafeInteger(refundCents) || refundCents <= 0) {
+    return { ok: false, reason: "invalid_amount" };
+  }
+  if (
+    !Number.isSafeInteger(payment.refundedCents) ||
+    payment.refundedCents < 0 ||
+    !Number.isSafeInteger(payment.amountCents) ||
+    payment.amountCents <= 0
+  ) {
+    return { ok: false, reason: "invalid_amount" };
+  }
+  if (baseUnitsPerCent <= 0n) {
     return { ok: false, reason: "invalid_amount" };
   }
   if (payment.refundedCents + refundCents > payment.amountCents) {

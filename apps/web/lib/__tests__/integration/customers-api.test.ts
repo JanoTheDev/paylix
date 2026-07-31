@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const MOCK_ORG = { ok: true, organizationId: "org-1", userId: "user-1", session: {} };
+const MOCK_ORG = {
+  ok: true,
+  organizationId: "org-1",
+  userId: "user-1",
+  role: "owner",
+  session: {},
+};
 
 vi.mock("@/lib/require-active-org", () => ({
   resolveActiveOrg: vi.fn().mockResolvedValue(MOCK_ORG),
+  requireRole: vi.fn().mockReturnValue(null),
+  assertRole: vi.fn().mockResolvedValue({ ok: true, role: "owner" }),
+  OWNER_ONLY: ["owner"],
+  hasRole: vi.fn().mockReturnValue(true),
+  PRIVILEGED_ROLES: ["owner", "admin"],
 }));
 vi.mock("@/lib/audit", () => ({ recordAudit: vi.fn() }));
 

@@ -122,14 +122,27 @@ export interface ResolveTaxInput {
 }
 
 /**
+ * `floor(subtotal * rateBps / 10000)` computed in bigint. Done in Number,
+ * the intermediate product overflows Number.MAX_SAFE_INTEGER for large
+ * invoices and starts losing cents.
+ */
+function taxOf(subtotalCents: number, rateBps: number): number {
+  return Number((BigInt(subtotalCents) * BigInt(rateBps)) / 10000n);
+}
+
+/**
  * Resolve a tax amount from the rate table. Returns null when no rate
  * applies (non-EU, non-US, or country unknown). All cents are integers;
  * tax is `floor(subtotal * rateBps / 10000)` — merchant-friendly
  * rounding so we never over-collect by a cent on edge cases.
  */
 export function resolveTax(input: ResolveTaxInput): TaxResolution | null {
-  const subtotal = Math.max(0, input.subtotalCents | 0);
-  if (subtotal === 0) return null;
+  // NOT `| 0`: the bitwise OR coerces to int32, so any subtotal above
+  // 2,147,483,647 cents wraps negative and then flattens to 0 — silently
+  // returning "no tax" on large invoices.
+  if (!Number.isFinite(input.subtotalCents)) return null;
+  const subtotal = Math.max(0, Math.trunc(input.subtotalCents));
+  if (subtotal === 0 || !Number.isSafeInteger(subtotal)) return null;
   if (input.reverseCharge) {
     return {
       rateBps: 0,
@@ -144,10 +157,11 @@ export function resolveTax(input: ResolveTaxInput): TaxResolution | null {
   if (
     input.productRateBps !== null &&
     input.productRateBps !== undefined &&
+    Number.isSafeInteger(input.productRateBps) &&
     input.productRateBps > 0
   ) {
     const rateBps = input.productRateBps;
-    const tax = Math.floor((subtotal * rateBps) / 10000);
+    const tax = taxOf(subtotal, rateBps);
     return {
       rateBps,
       label: input.productLabel ?? `Tax ${(rateBps / 100).toFixed(2)}%`,
@@ -163,7 +177,7 @@ export function resolveTax(input: ResolveTaxInput): TaxResolution | null {
   // EU + selected European
   const eu = EU_VAT_BPS[country];
   if (eu) {
-    const tax = Math.floor((subtotal * eu.rateBps) / 10000);
+    const tax = taxOf(subtotal, eu.rateBps);
     return {
       rateBps: eu.rateBps,
       label: eu.label,
@@ -179,7 +193,7 @@ export function resolveTax(input: ResolveTaxInput): TaxResolution | null {
     if (!state) return null;
     const entry = US_STATE_BPS[state];
     if (!entry) return null;
-    const tax = Math.floor((subtotal * entry.rateBps) / 10000);
+    const tax = taxOf(subtotal, entry.rateBps);
     return {
       rateBps: entry.rateBps,
       label: entry.label,

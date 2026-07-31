@@ -39,6 +39,17 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 24,
   },
+  advanced: {
+    // Explicit, not inherited from a framework default: the middleware CSRF
+    // check and SameSite are the two layers protecting cookie-authenticated
+    // dashboard writes. "lax" keeps top-level GET navigations working while
+    // blocking cross-site POSTs from carrying the session.
+    defaultCookieAttributes: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+    },
+  },
   plugins: [
     organization({
       allowUserToCreateOrganization: true,

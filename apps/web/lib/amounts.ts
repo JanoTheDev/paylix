@@ -52,6 +52,40 @@ export function fromNativeUnits(amount: bigint, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole;
 }
 
+/**
+ * Token base units that represent one cent, for a token with `decimals`.
+ *
+ * `10_000` (the value hardcoded across tax, analytics and refund
+ * verification) is only correct for 6-decimal tokens like USDC. An
+ * 18-decimal token is off by 10^12, which silently inflates every derived
+ * cent figure. Always derive the scale from the token registry:
+ *
+ *   baseUnitsPerCent(getToken(networkKey, tokenSymbol).decimals)
+ *
+ * Throws for tokens with fewer than 2 decimals, where a cent is not
+ * representable at all.
+ */
+export function baseUnitsPerCent(decimals: number): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`Invalid token decimals: ${decimals}`);
+  }
+  if (decimals < 2) {
+    throw new Error(
+      `Token with ${decimals} decimals cannot represent a cent; refuse to convert`,
+    );
+  }
+  return 10n ** BigInt(decimals - 2);
+}
+
+/** Convert a native-unit amount to integer cents, truncating any remainder. */
+export function nativeUnitsToCents(amount: bigint, decimals: number): number {
+  const cents = amount / baseUnitsPerCent(decimals);
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Amount exceeds the safe integer range in cents");
+  }
+  return Number(cents);
+}
+
 /** Pretty-print an amount with its symbol (used in UI labels). */
 export function formatNativeAmount(
   amount: bigint,

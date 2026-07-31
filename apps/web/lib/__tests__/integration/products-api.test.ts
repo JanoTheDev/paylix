@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const MOCK_ORG = { ok: true, organizationId: "org-1", userId: "user-1", session: {} };
+const MOCK_ORG = {
+  ok: true,
+  organizationId: "org-1",
+  userId: "user-1",
+  role: "owner",
+  session: {},
+};
 
 vi.mock("@/lib/require-active-org", () => ({
   resolveActiveOrg: vi.fn().mockResolvedValue(MOCK_ORG),
+  requireRole: vi.fn().mockReturnValue(null),
+  assertRole: vi.fn().mockResolvedValue({ ok: true, role: "owner" }),
+  OWNER_ONLY: ["owner"],
+  hasRole: vi.fn().mockReturnValue(true),
+  PRIVILEGED_ROLES: ["owner", "admin"],
 }));
 vi.mock("@/lib/audit", () => ({ recordAudit: vi.fn() }));
 
@@ -165,7 +176,11 @@ describe("Products API integration", () => {
     mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue([mockProduct]),
+          orderBy: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              offset: vi.fn().mockResolvedValue([mockProduct]),
+            }),
+          }),
         }),
       }),
     });
@@ -174,7 +189,7 @@ describe("Products API integration", () => {
         where: vi.fn().mockResolvedValue([mockPrice]),
       }),
     });
-    const res = await listProducts();
+    const res = await listProducts(new Request("http://test/api/products"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);

@@ -18,15 +18,42 @@ export type ApiKeyRateLimited = {
 
 export type ApiKeyResult = ApiKeyAuth | ApiKeyRateLimited | null;
 
+/**
+ * Derive the key's capabilities from its prefix.
+ *
+ *   pk_live_ / pk_test_ — publishable, safe to embed in client code
+ *   sk_live_ / sk_test_ — secret, server-only, full access
+ *
+ * Anything else is unrecognised and must be rejected. The prefix — not the
+ * DB row alone — is the contract the middleware advertises, so the two have
+ * to agree before the key is honoured.
+ */
+export function parseApiKeyPrefix(
+  key: string,
+): { keyType: "publishable" | "secret"; livemode: boolean } | null {
+  const m = /^(pk|sk)_(live|test)_[A-Za-z0-9_-]{16,}$/.exec(key);
+  if (!m) return null;
+  return {
+    keyType: m[1] === "pk" ? "publishable" : "secret",
+    livemode: m[2] === "live",
+  };
+}
+
 export async function authenticateApiKey(
   request: Request,
-  requiredType?: "publishable" | "secret",
+  // Fail closed: callers that genuinely want to accept a client-embeddable
+  // publishable key must say so explicitly.
+  requiredType: "publishable" | "secret" = "secret",
   routeLimit?: { key: string; perMinute: number },
 ): Promise<ApiKeyResult> {
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
 
-  const key = authHeader.slice(7);
+  const key = authHeader.slice(7).trim();
+  const claimed = parseApiKeyPrefix(key);
+  if (!claimed) return null; // unrecognised prefix → deny
+  if (claimed.keyType !== requiredType) return null;
+
   const hash = hashApiKey(key);
 
   // Rotation support: accept either the current key_hash OR a previous
@@ -51,7 +78,12 @@ export async function authenticateApiKey(
   );
   if (!match) return null;
 
-  if (requiredType && found.type !== requiredType) return null;
+  // The stored row and the presented prefix must agree on both capability and
+  // mode. A mismatch means the row was tampered with or minted incorrectly —
+  // either way, deny rather than pick a winner.
+  if (found.type !== requiredType) return null;
+  if (found.type !== claimed.keyType) return null;
+  if (found.livemode !== claimed.livemode) return null;
 
   const livemode = found.livemode;
   const baseLimit = found.type === "publishable" ? 200 : 100;

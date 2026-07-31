@@ -1,7 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveDeploymentForMode } from "./deployment";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const originalEnv = process.env;
+
+/**
+ * `lib/chain.ts` reads NEXT_PUBLIC_NETWORK at module load, so each case sets
+ * the env and re-imports the module graph rather than mutating a cached one.
+ */
+async function loadDeployment(network: string) {
+  process.env.NEXT_PUBLIC_NETWORK = network;
+  vi.resetModules();
+  return (await import("./deployment")).resolveDeploymentForMode;
+}
 
 beforeEach(() => {
   process.env = { ...originalEnv };
@@ -9,16 +18,20 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = originalEnv;
+  vi.resetModules();
 });
 
-describe("resolveDeploymentForMode", () => {
-  it("returns base-sepolia deployment for test mode", () => {
+// Each case re-imports the network registry + viem chains from scratch, which
+// is well over the 5s default on a cold module graph.
+describe("resolveDeploymentForMode", { timeout: 30_000 }, () => {
+  it("returns the base-sepolia deployment for test mode", async () => {
     process.env.BASE_SEPOLIA_RPC_URL = "https://sepolia.base.example";
     process.env.BASE_SEPOLIA_PAYMENT_VAULT = "0x1111111111111111111111111111111111111111";
     process.env.BASE_SEPOLIA_SUBSCRIPTION_MANAGER = "0x2222222222222222222222222222222222222222";
-    process.env.BASE_SEPOLIA_MOCK_USDC_ADDRESS = "0x3333333333333333333333333333333333333333";
+    process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS = "0x3333333333333333333333333333333333333333";
 
-    const result = resolveDeploymentForMode(false);
+    const resolve = await loadDeployment("base-sepolia");
+    const result = resolve(false);
 
     expect(result.network.key).toBe("base-sepolia");
     expect(result.chainId).toBe(84532);
@@ -28,12 +41,24 @@ describe("resolveDeploymentForMode", () => {
     expect(result.usdcAddress).toBe("0x3333333333333333333333333333333333333333");
   });
 
-  it("returns base mainnet deployment for live mode", () => {
+  it("still honours the legacy BASE_SEPOLIA_MOCK_USDC_ADDRESS name", async () => {
+    process.env.BASE_SEPOLIA_RPC_URL = "https://sepolia.base.example";
+    process.env.BASE_SEPOLIA_PAYMENT_VAULT = "0x1111111111111111111111111111111111111111";
+    process.env.BASE_SEPOLIA_SUBSCRIPTION_MANAGER = "0x2222222222222222222222222222222222222222";
+    delete process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS;
+    process.env.BASE_SEPOLIA_MOCK_USDC_ADDRESS = "0x4444444444444444444444444444444444444444";
+
+    const resolve = await loadDeployment("base-sepolia");
+    expect(resolve(false).usdcAddress).toBe("0x4444444444444444444444444444444444444444");
+  });
+
+  it("returns the base mainnet deployment for live mode", async () => {
     process.env.BASE_RPC_URL = "https://base.example";
     process.env.BASE_PAYMENT_VAULT = "0x4444444444444444444444444444444444444444";
     process.env.BASE_SUBSCRIPTION_MANAGER = "0x5555555555555555555555555555555555555555";
 
-    const result = resolveDeploymentForMode(true);
+    const resolve = await loadDeployment("base");
+    const result = resolve(true);
 
     expect(result.network.key).toBe("base");
     expect(result.chainId).toBe(8453);
@@ -44,20 +69,39 @@ describe("resolveDeploymentForMode", () => {
     expect(result.usdcAddress.toLowerCase()).toBe("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
   });
 
-  it("throws when test-mode env vars are missing", () => {
+  it("resolves a non-Base network without touching BASE_* vars", async () => {
+    process.env.POLYGON_RPC_URL = "https://polygon.example";
+    process.env.POLYGON_PAYMENT_VAULT = "0x6666666666666666666666666666666666666666";
+    process.env.POLYGON_SUBSCRIPTION_MANAGER = "0x7777777777777777777777777777777777777777";
+
+    const resolve = await loadDeployment("polygon");
+    const result = resolve(true);
+
+    expect(result.network.key).toBe("polygon");
+    expect(result.rpcUrl).toBe("https://polygon.example");
+    expect(result.paymentVault).toBe("0x6666666666666666666666666666666666666666");
+  });
+
+  it("throws when the requested mode does not match the deployed network", async () => {
+    const resolve = await loadDeployment("base-sepolia");
+    expect(() => resolve(true)).toThrow(/NEXT_PUBLIC_NETWORK/);
+  });
+
+  it("throws when test-mode env vars are missing", async () => {
     delete process.env.BASE_SEPOLIA_RPC_URL;
     delete process.env.BASE_SEPOLIA_PAYMENT_VAULT;
     delete process.env.BASE_SEPOLIA_SUBSCRIPTION_MANAGER;
-    delete process.env.BASE_SEPOLIA_MOCK_USDC_ADDRESS;
 
-    expect(() => resolveDeploymentForMode(false)).toThrow(/BASE_SEPOLIA_/);
+    const resolve = await loadDeployment("base-sepolia");
+    expect(() => resolve(false)).toThrow(/BASE_SEPOLIA_/);
   });
 
-  it("throws when live-mode env vars are missing", () => {
+  it("throws when live-mode env vars are missing", async () => {
     delete process.env.BASE_RPC_URL;
     delete process.env.BASE_PAYMENT_VAULT;
     delete process.env.BASE_SUBSCRIPTION_MANAGER;
 
-    expect(() => resolveDeploymentForMode(true)).toThrow(/BASE_/);
+    const resolve = await loadDeployment("base");
+    expect(() => resolve(true)).toThrow(/BASE_/);
   });
 });

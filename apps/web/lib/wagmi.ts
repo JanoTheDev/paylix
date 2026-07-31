@@ -19,9 +19,58 @@ import {
 import type { AppKitNetwork } from "@reown/appkit/networks";
 import { getAllNetworks } from "@paylix/config/networks";
 
-export const projectId =
-  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
-  "b56e18d47c72ab683b10814fe9495694"; // public fallback for localhost testing
+/**
+ * Reown/WalletConnect project id.
+ *
+ * There is deliberately NO fallback. The literal that used to sit here
+ * ("public fallback for localhost testing") is a live credential belonging to
+ * one specific Reown account: every self-hoster who didn't set the variable
+ * silently routed their users' WalletConnect relay traffic through it,
+ * burning that account's quota and exposing its usage analytics (REPO-18).
+ * A missing id must be an obvious failure that names the variable, not a
+ * silent fallback onto someone else's account.
+ *
+ * Note this is a `NEXT_PUBLIC_` variable: Next.js inlines it into the client
+ * bundle at BUILD time, so it has to be present when `next build` runs, not
+ * merely at runtime. That is why this throws at module load — the same shape
+ * as the empty-networks guard below.
+ */
+const PLACEHOLDER_PROJECT_IDS = new Set([
+  "your_walletconnect_project_id",
+  "your_project_id",
+  "placeholder",
+]);
+
+// Published in this repo's history; treat as burned even if it is re-supplied
+// via env. Warn rather than throw — only the owner can decide to rotate it.
+const BURNED_PROJECT_ID = "b56e18d47c72ab683b10814fe9495694";
+
+function requireProjectId(): string {
+  // Direct literal reference — Next only inlines NEXT_PUBLIC_* into the client
+  // bundle for static `process.env.X` lookups, never `process.env[name]`.
+  const raw = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim();
+
+  if (!raw || PLACEHOLDER_PROJECT_IDS.has(raw.toLowerCase())) {
+    throw new Error(
+      "NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is required. " +
+        "Create a free project at https://dashboard.reown.com and set the id " +
+        "in your environment before building. It must be set at build time — " +
+        "NEXT_PUBLIC_* values are inlined into the client bundle by Next.js.",
+    );
+  }
+
+  if (raw === BURNED_PROJECT_ID) {
+    console.error(
+      "[wagmi] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is set to the project id " +
+        "that was previously hardcoded in this repo. It is public — rotate it " +
+        "at https://dashboard.reown.com and use your own.",
+    );
+  }
+
+  return raw;
+}
+
+export const projectId = requireProjectId();
 
 /**
  * Map chainId → AppKit chain object. Every chain registered in
