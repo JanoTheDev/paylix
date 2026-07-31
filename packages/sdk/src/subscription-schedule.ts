@@ -1,8 +1,14 @@
-import type { PaylixConfig } from "./types";
+import { request } from "./request";
+import type { PaylixConfig, SubscriptionStatus } from "./types";
 
 export interface GiftSubscriptionParams {
   productId: string;
+  /** Paylix customer id (UUID) to receive the gift. */
   customerId: string;
+  /**
+   * ISO-8601 timestamp at which the gift lapses to `expired`. Omit for a
+   * gift that never expires.
+   */
   expiresAt?: string;
   metadata?: Record<string, string>;
 }
@@ -11,35 +17,24 @@ export interface GiftedSubscription {
   id: string;
   productId: string;
   customerId: string;
-  status: string;
+  status: SubscriptionStatus;
   isGift: boolean;
   giftExpiresAt: string | null;
   createdAt: string;
 }
 
+/**
+ * Grants a subscription with no payment method and no on-chain
+ * transaction. The keeper never charges a gift; it flips to `expired` when
+ * `expiresAt` passes.
+ */
 export async function giftSubscription(
   config: PaylixConfig,
   params: GiftSubscriptionParams,
 ): Promise<GiftedSubscription> {
-  const res = await fetch(`${config.backendUrl}/api/subscriptions/gift`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(params),
+  return request<GiftedSubscription>(config, "POST", "/api/subscriptions/gift", {
+    body: params,
   });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: { message?: string } | string;
-    };
-    const msg =
-      typeof body.error === "string"
-        ? body.error
-        : body.error?.message ?? res.statusText;
-    throw new Error(`Paylix gift subscription failed: ${msg}`);
-  }
-  return (await res.json()) as GiftedSubscription;
 }
 
 export type CancelWhen = "immediate" | "period_end";
@@ -49,47 +44,33 @@ export type CancelWhen = "immediate" | "period_end";
  * Subscription stays `active` until next_charge_date; keeper flips it
  * to `cancelled` then. Use `resumeSubscriptionSchedule` to undo before
  * the boundary passes.
+ *
+ * For an immediate, gasless cancellation instead, use
+ * `cancelSubscription`.
  */
 export async function scheduleSubscriptionCancellation(
   config: PaylixConfig,
   subscriptionId: string,
 ): Promise<{ cancelAt: string }> {
-  const res = await fetch(
-    `${config.backendUrl}/api/subscriptions/${subscriptionId}/cancel`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({ when: "period_end" }),
-    },
+  return request<{ cancelAt: string }>(
+    config,
+    "POST",
+    `/api/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`,
+    { body: { when: "period_end" satisfies CancelWhen } },
   );
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: { message?: string } | string;
-    };
-    const msg =
-      typeof body.error === "string"
-        ? body.error
-        : body.error?.message ?? res.statusText;
-    throw new Error(`Paylix schedule cancel failed: ${msg}`);
-  }
-  return (await res.json()) as { cancelAt: string };
 }
 
+/**
+ * Cancels a pending period-end cancellation, so the subscription keeps
+ * renewing. No-op if no cancellation is scheduled.
+ */
 export async function resumeSubscriptionSchedule(
   config: PaylixConfig,
   subscriptionId: string,
 ): Promise<void> {
-  const res = await fetch(
-    `${config.backendUrl}/api/subscriptions/${subscriptionId}/resume-schedule`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    },
+  await request<void>(
+    config,
+    "POST",
+    `/api/subscriptions/${encodeURIComponent(subscriptionId)}/resume-schedule`,
   );
-  if (!res.ok) {
-    throw new Error(`Paylix resume schedule failed: ${res.statusText}`);
-  }
 }

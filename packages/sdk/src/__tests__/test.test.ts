@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_abc",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());

@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -68,7 +71,7 @@ describe("createSubscription", () => {
       json: async () => ({ error: "Invalid product" }),
     });
     await expect(paylix.createSubscription({ productId: "bad" })).rejects.toThrow(
-      "Paylix subscription failed: Invalid product",
+      "Invalid product",
     );
   });
 });
@@ -90,7 +93,7 @@ describe("cancelSubscription", () => {
       json: async () => ({ error: "Subscription not found" }),
     });
     await expect(paylix.cancelSubscription({ subscriptionId: "bad" })).rejects.toThrow(
-      "Paylix cancel failed: Subscription not found",
+      "Subscription not found",
     );
   });
 });
@@ -119,6 +122,6 @@ describe("updateSubscriptionWallet", () => {
     });
     await expect(
       paylix.updateSubscriptionWallet({ subscriptionId: "sub-1", newWallet: "bad" }),
-    ).rejects.toThrow("Paylix wallet update failed: Invalid wallet address");
+    ).rejects.toThrow("Invalid wallet address");
   });
 });

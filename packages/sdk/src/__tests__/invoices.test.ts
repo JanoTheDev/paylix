@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -35,7 +38,7 @@ describe("createPortalSession", () => {
       json: async () => ({ error: "Customer not found" }),
     });
     await expect(paylix.createPortalSession({ customerId: "bad" })).rejects.toThrow(
-      "Paylix createPortalSession failed: Customer not found",
+      "Customer not found",
     );
   });
 });
@@ -81,7 +84,7 @@ describe("listCustomerInvoices", () => {
       json: async () => ({ error: "Access denied" }),
     });
     await expect(paylix.listCustomerInvoices({ customerId: "bad" })).rejects.toThrow(
-      "Paylix listCustomerInvoices failed: Access denied",
+      "Access denied",
     );
   });
 });

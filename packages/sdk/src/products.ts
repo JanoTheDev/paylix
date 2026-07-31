@@ -1,3 +1,4 @@
+import { request } from "./request";
 import type {
   PaylixConfig,
   CreateProductParams,
@@ -7,66 +8,24 @@ import type {
 
 export async function createProduct(
   config: PaylixConfig,
-  params: CreateProductParams
+  params: CreateProductParams,
 ): Promise<Product> {
-  const res = await fetch(`${config.backendUrl}/api/products`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body?.error?.message ?? `Failed to create product (${res.status})`);
-  }
-  return (await res.json()) as Product;
-}
-
-export async function getProduct(
-  config: PaylixConfig,
-  id: string
-): Promise<Product> {
-  const res = await fetch(`${config.backendUrl}/api/products/${id}`, {
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body?.error?.message ?? `Product not found (${res.status})`);
-  }
-  return (await res.json()) as Product;
+  return request<Product>(config, "POST", "/api/products", { body: params });
 }
 
 export async function updateProduct(
   config: PaylixConfig,
   id: string,
-  params: UpdateProductParams
+  params: UpdateProductParams,
 ): Promise<Product> {
-  const res = await fetch(`${config.backendUrl}/api/products/${id}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body?.error?.message ?? `Failed to update product (${res.status})`);
-  }
-  return (await res.json()) as Product;
+  return request<Product>(
+    config,
+    "PATCH",
+    `/api/products/${encodeURIComponent(id)}`,
+    { body: params },
+  );
 }
 
-export async function listProducts(
-  config: PaylixConfig
-): Promise<Product[]> {
-  const res = await fetch(`${config.backendUrl}/api/products`, {
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body?.error?.message ?? `Failed to list products (${res.status})`);
-  }
-  return (await res.json()) as Product[];
+export async function listProducts(config: PaylixConfig): Promise<Product[]> {
+  return request<Product[]>(config, "GET", "/api/products");
 }

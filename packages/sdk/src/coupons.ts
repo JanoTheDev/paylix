@@ -1,15 +1,28 @@
+import { request } from "./request";
 import type { PaylixConfig } from "./types";
 
+/**
+ * Discount shape. Mirrors the `coupon_type` enum in
+ * `packages/db/src/schema/coupons.ts`.
+ */
 export type CouponType = "percent" | "fixed";
+
+/**
+ * How long a redeemed coupon keeps applying. Mirrors the
+ * `coupon_duration` enum in `packages/db/src/schema/coupons.ts`.
+ */
 export type CouponDuration = "once" | "forever" | "repeating";
 
 export interface Coupon {
   id: string;
   code: string;
   type: CouponType;
+  /** 1-100. Set when `type` is `"percent"`, else null. */
   percentOff: number | null;
+  /** Integer cents. Set when `type` is `"fixed"`, else null. */
   amountOffCents: number | null;
   duration: CouponDuration;
+  /** Number of billing cycles. Only meaningful when `duration` is `"repeating"`. */
   durationInCycles: number | null;
   maxRedemptions: number | null;
   redemptionCount: number;
@@ -21,63 +34,48 @@ export interface Coupon {
 }
 
 export interface CreateCouponParams {
+  /** Case-sensitive code the buyer types at checkout, e.g. `"WELCOME10"`. */
   code: string;
   type: CouponType;
+  /** 1-100. Required when `type` is `"percent"`. */
   percentOff?: number;
+  /** Integer cents (`500` = $5.00 off). Required when `type` is `"fixed"`. */
   amountOffCents?: number;
   duration: CouponDuration;
+  /** Required when `duration` is `"repeating"`. */
   durationInCycles?: number;
   maxRedemptions?: number;
+  /** ISO-8601 timestamp after which the code stops working. */
   redeemBy?: string;
   firstTimeCustomerOnly?: boolean;
 }
 
+/** Creates a discount code. */
 export async function createCoupon(
   config: PaylixConfig,
   params: CreateCouponParams,
 ): Promise<Coupon> {
-  const response = await fetch(`${config.backendUrl}/api/coupons`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(params),
-  });
-  if (!response.ok) {
-    const error = (await response
-      .json()
-      .catch(() => ({ error: "Request failed" }))) as { error?: { message?: string } | string };
-    const msg =
-      typeof error.error === "string"
-        ? error.error
-        : error.error?.message ?? response.statusText;
-    throw new Error(`Paylix coupon create failed: ${msg}`);
-  }
-  return (await response.json()) as Coupon;
+  return request<Coupon>(config, "POST", "/api/coupons", { body: params });
 }
 
+/** Lists every coupon on the organization, archived ones included. */
 export async function listCoupons(config: PaylixConfig): Promise<Coupon[]> {
-  const response = await fetch(`${config.backendUrl}/api/coupons`, {
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Paylix coupon list failed: ${response.statusText}`);
-  }
-  return (await response.json()) as Coupon[];
+  return request<Coupon[]>(config, "GET", "/api/coupons");
 }
 
+/**
+ * Soft-deletes a coupon: the row is kept for reporting on past
+ * redemptions, but the code stops working immediately.
+ */
 export async function archiveCoupon(
   config: PaylixConfig,
   id: string,
 ): Promise<void> {
-  const response = await fetch(`${config.backendUrl}/api/coupons/${id}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Paylix coupon archive failed: ${response.statusText}`);
-  }
+  await request<void>(
+    config,
+    "DELETE",
+    `/api/coupons/${encodeURIComponent(id)}`,
+  );
 }
 
 export interface ApplyCouponResult {
@@ -89,52 +87,39 @@ export interface ApplyCouponResult {
   amountOffCents: number | null;
   duration: CouponDuration;
   durationInCycles: number | null;
+  /** Discount applied to this session, integer cents. */
   discountCents: number;
+  /** Pre-discount total, in the token's native units, as a decimal string. */
   subtotalAmount: string;
+  /** Post-discount total, in the token's native units, as a decimal string. */
   amount: string;
 }
 
+/**
+ * Applies a coupon to an open checkout session and returns the recalculated
+ * totals. Replaces any coupon already applied to the session.
+ */
 export async function applyCouponToCheckout(
   config: PaylixConfig,
   sessionId: string,
   code: string,
 ): Promise<ApplyCouponResult> {
-  const response = await fetch(
-    `${config.backendUrl}/api/checkout/${sessionId}/apply-coupon`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({ code }),
-    },
+  return request<ApplyCouponResult>(
+    config,
+    "POST",
+    `/api/checkout/${encodeURIComponent(sessionId)}/apply-coupon`,
+    { body: { code } },
   );
-  if (!response.ok) {
-    const error = (await response
-      .json()
-      .catch(() => ({ error: "Request failed" }))) as { error?: { message?: string } | string };
-    const msg =
-      typeof error.error === "string"
-        ? error.error
-        : error.error?.message ?? response.statusText;
-    throw new Error(`Paylix apply coupon failed: ${msg}`);
-  }
-  return (await response.json()) as ApplyCouponResult;
 }
 
+/** Removes the coupon applied to a checkout session, restoring full price. */
 export async function removeCouponFromCheckout(
   config: PaylixConfig,
   sessionId: string,
 ): Promise<void> {
-  const response = await fetch(
-    `${config.backendUrl}/api/checkout/${sessionId}/apply-coupon`,
-    {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    },
+  await request<void>(
+    config,
+    "DELETE",
+    `/api/checkout/${encodeURIComponent(sessionId)}/apply-coupon`,
   );
-  if (!response.ok) {
-    throw new Error(`Paylix remove coupon failed: ${response.statusText}`);
-  }
 }

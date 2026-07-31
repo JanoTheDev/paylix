@@ -1,12 +1,16 @@
+import { request } from "./request";
 import type { PaylixConfig, CreateCheckoutParams, CreateCheckoutResult } from "./types";
 
-export async function createCheckout(
-  config: PaylixConfig,
-  params: CreateCheckoutParams
-): Promise<CreateCheckoutResult> {
-  const body: Record<string, unknown> = {
-    productId: params.productId,
-  };
+/**
+ * Builds the `POST /api/checkout` body shared by one-time checkouts and
+ * subscriptions. Only defined keys are sent so the server's defaults apply.
+ */
+export function buildCheckoutBody(
+  params: CreateCheckoutParams,
+  type?: "subscription",
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { productId: params.productId };
+  if (type) body.type = type;
   if (params.customerId) body.customerId = params.customerId;
   if (params.successUrl) body.successUrl = params.successUrl;
   if (params.cancelUrl) body.cancelUrl = params.cancelUrl;
@@ -14,20 +18,14 @@ export async function createCheckout(
   if (params.networkKey) body.networkKey = params.networkKey;
   if (params.tokenSymbol) body.tokenSymbol = params.tokenSymbol;
   if (params.quantity !== undefined) body.quantity = params.quantity;
+  return body;
+}
 
-  const response = await fetch(`${config.backendUrl}/api/checkout`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(body),
+export async function createCheckout(
+  config: PaylixConfig,
+  params: CreateCheckoutParams,
+): Promise<CreateCheckoutResult> {
+  return request<CreateCheckoutResult>(config, "POST", "/api/checkout", {
+    body: buildCheckoutBody(params),
   });
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix checkout failed: ${error.error || response.statusText}`);
-  }
-
-  return (await response.json()) as CreateCheckoutResult;
 }

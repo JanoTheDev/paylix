@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -45,7 +48,7 @@ describe("createCustomer", () => {
       status: 500,
       json: async () => { throw new Error("not json"); },
     });
-    await expect(paylix.createCustomer({})).rejects.toThrow("Failed to create customer (500)");
+    await expect(paylix.createCustomer({})).rejects.toThrow(/500/);
   });
 });
 
@@ -103,31 +106,9 @@ describe("updateCustomer", () => {
   });
 });
 
-describe("listCustomers", () => {
-  it("GETs /api/customers", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => [{ id: "cust-1" }, { id: "cust-2" }],
-    });
-    const result = await paylix.listCustomers();
-    expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:3000/api/customers",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer sk_test_123" }),
-      }),
-    );
-    expect(result).toHaveLength(2);
-  });
-
-  it("throws on error", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      json: async () => ({ error: { message: "Server error" } }),
-    });
-    await expect(paylix.listCustomers()).rejects.toThrow("Server error");
-  });
-});
+// `listCustomers` was removed in 0.1.0 — the API exposes no
+// `GET /api/customers` handler, so the method returned 405 unconditionally.
+// See audit/_requests-sdk.md; it comes back once the route ships.
 
 describe("deleteCustomer", () => {
   it("POSTs to /api/customers/:id/delete", async () => {

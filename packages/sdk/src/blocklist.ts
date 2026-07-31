@@ -1,10 +1,16 @@
+import { request } from "./request";
 import type { PaylixConfig } from "./types";
 
+/**
+ * What a blocklist entry matches on. Mirrors the `blocklist_type` enum in
+ * `packages/db/src/schema/blocklist-entries.ts`.
+ */
 export type BlocklistType = "wallet" | "email" | "country";
 
 export interface BlocklistEntry {
   id: string;
   type: BlocklistType;
+  /** Wallet address, email address, or ISO 3166-1 alpha-2 country code. */
   value: string;
   reason: string | null;
   createdBy: string | null;
@@ -13,56 +19,45 @@ export interface BlocklistEntry {
 
 export interface AddBlocklistEntryParams {
   type: BlocklistType;
+  /**
+   * Wallet address, email address, or ISO 3166-1 alpha-2 country code.
+   * Matching is case-insensitive; Gmail addresses are normalized before
+   * comparison (dots stripped, `+tag` removed).
+   */
   value: string;
+  /** Free-text note shown in the dashboard. */
   reason?: string;
 }
 
+/** Lists every blocklist entry for the current mode (test or live). */
 export async function listBlocklist(
   config: PaylixConfig,
 ): Promise<BlocklistEntry[]> {
-  const response = await fetch(`${config.backendUrl}/api/blocklist`, {
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Paylix blocklist list failed: ${response.statusText}`);
-  }
-  return (await response.json()) as BlocklistEntry[];
+  return request<BlocklistEntry[]>(config, "GET", "/api/blocklist");
 }
 
+/**
+ * Blocks a wallet, email, or country from completing checkout. Takes
+ * effect on the next checkout attempt; sessions already in flight are
+ * unaffected.
+ */
 export async function addBlocklistEntry(
   config: PaylixConfig,
   params: AddBlocklistEntryParams,
 ): Promise<BlocklistEntry> {
-  const response = await fetch(`${config.backendUrl}/api/blocklist`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(params),
+  return request<BlocklistEntry>(config, "POST", "/api/blocklist", {
+    body: params,
   });
-  if (!response.ok) {
-    const error = (await response
-      .json()
-      .catch(() => ({ error: "Request failed" }))) as { error?: { message?: string } | string };
-    const msg =
-      typeof error.error === "string"
-        ? error.error
-        : error.error?.message ?? response.statusText;
-    throw new Error(`Paylix blocklist add failed: ${msg}`);
-  }
-  return (await response.json()) as BlocklistEntry;
 }
 
+/** Removes a blocklist entry, unblocking the value immediately. */
 export async function removeBlocklistEntry(
   config: PaylixConfig,
   id: string,
 ): Promise<void> {
-  const response = await fetch(`${config.backendUrl}/api/blocklist/${id}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Paylix blocklist remove failed: ${response.statusText}`);
-  }
+  await request<void>(
+    config,
+    "DELETE",
+    `/api/blocklist/${encodeURIComponent(id)}`,
+  );
 }

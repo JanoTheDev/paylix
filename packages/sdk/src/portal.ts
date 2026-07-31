@@ -1,20 +1,13 @@
+import { request } from "./request";
 import type { PaylixConfig, CustomerPortalParams, CustomerPortalResult } from "./types";
 
 export async function getCustomerPortal(
   config: PaylixConfig,
-  params: CustomerPortalParams
+  params: CustomerPortalParams,
 ): Promise<CustomerPortalResult> {
-  const response = await fetch(
-    `${config.backendUrl}/api/customers/${params.customerId}`,
-    {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    }
+  return request<CustomerPortalResult>(
+    config,
+    "GET",
+    `/api/customers/${encodeURIComponent(params.customerId)}`,
   );
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix portal failed: ${error.error || response.statusText}`);
-  }
-
-  return (await response.json()) as CustomerPortalResult;
 }

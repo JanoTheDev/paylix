@@ -1,11 +1,14 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  // `webhooks` gets its own entry so consumers can verify signatures
+  // without pulling in the HTTP client.
+  entry: ["src/index.ts", "src/webhooks.ts"],
   format: ["cjs", "esm"],
   dts: true,
   splitting: false,
   sourcemap: true,
   clean: true,
-  external: ["viem"],
+  treeshake: true,
+  // The SDK has no runtime dependencies — nothing to mark external.
 });

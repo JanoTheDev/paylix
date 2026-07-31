@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -120,8 +123,22 @@ describe("listPayments", () => {
 });
 
 describe("getPayment", () => {
-  it("GETs /api/payments/:id", async () => {
-    const payment = { id: "pay-1", amount: 1000, status: "confirmed" };
+  // SDK-02: this endpoint returns the verification shape, not PaymentSummary.
+  // The SDK used to declare PaymentSummary here, so `.customer.email` and
+  // four other fields type-checked and were `undefined` at runtime.
+  it("GETs /api/payments/:id and returns the verification shape", async () => {
+    const payment = {
+      verified: true,
+      amount: 1000,
+      fee: 5,
+      txHash: "0xabc",
+      chain: "base",
+      customerId: "user_123",
+      productId: "prod-1",
+      status: "confirmed",
+      metadata: {},
+      livemode: true,
+    };
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => payment,
@@ -133,7 +150,9 @@ describe("getPayment", () => {
         headers: expect.objectContaining({ Authorization: "Bearer sk_test_123" }),
       }),
     );
-    expect(result.id).toBe("pay-1");
+    expect(result.verified).toBe(true);
+    expect(result.livemode).toBe(true);
+    expect(result.customerId).toBe("user_123");
   });
 
   it("throws on not found", async () => {

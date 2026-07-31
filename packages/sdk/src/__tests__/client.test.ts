@@ -29,6 +29,16 @@ describe("Paylix", () => {
 
   it("exposes network config", () => {
     const paylix = new Paylix(validConfig);
-    expect(paylix.network.chainId).toBe(84532);
+    expect(paylix.network?.chainId).toBe(84532);
+    expect(paylix.network?.isEvm).toBe(true);
+    expect(paylix.network?.explorerUrl).toBe("https://sepolia.basescan.org");
+  });
+
+  it("allows omitting network entirely", () => {
+    const paylix = new Paylix({
+      apiKey: "sk_test_1",
+      backendUrl: "http://localhost:3000",
+    });
+    expect(paylix.network).toBeUndefined();
   });
 });

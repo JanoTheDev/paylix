@@ -1,10 +1,60 @@
+/**
+ * Lifecycle of a subscription.
+ *
+ * Mirrors the `subscription_status` Postgres enum in
+ * `packages/db/src/schema/subscriptions.ts`. The SDK is monorepo-dependency
+ * free by design, so this union is a hand-maintained copy — if you add a
+ * value to the database enum, add it here too and update
+ * `__tests__/enums.test.ts`, which asserts the two lists match.
+ *
+ * - `active` — billing normally.
+ * - `paused` — collection suspended by the merchant; no charges attempted.
+ * - `past_due` — a charge failed; the keeper is retrying.
+ * - `cancelled` — ended by the merchant or the customer.
+ * - `expired` — reached its natural end (e.g. a gift subscription lapsed).
+ * - `trialing` — inside a free trial; nothing has been charged yet.
+ * - `trial_conversion_failed` — the trial ended but the first on-chain
+ *   charge could not be relayed.
+ */
 export type SubscriptionStatus =
   | "active"
+  | "paused"
   | "past_due"
   | "cancelled"
   | "expired"
   | "trialing"
   | "trial_conversion_failed";
+
+/**
+ * Settlement state of a payment. Mirrors the `payment_status` enum in
+ * `packages/db/src/schema/payments.ts`.
+ */
+export type PaymentStatus = "pending" | "confirmed" | "failed";
+
+/**
+ * Billing cadence of a subscription product. Mirrors the `billing_interval`
+ * enum in `packages/db/src/schema/products.ts`. `minutely` exists for
+ * end-to-end testing and should not be used in production.
+ */
+export type BillingInterval =
+  | "minutely"
+  | "weekly"
+  | "biweekly"
+  | "monthly"
+  | "quarterly"
+  | "yearly";
+
+/**
+ * Product kind. Mirrors the `product_type` enum in
+ * `packages/db/src/schema/products.ts`.
+ */
+export type ProductType = "one_time" | "subscription";
+
+/**
+ * Delivery state of the emailed invoice. Mirrors the
+ * `invoice_email_status` enum in `packages/db/src/schema/invoices.ts`.
+ */
+export type InvoiceEmailStatus = "pending" | "sent" | "failed" | "skipped";
 
 /**
  * Supported network keys. Must stay in sync with the server-side registry
@@ -35,9 +85,45 @@ export type PaylixNetwork =
   | "litecoin-testnet";
 
 export interface PaylixConfig {
+  /**
+   * Your API key.
+   *
+   * **Use an `sk_` secret key.** Every method on the `Paylix` class talks to
+   * an authenticated merchant endpoint, so this SDK is server-side only —
+   * load the key from an environment variable and never ship it in a
+   * browser bundle, a mobile app, or a client component. `pk_` publishable
+   * keys are the client-safe half of the pair, but they are rate-limited and
+   * rejected by the endpoints this SDK calls.
+   */
   apiKey: string;
-  network: PaylixNetwork;
+  /**
+   * Optional default network. Only used by the `network` accessor for
+   * explorer/RPC metadata; it does **not** select the chain for a checkout —
+   * pass `networkKey` per call for that. Omit it entirely if you run on a
+   * chain this SDK version does not list.
+   */
+  network?: PaylixNetwork;
+  /** Base URL of your Paylix deployment, e.g. `https://pay.example.com`. */
   backendUrl: string;
+  /**
+   * Abort a request that has not responded within this many milliseconds.
+   * Default 30 000. Node's `fetch` has no timeout of its own, so without
+   * this a hung backend hangs your process.
+   */
+  timeoutMs?: number;
+  /**
+   * Extra attempts after the first failure. Default 2. Retries fire on 429,
+   * on 5xx, and on network errors — but only for idempotent verbs and for
+   * `POST`s, which the SDK sends with an auto-generated `Idempotency-Key`
+   * so a replay cannot double-charge. Backoff is exponential with jitter
+   * and honours `Retry-After`. Set to `0` to disable.
+   */
+  maxRetries?: number;
+  /**
+   * Override the `fetch` implementation — useful for proxies, custom
+   * agents, and tests. Defaults to `globalThis.fetch`.
+   */
+  fetch?: typeof fetch;
 }
 
 export interface CreateCheckoutParams {
@@ -70,30 +156,13 @@ export interface CreateCheckoutResult {
   checkoutId: string;
 }
 
-export interface CreateSubscriptionParams {
-  productId: string;
-  customerId?: string;
-  successUrl?: string;
-  cancelUrl?: string;
-  metadata?: Record<string, string>;
-  /**
-   * Optional: pre-lock the session to a specific (network, token). If
-   * omitted, the session starts in "awaiting_currency" state and the
-   * buyer picks on the checkout page.
-   *
-   * Valid network keys depend on which networks the Paylix instance has
-   * configured — the SDK does not validate them client-side. If you pass
-   * an unsupported value, the server returns 400.
-   */
-  networkKey?: string;
-  tokenSymbol?: string;
-  /**
-   * Number of seats / units the buyer is purchasing. Requires the
-   * product to have `allowQuantity: true`. Defaults to 1. Recurring
-   * charges run at `unit_price * quantity`.
-   */
-  quantity?: number;
-}
+/**
+ * Parameters for `createSubscription`. Structurally identical to
+ * {@link CreateCheckoutParams} — both create a checkout session against
+ * the same endpoint; only the product's `type` decides whether the result
+ * is a one-time charge or a recurring one. `quantity` means "seats" here.
+ */
+export type CreateSubscriptionParams = CreateCheckoutParams;
 
 /**
  * Result returned from `createSubscription`.
@@ -123,16 +192,32 @@ export interface VerifyPaymentParams {
   paymentId: string;
 }
 
+/**
+ * Payload of `GET /api/payments/{id}` — the shape returned by both
+ * {@link Paylix.verifyPayment} and {@link Paylix.getPayment}.
+ *
+ * This is deliberately narrower than {@link PaymentSummary}, which the
+ * *list* endpoint returns: there is no `id`, `token`, `fromAddress`,
+ * `toAddress`, `createdAt`, or `customer` object here. Use `listPayments`
+ * when you need those.
+ */
 export interface VerifyPaymentResult {
+  /** `true` only when the payment is `confirmed` **and** has a tx hash. */
   verified: boolean;
+  /** Integer cents. `1000` = $10.00. */
   amount: number;
+  /** Platform fee, integer cents. */
   fee: number;
   txHash: string | null;
+  /** Network key the payment settled on, e.g. `"base"`. */
   chain: string;
+  /** Your external customer identifier, not the Paylix customer UUID. */
   customerId: string;
   productId: string;
-  status: "pending" | "confirmed" | "failed";
+  status: PaymentStatus;
   metadata: Record<string, string>;
+  /** `false` for payments made with a test-mode key. */
+  livemode: boolean;
 }
 
 export interface CustomerPortalParams {
@@ -161,7 +246,7 @@ export interface CustomerInvoice {
   taxLabel: string | null;
   currency: string;
   issuedAt: string;
-  emailStatus: "pending" | "sent" | "failed" | "skipped";
+  emailStatus: InvoiceEmailStatus;
   /** Public hosted HTML page a customer can bookmark. */
   hostedUrl: string;
   /** On-demand invoice PDF download. */
@@ -213,7 +298,7 @@ export interface ListPaymentsParams {
   /** Filter by customer ID (the Paylix-generated customer identifier). */
   customerId?: string;
   /** Filter by payment status. */
-  status?: "pending" | "confirmed" | "failed";
+  status?: PaymentStatus;
   /** Filter by metadata key-value pairs. Only payments whose metadata
    *  contains all specified entries are returned (AND logic). */
   metadata?: Record<string, string>;
@@ -221,11 +306,17 @@ export interface ListPaymentsParams {
   limit?: number;
 }
 
+/**
+ * A row from `listPayments`. Amounts are integer cents (`1000` = $10.00).
+ *
+ * Note that the single-payment endpoint returns the narrower
+ * {@link VerifyPaymentResult}, not this type.
+ */
 export interface PaymentSummary {
   id: string;
   amount: number;
   fee: number;
-  status: "pending" | "confirmed" | "failed";
+  status: PaymentStatus;
   txHash: string | null;
   chain: string;
   token: string;
@@ -291,7 +382,14 @@ export interface UpdateWebhookParams {
 }
 
 export interface WebhookVerifyParams {
-  payload: string | Buffer;
+  /**
+   * The **raw** request body, exactly as received. Do not re-serialize a
+   * parsed object — key order changes invalidate the signature.
+   *
+   * Typed `Uint8Array` rather than `Buffer` so consumers do not need
+   * `@types/node`; a Node `Buffer` is a `Uint8Array` and passes as-is.
+   */
+  payload: string | Uint8Array;
   signature: string;
   secret: string;
   /** Max age in seconds for a timestamped signature. Default 300 (5 min). */
@@ -306,13 +404,31 @@ export interface WebhookEvent {
   data: Record<string, unknown>;
 }
 
+/**
+ * Read-only display metadata for a network: enough to build an explorer
+ * link or pick a public RPC, and nothing else.
+ *
+ * Contract addresses are deliberately absent. The backend is the only
+ * authority on which `PaymentVault` / `SubscriptionManager` a deployment
+ * uses (they come from `${CHAIN}_PAYMENT_VAULT` / `_SUBSCRIPTION_MANAGER`
+ * env vars), and shipping a placeholder here previously meant
+ * `NETWORKS.base.paymentVaultAddress` returned the zero address — a
+ * valid-looking value that burns funds.
+ */
 export type NetworkConfig = {
+  /** EVM chain ID. `0` for non-EVM chains (Solana, Bitcoin, Litecoin). */
   chainId: number;
+  /** Whether the chain speaks EVM JSON-RPC. Narrow on this before using `chainId`. */
+  isEvm: boolean;
+  /** Public RPC endpoint. Empty string where the SDK has no default. */
   rpcUrl: string;
-  paymentVaultAddress: string;
-  subscriptionManagerAddress: string;
-  usdcAddress: string;
-  basescanUrl: string;
+  /**
+   * Canonical USDC contract on this chain, or `null` where Paylix has no
+   * canonical stablecoin address (all testnets, and every non-EVM chain).
+   */
+  usdcAddress: string | null;
+  /** Base URL of the chain's block explorer. */
+  explorerUrl: string;
 };
 
 export interface CreateCustomerParams {
@@ -389,8 +505,8 @@ export interface CustomerDetail {
 export interface CreateProductParams {
   name: string;
   description?: string;
-  type: "one_time" | "subscription";
-  billingInterval?: "minutely" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";
+  type: ProductType;
+  billingInterval?: BillingInterval;
   prices: Array<{
     networkKey: string;
     tokenSymbol: string;
@@ -413,8 +529,8 @@ export interface CreateProductParams {
 export interface UpdateProductParams {
   name?: string;
   description?: string;
-  type?: "one_time" | "subscription";
-  billingInterval?: "minutely" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | null;
+  type?: ProductType;
+  billingInterval?: BillingInterval | null;
   prices?: Array<{
     networkKey: string;
     tokenSymbol: string;
@@ -439,8 +555,8 @@ export interface Product {
   organizationId: string;
   name: string;
   description: string | null;
-  type: "one_time" | "subscription";
-  billingInterval: string | null;
+  type: ProductType;
+  billingInterval: BillingInterval | null;
   trialDays: number | null;
   trialMinutes: number | null;
   isActive: boolean;

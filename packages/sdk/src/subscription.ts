@@ -1,3 +1,5 @@
+import { buildCheckoutBody } from "./checkout";
+import { request } from "./request";
 import type {
   PaylixConfig,
   CreateSubscriptionParams,
@@ -8,35 +10,16 @@ import type {
 
 export async function createSubscription(
   config: PaylixConfig,
-  params: CreateSubscriptionParams
+  params: CreateSubscriptionParams,
 ): Promise<CreateSubscriptionResult> {
-  const body: Record<string, unknown> = {
-    productId: params.productId,
-    type: "subscription",
-  };
-  if (params.customerId) body.customerId = params.customerId;
-  if (params.successUrl) body.successUrl = params.successUrl;
-  if (params.cancelUrl) body.cancelUrl = params.cancelUrl;
-  if (params.metadata) body.metadata = params.metadata;
-  if (params.networkKey) body.networkKey = params.networkKey;
-  if (params.tokenSymbol) body.tokenSymbol = params.tokenSymbol;
-  if (params.quantity !== undefined) body.quantity = params.quantity;
-
-  const response = await fetch(`${config.backendUrl}/api/checkout`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(body),
+  const data = await request<{
+    checkoutUrl: string;
+    checkoutId: string;
+    trialEndsAt?: string;
+  }>(config, "POST", "/api/checkout", {
+    body: buildCheckoutBody(params, "subscription"),
   });
 
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix subscription failed: ${error.error || response.statusText}`);
-  }
-
-  const data = (await response.json()) as { checkoutUrl: string; checkoutId: string; trialEndsAt?: string };
   return {
     checkoutUrl: data.checkoutUrl,
     checkoutId: data.checkoutId,
@@ -46,40 +29,23 @@ export async function createSubscription(
 
 export async function cancelSubscription(
   config: PaylixConfig,
-  params: CancelSubscriptionParams
+  params: CancelSubscriptionParams,
 ): Promise<void> {
-  const response = await fetch(
-    `${config.backendUrl}/api/subscriptions/${params.subscriptionId}/cancel-gasless`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    }
+  await request<void>(
+    config,
+    "POST",
+    `/api/subscriptions/${encodeURIComponent(params.subscriptionId)}/cancel-gasless`,
   );
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix cancel failed: ${error.error || response.statusText}`);
-  }
 }
 
 export async function updateSubscriptionWallet(
   config: PaylixConfig,
-  params: UpdateSubscriptionWalletParams
+  params: UpdateSubscriptionWalletParams,
 ): Promise<void> {
-  const response = await fetch(
-    `${config.backendUrl}/api/subscriptions/${params.subscriptionId}/update-wallet`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({ newWallet: params.newWallet }),
-    }
+  await request<void>(
+    config,
+    "POST",
+    `/api/subscriptions/${encodeURIComponent(params.subscriptionId)}/update-wallet`,
+    { body: { newWallet: params.newWallet } },
   );
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix wallet update failed: ${error.error || response.statusText}`);
-  }
 }

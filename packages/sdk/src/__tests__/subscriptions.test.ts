@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -89,29 +92,15 @@ describe("listSubscriptions", () => {
   });
 });
 
-describe("getSubscription", () => {
-  it("GETs /api/subscriptions/:id", async () => {
-    const sub = { id: "sub-1", status: "active", productName: "Pro" };
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => sub,
-    });
-    const result = await paylix.getSubscription("sub-1");
-    expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:3000/api/subscriptions/sub-1",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer sk_test_123" }),
-      }),
-    );
-    expect(result.id).toBe("sub-1");
-  });
+// `getSubscription` was removed in 0.1.0 — `/api/subscriptions/[id]`
+// exports only PATCH, so the method returned 405 unconditionally.
+// See audit/_requests-sdk.md; it comes back once the GET handler ships.
 
-  it("throws on not found", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      json: async () => ({ error: { message: "Subscription not found" } }),
-    });
-    await expect(paylix.getSubscription("bad")).rejects.toThrow("Subscription not found");
+describe("listSubscriptions status filter", () => {
+  it("accepts 'paused', which the database enum emits", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    await paylix.listSubscriptions({ status: "paused" });
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain("status=paused");
   });
 });

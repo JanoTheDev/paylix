@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -48,7 +51,7 @@ describe("verifyPayment", () => {
       json: async () => ({ error: "Payment not found" }),
     });
     await expect(paylix.verifyPayment({ paymentId: "bad" })).rejects.toThrow(
-      "Paylix verify failed: Payment not found",
+      "Payment not found",
     );
   });
 });

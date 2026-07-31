@@ -8,6 +8,9 @@ const paylix = new Paylix({
   apiKey: "sk_test_123",
   network: "base-sepolia",
   backendUrl: "http://localhost:3000",
+  // Deterministic assertions: the retry/backoff path has its own suite in
+  // request.test.ts.
+  maxRetries: 0,
 });
 
 beforeEach(() => mockFetch.mockReset());
@@ -61,7 +64,7 @@ describe("createCheckout", () => {
       json: async () => ({ error: "Product not found" }),
     });
     await expect(paylix.createCheckout({ productId: "bad" })).rejects.toThrow(
-      "Paylix checkout failed: Product not found",
+      "Product not found",
     );
   });
 
@@ -72,7 +75,7 @@ describe("createCheckout", () => {
       json: async () => { throw new Error("not json"); },
     });
     await expect(paylix.createCheckout({ productId: "x" })).rejects.toThrow(
-      "Paylix checkout failed: Request failed",
+      /Internal Server Error/,
     );
   });
 });

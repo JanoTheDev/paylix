@@ -1,3 +1,4 @@
+import { request } from "./request";
 import type {
   PaylixConfig,
   CreatePortalSessionParams,
@@ -8,30 +9,22 @@ import type {
 
 export async function createPortalSession(
   config: PaylixConfig,
-  params: CreatePortalSessionParams
+  params: CreatePortalSessionParams,
 ): Promise<CreatePortalSessionResult> {
-  const res = await fetch(
-    `${config.backendUrl}/api/customers/${params.customerId}/portal-url`,
-    { headers: { Authorization: `Bearer ${config.apiKey}` } }
+  return request<CreatePortalSessionResult>(
+    config,
+    "GET",
+    `/api/customers/${encodeURIComponent(params.customerId)}/portal-url`,
   );
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix createPortalSession failed: ${err.error || res.statusText}`);
-  }
-  return (await res.json()) as CreatePortalSessionResult;
 }
 
 export async function listCustomerInvoices(
   config: PaylixConfig,
-  params: ListCustomerInvoicesParams
+  params: ListCustomerInvoicesParams,
 ): Promise<ListCustomerInvoicesResult> {
-  const res = await fetch(
-    `${config.backendUrl}/api/customers/${params.customerId}/invoices`,
-    { headers: { Authorization: `Bearer ${config.apiKey}` } }
+  return request<ListCustomerInvoicesResult>(
+    config,
+    "GET",
+    `/api/customers/${encodeURIComponent(params.customerId)}/invoices`,
   );
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({ error: "Request failed" }))) as { error?: string };
-    throw new Error(`Paylix listCustomerInvoices failed: ${err.error || res.statusText}`);
-  }
-  return (await res.json()) as ListCustomerInvoicesResult;
 }

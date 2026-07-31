@@ -1,6 +1,12 @@
 export { Paylix } from "./client";
 export { webhooks } from "./webhooks";
 export { NETWORKS } from "./networks";
+export {
+  PaylixError,
+  isPaylixError,
+  type PaylixErrorType,
+  type PaylixErrorOptions,
+} from "./errors";
 export type {
   CreatePaymentLinkParams,
   CreatePaymentLinkResult,
@@ -29,8 +35,15 @@ export type {
   CancelWhen,
 } from "./subscription-schedule";
 export type { RefundPaymentParams, Refund } from "./refunds";
+export type { FaucetParams, FaucetResult } from "./test";
 export type {
   PaylixConfig,
+  PaylixNetwork,
+  SubscriptionStatus,
+  PaymentStatus,
+  BillingInterval,
+  ProductType,
+  InvoiceEmailStatus,
   CreateCheckoutParams,
   CreateCheckoutResult,
   CreateSubscriptionParams,
