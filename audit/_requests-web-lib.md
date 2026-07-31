@@ -360,7 +360,7 @@ Deliberately **not** format-validated as 32-hex:
 check would reject and which I cannot edit. Absent/placeholder is the fail-closed
 condition; anything else is passed through.
 
-The literal `b56e18d47c72ab683b10814fe9495694` appeared exactly once in the tree
+The literal `<redacted — see git history, rotate this credential>` appeared exactly once in the tree
 (that fallback) and is now gone — `.env.example:78` was already fixed by the
 tooling agent. Two follow-ups outside my ownership:
 

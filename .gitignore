@@ -28,8 +28,9 @@ CLAUDE.md
 docs/superpowers/
 docs/sdd/
 docs/plans/
-plans/
-specs/
+docs/specs/
+/plans/
+/specs/
 *.plan.md
 PLAN.md
 PLANNING.md
