@@ -7,15 +7,16 @@ import {
   OctagonXIcon,
   TriangleAlertIcon,
 } from "lucide-react"
-import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
-
+// Paylix is dark-only (app/layout.tsx pins `className="dark"` and DESIGN.md §1
+// makes dark the primary experience). There is no ThemeProvider mounted, so
+// `useTheme()` would always fall through to "system" and render light toasts
+// on a light-mode OS. Pin the theme instead; callers can still override.
+const Toaster = ({ theme = "dark", ...props }: ToasterProps) => {
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={theme}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,

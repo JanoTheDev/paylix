@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
@@ -22,9 +22,17 @@ import {
   User,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "@/components/team-switcher";
 import { ModeToggle } from "@/components/mode-toggle";
+import { useSystemStatus } from "@/components/system-status/use-system-status";
 
 const navItems = [
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
@@ -52,86 +60,11 @@ export function SidebarContent({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [indexerOnline, setIndexerOnline] = useState<boolean | null>(null);
-  const [relayerStatus, setRelayerStatus] = useState<{
-    configured: boolean;
-    low: boolean;
-    balanceEth: string | null;
-  } | null>(null);
-  const [keeperStatus, setKeeperStatus] = useState<{
-    configured: boolean;
-    low: boolean;
-    balanceEth: string | null;
-  } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function checkIndexer() {
-      try {
-        const res = await fetch("/api/system/indexer-status", {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setIndexerOnline(Boolean(data.online));
-      } catch {
-        // ignore
-      }
-    }
-
-    async function checkRelayer() {
-      try {
-        const res = await fetch("/api/system/relayer-status", {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) {
-          setRelayerStatus({
-            configured: Boolean(data.configured),
-            low: Boolean(data.low),
-            balanceEth: data.balanceEth ?? null,
-          });
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    async function checkKeeper() {
-      try {
-        const res = await fetch("/api/system/keeper-status", {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) {
-          setKeeperStatus({
-            configured: Boolean(data.configured),
-            low: Boolean(data.low),
-            balanceEth: data.balanceEth ?? null,
-          });
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    checkIndexer();
-    checkRelayer();
-    checkKeeper();
-    const id = setInterval(() => {
-      checkIndexer();
-      checkRelayer();
-      checkKeeper();
-    }, 30 * 1000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
+  // One shared poll for the whole app. `SidebarContent` renders twice on
+  // mobile-capable viewports (desktop aside + MobileNav sheet); the store
+  // keeps that to a single timer (UI-40).
+  const { indexerOnline, relayer: relayerStatus, keeper: keeperStatus } =
+    useSystemStatus();
 
   async function handleSignOut() {
     await signOut();
@@ -166,11 +99,13 @@ export function SidebarContent({
               key={href}
               href={href}
               onClick={onNavigate}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
                 active
-                  ? "bg-surface-3 text-foreground"
-                  : "text-foreground-muted hover:bg-surface-2 hover:text-foreground",
+                  ? "bg-primary/10 text-primary [&_svg]:text-primary"
+                  : "text-foreground-muted hover:bg-surface-1 hover:text-foreground",
               )}
             >
               <Icon size={16} strokeWidth={1.75} />
@@ -182,41 +117,41 @@ export function SidebarContent({
 
       {/* System status — compact inline */}
       <div className="border-t border-sidebar-border px-4 py-2">
-        <div className="flex items-center gap-3 text-[11px] text-foreground-dim">
-          <span className="flex items-center gap-1.5">
-            <span
-              className={cn(
-                "inline-block h-1.5 w-1.5 rounded-full",
-                indexerOnline === null
-                  ? "bg-foreground-dim"
-                  : indexerOnline
-                    ? "bg-success"
-                    : "bg-destructive",
-              )}
-            />
-            Indexer
-          </span>
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-3 text-[11px] text-foreground-dim"
+        >
+          <ServiceDot
+            label="Indexer"
+            tone={
+              indexerOnline === null
+                ? "unknown"
+                : indexerOnline
+                  ? "ok"
+                  : "down"
+            }
+            state={
+              indexerOnline === null
+                ? "checking"
+                : indexerOnline
+                  ? "online"
+                  : "offline"
+            }
+          />
           {relayerStatus?.configured && (
-            <span className="flex items-center gap-1.5">
-              <span
-                className={cn(
-                  "inline-block h-1.5 w-1.5 rounded-full",
-                  relayerStatus.low ? "bg-warning" : "bg-success",
-                )}
-              />
-              Relayer
-            </span>
+            <ServiceDot
+              label="Relayer"
+              tone={relayerStatus.low ? "warn" : "ok"}
+              state={relayerStatus.low ? "low balance" : "funded"}
+            />
           )}
           {keeperStatus?.configured && (
-            <span className="flex items-center gap-1.5">
-              <span
-                className={cn(
-                  "inline-block h-1.5 w-1.5 rounded-full",
-                  keeperStatus.low ? "bg-warning" : "bg-success",
-                )}
-              />
-              Keeper
-            </span>
+            <ServiceDot
+              label="Keeper"
+              tone={keeperStatus.low ? "warn" : "ok"}
+              state={keeperStatus.low ? "low balance" : "funded"}
+            />
           )}
         </div>
       </div>
@@ -224,6 +159,39 @@ export function SidebarContent({
       {/* User profile */}
       <UserProfileMenu onSignOut={handleSignOut} onNavigate={onNavigate} />
     </div>
+  );
+}
+
+const DOT_TONE = {
+  ok: "bg-success",
+  warn: "bg-warning",
+  down: "bg-destructive",
+  unknown: "bg-foreground-dim",
+} as const;
+
+/**
+ * A service health indicator. The coloured dot is decorative — the state word
+ * is always exposed to assistive tech so status is never colour-only
+ * (DESIGN.md §7).
+ */
+function ServiceDot({
+  label,
+  tone,
+  state,
+}: {
+  label: string;
+  tone: keyof typeof DOT_TONE;
+  state: string;
+}) {
+  return (
+    <span className="flex items-center gap-1.5" title={`${label}: ${state}`}>
+      <span
+        aria-hidden="true"
+        className={cn("inline-block h-1.5 w-1.5 rounded-full", DOT_TONE[tone])}
+      />
+      {label}
+      <span className="sr-only">{state}</span>
+    </span>
   );
 }
 
@@ -247,57 +215,52 @@ function UserProfileMenu({
     .toUpperCase();
 
   return (
-    <div className="relative border-t border-sidebar-border">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
-      >
-        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-          {initials || <User size={14} />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">
-            {userName}
-          </p>
-          <p className="truncate text-[11px] text-foreground-muted">{userEmail}</p>
-        </div>
-        <ChevronUp
-          size={14}
+    <div className="border-t border-sidebar-border">
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger
           className={cn(
-            "flex-shrink-0 text-foreground-muted transition-transform",
-            open && "rotate-180",
+            "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-1",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
           )}
-        />
-      </button>
+        >
+          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+            {initials || <User size={14} />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-foreground">
+              {userName}
+            </p>
+            <p className="truncate text-[11px] text-foreground-muted">
+              {userEmail}
+            </p>
+          </div>
+          <ChevronUp
+            size={14}
+            className={cn(
+              "flex-shrink-0 text-foreground-muted transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        </DropdownMenuTrigger>
 
-      {open && (
-        <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-lg border border-border bg-surface-1 shadow-xl">
-          <Link
-            href="/user/settings"
-            onClick={() => {
-              setOpen(false);
-              onNavigate?.();
-            }}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-foreground-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            <Settings size={14} strokeWidth={1.75} />
-            Account settings
-          </Link>
-          <div className="border-t border-border" />
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onSignOut();
-            }}
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-400 transition-colors hover:bg-surface-2"
-          >
+        <DropdownMenuContent
+          side="top"
+          align="start"
+          className="w-[calc(var(--radix-dropdown-menu-trigger-width)-16px)]"
+        >
+          <DropdownMenuItem asChild>
+            <Link href="/user/settings" onClick={onNavigate}>
+              <Settings size={14} strokeWidth={1.75} />
+              Account settings
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => onSignOut()}>
             <LogOut size={14} strokeWidth={1.75} />
             Sign out
-          </button>
-        </div>
-      )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

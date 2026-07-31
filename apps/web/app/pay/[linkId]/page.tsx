@@ -1,6 +1,13 @@
+import type { ReactNode } from "react";
 import { and, eq, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { Clock, Ban } from "lucide-react";
 import { db } from "@/lib/db";
+import {
+  UTXO_BUYER_NOTICE,
+  UTXO_PAYMENTS_ENABLED,
+  isUtxoNetwork,
+} from "@/app/_lib/utxo-payments";
 import {
   paymentLinks,
   products,
@@ -17,10 +24,20 @@ interface PayPageProps {
   params: Promise<{ linkId: string }>;
 }
 
-function ExpiredCard({ title, description }: { title: string; description: string }) {
+function ExpiredCard({
+  title,
+  description,
+  icon,
+}: {
+  title: string;
+  description: string;
+  icon?: ReactNode;
+}) {
   return (
     <div className="w-full max-w-[480px] rounded-xl border border-border bg-surface-1 p-8 text-center">
-      <div className="mb-3 text-4xl">⏳</div>
+      <div className="mb-3 flex justify-center">
+        {icon ?? <Clock size={40} strokeWidth={1.5} className="text-warning" />}
+      </div>
       <h1 className="mb-2 text-xl font-semibold tracking-tight">{title}</h1>
       <p className="text-sm leading-relaxed text-foreground-muted">{description}</p>
     </div>
@@ -73,6 +90,20 @@ export default async function PayPage({ params }: PayPageProps) {
       <ExpiredCard
         title="Link expired"
         description="The linked product is no longer available."
+      />
+    );
+  }
+
+  // Gate BTC/LTC before the redemption counter is touched — a link the buyer
+  // can't actually pay must not burn one of its redemptions. The UTXO
+  // settlement path can't record a payment until `fiat_rate_cents` is
+  // captured at quote time (see app/_lib/utxo-payments.ts).
+  if (!UTXO_PAYMENTS_ENABLED && isUtxoNetwork(link.networkKey)) {
+    return (
+      <ExpiredCard
+        icon={<Ban size={40} strokeWidth={1.5} className="text-warning" />}
+        title="This payment method is unavailable"
+        description={UTXO_BUYER_NOTICE}
       />
     );
   }

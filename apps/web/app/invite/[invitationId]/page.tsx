@@ -71,7 +71,7 @@ export default async function InviteAcceptPage({
           title="Wrong account"
           description={`This invite is for ${row.invitation.email}, but you're signed in as ${session.user.email}.`}
           action={
-            <Link href="/auth/logout" className="text-[#06d6a0] hover:underline text-sm">
+            <Link href="/auth/logout" className="text-primary hover:underline text-sm">
               Sign out
             </Link>
           }
@@ -90,7 +90,7 @@ export default async function InviteAcceptPage({
 
 function FullScreen({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#07070a] flex items-center justify-center px-4">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <div className="max-w-md w-full">
         {children}
       </div>

@@ -1,5 +1,8 @@
 import { cn } from "@/lib/utils";
 
+// Mirrors `paymentStatusEnum` in packages/db. Refunds are tracked on the
+// payment row via refundedCents/refundedAt, not as a status — so there is
+// deliberately no "refunded" member here.
 type PaymentStatus = "confirmed" | "pending" | "failed";
 type SubscriptionStatus =
   | "active"
@@ -23,7 +26,7 @@ type CheckoutStatus =
   | "expired";
 type DeliveryStatus = "pending" | "delivered" | "failed";
 
-type StatusKind =
+export type StatusKind =
   | { kind: "payment"; status: PaymentStatus }
   | { kind: "subscription"; status: SubscriptionStatus }
   | { kind: "apiKey"; status: ApiKeyStatus }
@@ -33,37 +36,46 @@ type StatusKind =
   | { kind: "checkout"; status: CheckoutStatus }
   | { kind: "delivery"; status: DeliveryStatus };
 
+// DESIGN.md §2/§7 — the payment-state palette is fixed and must not be
+// re-invented: green = confirmed/active, blue = pending, amber = past_due,
+// red = failed/cancelled. Neutral is reserved for states that carry no
+// payment semantics at all (inactive, abandoned, disabled).
+const SUCCESS = "bg-success/10 text-success ring-success/20";
+const PENDING = "bg-info/10 text-info ring-info/20";
+const WARNING = "bg-warning/10 text-warning ring-warning/20";
+const FAILED = "bg-destructive/10 text-destructive ring-destructive/20";
+const NEUTRAL = "bg-surface-2 text-foreground-dim ring-border";
+
 const STYLES: Record<string, string> = {
-  confirmed: "bg-success/10 text-success ring-success/20",
-  active: "bg-success/10 text-success ring-success/20",
-  pending: "bg-info/10 text-info ring-info/20",
-  incomplete: "bg-info/10 text-info ring-info/20",
-  one_time: "bg-info/10 text-info ring-info/20",
-  past_due: "bg-warning/10 text-warning ring-warning/20",
-  failing: "bg-warning/10 text-warning ring-warning/20",
-  failed: "bg-destructive/10 text-destructive ring-destructive/20",
-  revoked: "bg-destructive/10 text-destructive ring-destructive/20",
-  cancelled: "bg-surface-2 text-foreground-dim ring-border",
-  cancelled_in_period: "bg-warning/10 text-warning ring-warning/20",
-  expired: "bg-surface-2 text-foreground-dim ring-border",
-  disabled: "bg-surface-2 text-foreground-dim ring-border",
-  refunded: "bg-surface-2 text-foreground-dim ring-border",
-  abandoned: "bg-surface-2 text-foreground-dim ring-border",
-  inactive: "bg-surface-2 text-foreground-dim ring-border",
-  viewed: "bg-info/10 text-info ring-info/20",
-  completed: "bg-success/10 text-success ring-success/20",
-  delivered: "bg-success/10 text-success ring-success/20",
+  confirmed: SUCCESS,
+  active: SUCCESS,
+  completed: SUCCESS,
+  delivered: SUCCESS,
+  pending: PENDING,
+  incomplete: PENDING,
+  one_time: PENDING,
+  viewed: PENDING,
+  trialing: PENDING,
+  paused: PENDING,
+  past_due: WARNING,
+  failing: WARNING,
+  cancelled_in_period: WARNING,
+  failed: FAILED,
+  revoked: FAILED,
+  cancelled: FAILED,
+  trial_conversion_failed: FAILED,
+  // Expiry is a benign timeout, not a failure — kept neutral deliberately.
+  expired: NEUTRAL,
+  disabled: NEUTRAL,
+  abandoned: NEUTRAL,
+  inactive: NEUTRAL,
   subscription: "bg-primary/10 text-primary ring-primary/20",
-  trialing: "bg-info/10 text-info ring-info/20",
-  trial_conversion_failed: "bg-destructive/10 text-destructive ring-destructive/20",
-  paused: "bg-info/10 text-info ring-info/20",
 };
 
 const LABELS: Record<string, string> = {
   confirmed: "Confirmed",
   pending: "Pending",
   failed: "Failed",
-  refunded: "Refunded",
   active: "Active",
   past_due: "Past due",
   cancelled: "Cancelled",
@@ -90,8 +102,9 @@ export function StatusBadge(props: StatusKind) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
-        STYLES[status] ?? "bg-surface-2 text-foreground-muted ring-border",
+        // DESIGN.md §4 Badges: full pill, 11px / weight 600 / 0.3px tracking.
+        "inline-flex items-center rounded-full px-2.5 py-[3px] text-[11px] font-semibold tracking-[0.3px] whitespace-nowrap ring-1 ring-inset",
+        STYLES[status] ?? NEUTRAL,
       )}
     >
       {LABELS[status] ?? status}

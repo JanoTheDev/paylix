@@ -27,6 +27,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   ConfirmDialog,
   ActionMenu,
   col,
@@ -74,6 +76,7 @@ function formatDuration(c: Coupon): string {
 export default function CouponsPage() {
   const [items, setItems] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [archiveId, setArchiveId] = useState<string | null>(null);
 
@@ -89,9 +92,17 @@ export default function CouponsPage() {
   const [creating, setCreating] = useState(false);
 
   const fetchCoupons = useCallback(async () => {
-    const res = await fetch("/api/coupons");
-    if (res.ok) setItems(await res.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/coupons");
+      if (!res.ok) throw new Error("Request failed");
+      setItems(await res.json());
+    } catch {
+      setLoadError("We couldn't load your coupons.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -203,9 +214,9 @@ export default function CouponsPage() {
       />
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={fetchCoupons} />
       ) : (
         <DataTable
           columns={columns}

@@ -27,6 +27,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   ConfirmDialog,
   ActionMenu,
   col,
@@ -67,6 +69,7 @@ export default function PaymentLinksPage() {
   const [items, setItems] = useState<PaymentLink[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [archiveId, setArchiveId] = useState<string | null>(null);
 
@@ -82,13 +85,21 @@ export default function PaymentLinksPage() {
   }, []);
 
   const fetchAll = useCallback(async () => {
-    const [linksRes, productsRes] = await Promise.all([
-      fetch("/api/payment-links"),
-      fetch("/api/products"),
-    ]);
-    if (linksRes.ok) setItems(await linksRes.json());
-    if (productsRes.ok) setProducts(await productsRes.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [linksRes, productsRes] = await Promise.all([
+        fetch("/api/payment-links"),
+        fetch("/api/products"),
+      ]);
+      if (!linksRes.ok || !productsRes.ok) throw new Error("Request failed");
+      setItems(await linksRes.json());
+      setProducts(await productsRes.json());
+    } catch {
+      setLoadError("We couldn't load your payment links.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -209,9 +220,9 @@ export default function PaymentLinksPage() {
       />
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={fetchAll} />
       ) : (
         <DataTable
           columns={columns}

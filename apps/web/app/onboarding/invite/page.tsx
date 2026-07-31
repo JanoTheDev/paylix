@@ -42,10 +42,10 @@ export default function InvitePage() {
     <div className="space-y-8">
       <OnboardingStepper active="invite" />
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-slate-100">
+        <h1 className="text-2xl font-semibold text-foreground">
           Invite your team
         </h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-foreground-muted">
           Invited teammates get full access to the team except removing members
           or deleting it.
         </p>
@@ -68,19 +68,19 @@ export default function InvitePage() {
         <button
           type="button"
           onClick={() => setRows([...rows, makeRow()])}
-          className="text-sm text-slate-400 hover:text-slate-200"
+          className="text-sm text-foreground-muted hover:text-foreground"
         >
           + Add another
         </button>
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex items-center gap-3">
         <Button onClick={save} disabled={submitting}>
           {submitting ? "Sending…" : "Send invites"}
         </Button>
         <button
           type="button"
-          className="text-sm text-slate-400 hover:text-slate-200"
+          className="text-sm text-foreground-muted hover:text-foreground"
           onClick={() => router.push("/overview")}
         >
           Skip for now

@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AddressText,
+  Amount,
   DetailDrawer,
-  Section,
+  ErrorState,
+  HashText,
   KeyValueList,
+  LoadingState,
+  Section,
+  StatusBadge,
 } from "@/components/paykit";
 import { Badge } from "@/components/ui/badge";
+import { formatAmount } from "@/lib/format";
 
 interface PaymentDetail {
   id: string;
@@ -61,24 +68,89 @@ interface Props {
   onClose: () => void;
 }
 
+const REFUND_STATUS_VARIANT: Record<string, "success" | "warning" | "destructive"> =
+  {
+    completed: "success",
+    confirmed: "success",
+    pending: "warning",
+    failed: "destructive",
+  };
+
 export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
   const [data, setData] = useState<Composite | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Every request — the initial load and every retry — is issued through
+  // `start`, which owns the single in-flight slot. Bumping `requestId`
+  // invalidates whatever is outstanding, so closing the drawer or switching
+  // payments can never let a late response paint the wrong payment.
+  const requestId = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const start = useCallback((id: string) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const myId = ++requestId.current;
+    const isStale = () => myId !== requestId.current;
+
+    void (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await fetch(`/api/payments/${id}/detail`, {
+          signal: controller.signal,
+        });
+        if (isStale()) return;
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        const json = (await res.json()) as Composite;
+        if (isStale()) return;
+        setData(json);
+      } catch (err) {
+        if (isStale()) return;
+        setData(null);
+        setError(
+          err instanceof Error
+            ? `Couldn't load this payment: ${err.message}`
+            : "Couldn't load this payment.",
+        );
+      } finally {
+        if (!isStale()) setLoading(false);
+      }
+    })();
+  }, []);
+
+  /** Invalidates and aborts anything in flight. */
+  const cancelInFlight = useCallback(() => {
+    requestId.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!paymentId) {
+      cancelInFlight();
       setData(null);
+      setError("");
+      setLoading(false);
       return;
     }
-    setLoading(true);
-    fetch(`/api/payments/${paymentId}/detail`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => setData(json))
-      .finally(() => setLoading(false));
-  }, [paymentId]);
+    start(paymentId);
+    return cancelInFlight;
+  }, [paymentId, start, cancelInFlight]);
+
+  function retry() {
+    if (!paymentId) return;
+    start(paymentId);
+  }
 
   const open = paymentId !== null;
   const p = data?.payment;
+  // The drawer only ever reflects the status the API returned for this
+  // payment — nothing here infers "confirmed" from client-side state.
+  const paymentStatus =
+    p?.status === "confirmed" || p?.status === "failed" ? p.status : "pending";
 
   return (
     <DetailDrawer
@@ -86,36 +158,66 @@ export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
       onOpenChange={(v) => !v && onClose()}
       title={p ? `Payment ${p.id.slice(0, 8)}…` : "Payment"}
       description={
-        p ? `${(p.amount / 100).toFixed(2)} ${p.token} — ${p.status}` : undefined
+        p ? `${formatAmount(p.amount)} ${p.token} — ${p.status}` : undefined
       }
     >
       {loading && !data ? (
-        <div className="py-8 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="detail" />
+      ) : error ? (
+        <ErrorState
+          title="Couldn't load this payment"
+          description={error}
+          onRetry={retry}
+        />
       ) : p ? (
         <div className="flex flex-col gap-6">
           <Section title="Details">
             <KeyValueList
               items={[
-                { label: "Amount", value: `$${(p.amount / 100).toFixed(2)} ${p.token}`, mono: true },
-                { label: "Fee", value: `$${(p.fee / 100).toFixed(2)}`, mono: true },
-                { label: "Quantity", value: String(p.quantity) },
-                { label: "Status", value: p.status },
+                {
+                  label: "Amount",
+                  value: <Amount cents={p.amount} withBadge symbol={p.token} />,
+                },
+                { label: "Fee", value: formatAmount(p.fee), mono: true },
+                { label: "Quantity", value: String(p.quantity), mono: true },
+                {
+                  label: "Status",
+                  value: <StatusBadge kind="payment" status={paymentStatus} />,
+                },
                 { label: "Chain", value: p.chain, mono: true },
-                { label: "Created", value: new Date(p.createdAt).toLocaleString() },
+                {
+                  label: "Created",
+                  value: new Date(p.createdAt).toLocaleString(),
+                },
                 {
                   label: "Tx hash",
-                  value: p.txHash ?? "—",
-                  mono: true,
+                  value: p.txHash ? (
+                    <HashText hash={p.txHash} networkKey={p.chain} />
+                  ) : (
+                    "—"
+                  ),
                 },
                 {
                   label: "Block",
                   value: p.blockNumber !== null ? String(p.blockNumber) : "—",
                   mono: true,
                 },
-                { label: "From", value: p.fromAddress ?? "—", mono: true },
-                { label: "To", value: p.toAddress ?? "—", mono: true },
+                {
+                  label: "From",
+                  value: p.fromAddress ? (
+                    <AddressText address={p.fromAddress} link networkKey={p.chain} />
+                  ) : (
+                    "—"
+                  ),
+                },
+                {
+                  label: "To",
+                  value: p.toAddress ? (
+                    <AddressText address={p.toAddress} link networkKey={p.chain} />
+                  ) : (
+                    "—"
+                  ),
+                },
               ]}
             />
           </Section>
@@ -141,7 +243,7 @@ export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
                     href={`/i/${p.invoiceHostedToken}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-accent underline-offset-2 hover:underline"
+                    className="text-primary underline-offset-2 hover:underline"
                   >
                     Hosted
                   </a>
@@ -149,7 +251,7 @@ export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
                     href={`/i/${p.invoiceHostedToken}/pdf`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-accent underline-offset-2 hover:underline"
+                    className="text-primary underline-offset-2 hover:underline"
                   >
                     PDF
                   </a>
@@ -169,19 +271,27 @@ export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
                     className="rounded-md border border-border bg-surface-2 p-3"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono">
-                        ${(r.amount / 100).toFixed(2)}
+                      <span className="font-mono tabular-nums">
+                        {formatAmount(r.amount)}
                       </span>
-                      <Badge variant="warning">{r.status}</Badge>
+                      <Badge
+                        variant={REFUND_STATUS_VARIANT[r.status] ?? "secondary"}
+                      >
+                        {r.status}
+                      </Badge>
                     </div>
                     {r.reason && (
                       <p className="mt-1 text-xs text-foreground-muted">
                         {r.reason}
                       </p>
                     )}
-                    <p className="mt-1 font-mono text-[11px] text-foreground-dim">
-                      {r.txHash.slice(0, 14)}… ·{" "}
-                      {new Date(r.createdAt).toLocaleString()}
+                    <p className="mt-1 text-[11px] text-foreground-dim">
+                      <HashText
+                        hash={r.txHash}
+                        networkKey={p.chain}
+                        className="text-[11px] text-foreground-dim"
+                      />{" "}
+                      · {new Date(r.createdAt).toLocaleString()}
                     </p>
                   </li>
                 ))}
@@ -202,8 +312,11 @@ export function PaymentDetailDrawer({ paymentId, onClose }: Props) {
                     className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2"
                   >
                     <span className="font-mono text-xs">{d.event}</span>
-                    <span className="text-[11px] text-foreground-dim">
-                      {d.status} · {d.httpStatus ?? "—"}
+                    <span className="flex items-center gap-2 text-[11px] text-foreground-dim">
+                      <StatusBadge kind="delivery" status={d.status} />
+                      <span className="font-mono tabular-nums">
+                        {d.httpStatus ?? "—"}
+                      </span>
                     </span>
                   </li>
                 ))}

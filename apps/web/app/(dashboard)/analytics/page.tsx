@@ -6,6 +6,9 @@ import {
   PageHeader,
   MetricGrid,
   MetricCard,
+  ErrorState,
+  LoadingState,
+  EmptyState,
 } from "@/components/paykit";
 import { Button } from "@/components/ui/button";
 import { RevenueChart } from "@/components/charts/revenue-chart";
@@ -34,17 +37,29 @@ export default function AnalyticsPage() {
   const [range, setRange] = useState<Range>(30);
   const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchData = useCallback(async (r: Range) => {
     setLoading(true);
-    const res = await fetch(`/api/analytics?range=${r}`, { cache: "no-store" });
-    if (res.ok) setData(await res.json());
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const res = await fetch(`/api/analytics?range=${r}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Request failed");
+      setData(await res.json());
+    } catch {
+      setLoadError("We couldn't load your analytics.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     fetchData(range);
   }, [fetchData, range]);
+
+  const retry = useCallback(() => fetchData(range), [fetchData, range]);
 
   const latestMrr = data?.mrrByDay[data.mrrByDay.length - 1]?.value ?? 0;
   const windowRevenue =
@@ -104,9 +119,9 @@ export default function AnalyticsPage() {
       </MetricGrid>
 
       {loading && !data ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="card" />
+      ) : loadError && !data ? (
+        <ErrorState description={loadError} onRetry={retry} />
       ) : data ? (
         <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
           <MrrChart data={data.mrrByDay} />
@@ -124,7 +139,12 @@ export default function AnalyticsPage() {
           />
           <FailedRateChart data={data.failedRateByDay} />
         </div>
-      ) : null}
+      ) : (
+        <EmptyState
+          title="No analytics yet"
+          description="Once payments and subscriptions start landing, your charts will appear here."
+        />
+      )}
     </PageShell>
   );
 }

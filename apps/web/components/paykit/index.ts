@@ -3,6 +3,7 @@ export { PageHeader } from "./page-header";
 export { Section, SectionHeader } from "./section";
 
 export { StatusBadge } from "./status-badge";
+export type { StatusKind } from "./status-badge";
 export { Amount } from "./amount";
 export { AddressText } from "./address-text";
 export { HashText } from "./hash-text";

@@ -19,6 +19,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   ActionMenu,
   col,
 } from "@/components/paykit";
@@ -43,15 +45,24 @@ type EntryRow = {
 export default function BlocklistPage() {
   const [items, setItems] = useState<BlocklistEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [type, setType] = useState<"wallet" | "email" | "country">("wallet");
   const [value, setValue] = useState("");
   const [reason, setReason] = useState("");
   const [adding, setAdding] = useState(false);
 
   const fetchAll = useCallback(async () => {
-    const res = await fetch("/api/blocklist");
-    if (res.ok) setItems(await res.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/blocklist");
+      if (!res.ok) throw new Error("Request failed");
+      setItems(await res.json());
+    } catch {
+      setLoadError("We couldn't load your blocklist.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -187,9 +198,9 @@ export default function BlocklistPage() {
       </div>
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={fetchAll} />
       ) : (
         <DataTable
           columns={columns}

@@ -41,10 +41,10 @@ export default function CreateTeamPage() {
     <div className="space-y-8">
       <OnboardingStepper active="team" />
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-slate-100">
+        <h1 className="text-2xl font-semibold text-foreground">
           Create your team
         </h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-foreground-muted">
           Your team is your company on Paylix — products, payments, and
           settings all live inside it.
         </p>
@@ -73,7 +73,7 @@ export default function CreateTeamPage() {
             placeholder="acme"
           />
         </div>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={submitting || !name}>
           {submitting ? "Creating…" : "Create team"}
         </Button>

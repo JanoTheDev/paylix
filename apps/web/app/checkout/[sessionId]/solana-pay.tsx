@@ -174,7 +174,6 @@ export function SolanaPay(props: SolanaPayProps) {
       setPayStep("complete");
       props.onComplete(sig);
     } catch (err) {
-      console.error("[solana-pay] error:", err);
       setError(err instanceof Error ? err.message : String(err));
       setPayStep("idle");
     }
@@ -183,7 +182,7 @@ export function SolanaPay(props: SolanaPayProps) {
   const clusterLabel = props.networkKey === "solana" ? "Mainnet" : "Devnet";
 
   return (
-    <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+    <Card className="w-full max-w-[480px] p-8 shadow-floating">
       <div className="mb-6">
         <h1 className="text-xl font-semibold tracking-[-0.4px]">{props.productName}</h1>
         {props.productDescription && (

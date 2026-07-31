@@ -21,6 +21,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   ConfirmDialog,
   DetailDrawer,
   KeyValueList,
@@ -111,6 +113,7 @@ function buildDeliveryColumns(
 export default function WebhooksPage() {
   const [webhookList, setWebhookList] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newUrl, setNewUrl] = useState("");
   const [newEvents, setNewEvents] = useState<string[]>([]);
@@ -131,9 +134,17 @@ export default function WebhooksPage() {
   const [replayingId, setReplayingId] = useState<string | null>(null);
 
   const fetchWebhooks = useCallback(async () => {
-    const res = await fetch("/api/webhooks");
-    if (res.ok) setWebhookList(await res.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/webhooks");
+      if (!res.ok) throw new Error("Request failed");
+      setWebhookList(await res.json());
+    } catch {
+      setLoadError("We couldn't load your webhook endpoints.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -358,9 +369,9 @@ export default function WebhooksPage() {
       />
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={fetchWebhooks} />
       ) : (
         <DataTable
           columns={columns}
@@ -435,8 +446,10 @@ export default function WebhooksPage() {
                     className="font-mono"
                   />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <Label>Events</Label>
+                <fieldset className="flex flex-col gap-2">
+                  <legend className="mb-2 text-sm font-medium leading-none">
+                    Events
+                  </legend>
                   <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto rounded-md border border-border bg-surface-2/40 p-1">
                     {ALL_EVENTS.map((event) => (
                       <label
@@ -460,7 +473,7 @@ export default function WebhooksPage() {
                       </label>
                     ))}
                   </div>
-                </div>
+                </fieldset>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={closeCreateDialog}>
@@ -574,8 +587,10 @@ export default function WebhooksPage() {
                 className="font-mono"
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <Label>Events</Label>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-2 text-sm font-medium leading-none">
+                Events
+              </legend>
               <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto rounded-md border border-border bg-surface-2/40 p-1">
                 {ALL_EVENTS.map((event) => (
                   <label
@@ -599,7 +614,7 @@ export default function WebhooksPage() {
                   </label>
                 ))}
               </div>
-            </div>
+            </fieldset>
             {editError && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
                 {editError}

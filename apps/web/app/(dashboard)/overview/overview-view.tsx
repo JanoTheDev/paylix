@@ -89,26 +89,22 @@ export default function OverviewView({
 
       <div className="mt-6">
         <h2 className="mb-3 text-sm font-medium text-foreground-muted">Subscription Health</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs text-foreground-muted">Trial conversion</p>
-            <p className="mt-1 text-2xl font-semibold font-mono text-foreground">
-              {trialConversionRate !== null ? `${trialConversionRate}%` : "—"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs text-foreground-muted">30-day churn</p>
-            <p className="mt-1 text-2xl font-semibold font-mono text-foreground">
-              {churnRate !== null ? `${churnRate}%` : "—"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs text-foreground-muted">Past due</p>
-            <p className="mt-1 text-2xl font-semibold font-mono text-foreground">
-              {pastDueCount}
-            </p>
-          </div>
-        </div>
+        <MetricGrid>
+          <MetricCard
+            label="Trial conversion"
+            value={
+              trialConversionRate !== null ? `${trialConversionRate}%` : "—"
+            }
+          />
+          <MetricCard
+            label="30-day churn"
+            value={churnRate !== null ? `${churnRate}%` : "—"}
+          />
+          <MetricCard
+            label="Past due"
+            value={pastDueCount.toLocaleString()}
+          />
+        </MetricGrid>
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">

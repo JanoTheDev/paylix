@@ -27,6 +27,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   SecretRevealDialog,
   ConfirmDialog,
   ActionMenu,
@@ -65,6 +67,7 @@ type GraceOption = "none" | "24h" | "7d";
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyType, setNewKeyType] = useState<"publishable" | "secret">(
@@ -78,9 +81,17 @@ export default function ApiKeysPage() {
   const [rotating, setRotating] = useState(false);
 
   const fetchKeys = useCallback(async () => {
-    const res = await fetch("/api/keys");
-    if (res.ok) setKeys(await res.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/keys");
+      if (!res.ok) throw new Error("Request failed");
+      setKeys(await res.json());
+    } catch {
+      setLoadError("We couldn't load your API keys.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -217,9 +228,9 @@ export default function ApiKeysPage() {
       />
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={fetchKeys} />
       ) : (
         <DataTable
           columns={columns}

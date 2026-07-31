@@ -1,9 +1,17 @@
 import { cn } from "@/lib/utils";
 import { formatAmount } from "@/lib/format";
+import { UsdcBadge } from "@/components/usdc-badge";
 
 interface AmountProps {
+  /** Integer cents — `1000` is $10.00. Never a float. */
   cents: number;
   withBadge?: boolean;
+  /**
+   * Token the amount is denominated in. The platform settles in USDC, USDT,
+   * DAI, PYUSD, WETH, WBTC, BTC and LTC — labelling every row "USDC" would
+   * mislabel the merchant's own ledger.
+   */
+  symbol?: string;
   align?: "left" | "right";
   className?: string;
 }
@@ -11,6 +19,7 @@ interface AmountProps {
 export function Amount({
   cents,
   withBadge = false,
+  symbol = "USDC",
   align = "left",
   className,
 }: AmountProps) {
@@ -22,18 +31,10 @@ export function Amount({
         className,
       )}
     >
-      <span className="font-mono tabular-nums font-medium">
+      <span className="font-mono font-medium tabular-nums">
         {formatAmount(cents)}
       </span>
-      {withBadge && <UsdcPill />}
+      {withBadge && <UsdcBadge symbol={symbol} />}
     </div>
-  );
-}
-
-function UsdcPill() {
-  return (
-    <span className="inline-flex items-center rounded-sm bg-usdc/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-usdc ring-1 ring-inset ring-usdc/20">
-      USDC
-    </span>
   );
 }

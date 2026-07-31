@@ -41,10 +41,10 @@ export default function ProfilePage() {
     <div className="space-y-8">
       <OnboardingStepper active="profile" />
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-slate-100">
+        <h1 className="text-2xl font-semibold text-foreground">
           Company profile
         </h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-foreground-muted">
           Shown on invoices and receipts. You can change all of this later in
           Settings.
         </p>
@@ -86,14 +86,14 @@ export default function ProfilePage() {
           <Label htmlFor="taxId">Tax ID (optional)</Label>
           <Input id="taxId" value={form.taxId} onChange={(e) => setForm({ ...form, taxId: e.target.value })} />
         </div>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={submitting}>
             {submitting ? "Saving…" : "Continue"}
           </Button>
           <button
             type="button"
-            className="text-sm text-slate-400 hover:text-slate-200"
+            className="text-sm text-foreground-muted hover:text-foreground"
             onClick={() => router.push("/onboarding/wallet")}
           >
             Skip for now

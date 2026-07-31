@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   PageShell,
   PageHeader,
+  ErrorState,
+  LoadingState,
 } from "@/components/paykit";
 import {
   Shield,
@@ -32,27 +34,42 @@ interface AuditLogEntry {
   createdAt: string;
 }
 
+/**
+ * Audit tones map onto the four fixed status tokens (DESIGN.md §2/§7) rather
+ * than a parallel Tailwind palette: created/succeeded = success,
+ * updated/informational = info, warning = warning, removed/failed =
+ * destructive.
+ */
+const TONE_CLASS = {
+  success: "bg-success-muted text-success border-success-border",
+  info: "bg-info-muted text-info border-info-border",
+  warning: "bg-warning-muted text-warning border-warning-border",
+  destructive: "bg-destructive-muted text-destructive border-destructive-border",
+} as const;
+
+type Tone = keyof typeof TONE_CLASS;
+
 const ACTION_META: Record<
   string,
-  { label: string; icon: typeof Shield; color: string; badgeVariant: string }
+  { label: string; icon: typeof Shield; tone: Tone }
 > = {
-  "api_key.created": { label: "API key created", icon: Key, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "api_key.revoked": { label: "API key revoked", icon: Key, color: "text-rose-400", badgeVariant: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
-  "product.created": { label: "Product created", icon: Package, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "product.updated": { label: "Product updated", icon: Package, color: "text-sky-400", badgeVariant: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
-  "webhook.created": { label: "Webhook created", icon: Bell, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "webhook.updated": { label: "Webhook updated", icon: Bell, color: "text-sky-400", badgeVariant: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
-  "webhook.deleted": { label: "Webhook deleted", icon: Bell, color: "text-rose-400", badgeVariant: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
-  "subscription.created": { label: "Subscription started", icon: CreditCard, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "subscription.renewed": { label: "Subscription renewed", icon: CreditCard, color: "text-sky-400", badgeVariant: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
-  "subscription.cancelled": { label: "Subscription cancelled", icon: CreditCard, color: "text-rose-400", badgeVariant: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
-  "subscription.cancelled_onchain": { label: "Cancelled (on-chain)", icon: CreditCard, color: "text-rose-400", badgeVariant: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
-  "subscription.trial_cancelled": { label: "Trial cancelled", icon: CreditCard, color: "text-amber-400", badgeVariant: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
-  "subscription.trial_retried": { label: "Trial retried", icon: RefreshCw, color: "text-sky-400", badgeVariant: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
-  "subscription.trial_converted": { label: "Trial converted", icon: CreditCard, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "payment.confirmed": { label: "Payment confirmed", icon: CreditCard, color: "text-emerald-400", badgeVariant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  "customer.deleted": { label: "Customer deleted", icon: Users, color: "text-rose-400", badgeVariant: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
-  "settings.updated": { label: "Settings updated", icon: Settings, color: "text-sky-400", badgeVariant: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
+  "api_key.created": { label: "API key created", icon: Key, tone: "success" },
+  "api_key.revoked": { label: "API key revoked", icon: Key, tone: "destructive" },
+  "product.created": { label: "Product created", icon: Package, tone: "success" },
+  "product.updated": { label: "Product updated", icon: Package, tone: "info" },
+  "webhook.created": { label: "Webhook created", icon: Bell, tone: "success" },
+  "webhook.updated": { label: "Webhook updated", icon: Bell, tone: "info" },
+  "webhook.deleted": { label: "Webhook deleted", icon: Bell, tone: "destructive" },
+  "subscription.created": { label: "Subscription started", icon: CreditCard, tone: "success" },
+  "subscription.renewed": { label: "Subscription renewed", icon: CreditCard, tone: "info" },
+  "subscription.cancelled": { label: "Subscription cancelled", icon: CreditCard, tone: "destructive" },
+  "subscription.cancelled_onchain": { label: "Cancelled (on-chain)", icon: CreditCard, tone: "destructive" },
+  "subscription.trial_cancelled": { label: "Trial cancelled", icon: CreditCard, tone: "warning" },
+  "subscription.trial_retried": { label: "Trial retried", icon: RefreshCw, tone: "info" },
+  "subscription.trial_converted": { label: "Trial converted", icon: CreditCard, tone: "success" },
+  "payment.confirmed": { label: "Payment confirmed", icon: CreditCard, tone: "success" },
+  "customer.deleted": { label: "Customer deleted", icon: Users, tone: "destructive" },
+  "settings.updated": { label: "Settings updated", icon: Settings, tone: "info" },
 };
 
 const RESOURCE_FILTERS = [
@@ -97,6 +114,7 @@ function formatFullTime(dateStr: string): string {
 export default function AuditLogPage() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [action, setAction] = useState("");
   const [q, setQ] = useState("");
@@ -107,6 +125,7 @@ export default function AuditLogPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = new URLSearchParams();
       if (filter !== "all") params.set("resourceType", filter);
@@ -115,13 +134,12 @@ export default function AuditLogPage() {
       if (from) params.set("from", new Date(from).toISOString());
       if (to) params.set("to", new Date(to).toISOString());
       const res = await fetch(`/api/settings/audit-log?${params}`);
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs ?? []);
-        setDistinctActions(data.distinctActions ?? []);
-      }
+      if (!res.ok) throw new Error("Request failed");
+      const data = await res.json();
+      setLogs(data.logs ?? []);
+      setDistinctActions(data.distinctActions ?? []);
     } catch {
-      // ignore
+      setLoadError("We couldn't load the audit log.");
     } finally {
       setLoading(false);
     }
@@ -246,10 +264,9 @@ export default function AuditLogPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-foreground-muted border-t-transparent" />
-          <p className="text-sm text-foreground-muted">Loading audit log...</p>
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={load} />
       ) : filteredLogs.length === 0 ? (
         <div className="flex flex-col items-center py-16 text-center">
           <Shield size={40} className="mb-4 text-foreground-muted" />
@@ -264,13 +281,12 @@ export default function AuditLogPage() {
       ) : (
         <div className="overflow-hidden rounded-lg border border-border">
           {filteredLogs.map((log, idx) => {
-            const meta = ACTION_META[log.action] ?? {
-              label: log.action,
-              icon: Shield,
-              color: "text-foreground-muted",
-              badgeVariant: "bg-surface-2 text-foreground-muted border-border",
-            };
-            const Icon = meta.icon;
+            const meta = ACTION_META[log.action];
+            const label = meta?.label ?? log.action;
+            const Icon = meta?.icon ?? Shield;
+            const toneClass = meta
+              ? TONE_CLASS[meta.tone]
+              : "bg-surface-2 text-foreground-muted border-border";
             const isExpanded = expandedId === log.id;
             const detailName =
               (log.details?.name as string) ??
@@ -298,14 +314,14 @@ export default function AuditLogPage() {
                   }`}
                 >
                   <div
-                    className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border ${meta.badgeVariant}`}
+                    className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border ${toneClass}`}
                   >
                     <Icon size={14} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-foreground">
-                        {meta.label}
+                        {label}
                       </span>
                       {detailName && (
                         <span className="truncate text-xs text-foreground-muted">

@@ -20,6 +20,8 @@ import {
   PageHeader,
   DataTable,
   EmptyState,
+  ErrorState,
+  LoadingState,
   ActionMenu,
   col,
 } from "@/components/paykit";
@@ -51,6 +53,7 @@ type Row = {
 export default function RefundRequestsPage() {
   const [items, setItems] = useState<Req[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState<Req | null>(null);
   const [declineTarget, setDeclineTarget] = useState<Req | null>(null);
   const [txHash, setTxHash] = useState("");
@@ -58,9 +61,17 @@ export default function RefundRequestsPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/refund-requests");
-    if (res.ok) setItems(await res.json());
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/refund-requests");
+      if (!res.ok) throw new Error("Request failed");
+      setItems(await res.json());
+    } catch {
+      setLoadError("We couldn't load your refund requests.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -181,9 +192,9 @@ export default function RefundRequestsPage() {
       />
 
       {loading ? (
-        <div className="rounded-lg border border-border bg-surface-1 py-16 text-center text-sm text-foreground-muted">
-          Loading…
-        </div>
+        <LoadingState variant="table" />
+      ) : loadError ? (
+        <ErrorState description={loadError} onRetry={load} />
       ) : (
         <DataTable
           columns={columns}

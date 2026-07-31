@@ -21,6 +21,11 @@ import {
 } from "@/components/settings/business-profile-section";
 import { TeamTabContent } from "@/components/settings/team-tab-content";
 import {
+  UTXO_MERCHANT_NOTICE,
+  UTXO_PAYMENTS_ENABLED,
+  isUtxoNetwork,
+} from "@/app/_lib/utxo-payments";
+import {
   NOTIFICATION_KINDS,
   DEFAULT_NOTIFICATION_PREFERENCES,
   type NotificationKind,
@@ -518,7 +523,19 @@ export default function SettingsPage() {
                               : "Testnet"}
                           </Badge>
                         )}
+                        {!UTXO_PAYMENTS_ENABLED &&
+                          isUtxoNetwork(n.networkKey) && (
+                            <Badge variant="warning">Unavailable</Badge>
+                          )}
                       </div>
+                      {!UTXO_PAYMENTS_ENABLED && isUtxoNetwork(n.networkKey) && (
+                        <p className="mt-2 text-[11px] leading-relaxed text-warning">
+                          {UTXO_MERCHANT_NOTICE}
+                          {n.enabled
+                            ? " This network is still enabled on your account — turn it off to stop offering it at checkout."
+                            : ""}
+                        </p>
+                      )}
                       {n.tokenSummary && n.tokenSummary.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {n.tokenSummary.map((t) => (
@@ -539,9 +556,7 @@ export default function SettingsPage() {
                             >
                               {t.symbol}
                               {t.bridged && (
-                                <span className="text-amber-600 dark:text-amber-500">
-                                  *
-                                </span>
+                                <span className="text-warning">*</span>
                               )}
                             </span>
                           ))}
@@ -555,6 +570,14 @@ export default function SettingsPage() {
                     </div>
                     <Switch
                       checked={n.enabled}
+                      // Bitcoin/Litecoin can be turned OFF but never ON while
+                      // the UTXO settlement path is gated — enabling it would
+                      // advertise a payment method that cannot complete.
+                      disabled={
+                        !UTXO_PAYMENTS_ENABLED &&
+                        isUtxoNetwork(n.networkKey) &&
+                        !n.enabled
+                      }
                       onCheckedChange={() => toggleNetwork(n.networkKey)}
                     />
                   </div>
@@ -578,13 +601,19 @@ export default function SettingsPage() {
                               type="text"
                               placeholder={hint.placeholder}
                               value={n.xpub ?? ""}
+                              // Read-only while the UTXO path is gated: a
+                              // saved xpub is what derives receive addresses,
+                              // so accepting one implies payments will work.
+                              disabled={!UTXO_PAYMENTS_ENABLED}
                               onChange={(e) =>
                                 updateXpub(n.networkKey, e.target.value)
                               }
                               className="font-mono text-xs"
                             />
                             <p className="text-[11px] text-foreground-muted">
-                              {hint.helper}
+                              {UTXO_PAYMENTS_ENABLED
+                                ? hint.helper
+                                : "Locked until Bitcoin and Litecoin payments are re-enabled."}
                             </p>
                           </>
                         ) : (
@@ -613,7 +642,7 @@ export default function SettingsPage() {
                               </label>
                             </div>
                             {kind === "solana" && n.usesDefault && (
-                              <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                              <p className="text-[11px] text-warning">
                                 Solana uses base58 pubkeys. Set an override — the EVM-format default wallet won&apos;t work here.
                               </p>
                             )}

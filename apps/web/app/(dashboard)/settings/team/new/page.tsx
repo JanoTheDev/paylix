@@ -34,7 +34,7 @@ export default function NewTeamPage() {
         <Label htmlFor="name">Team name</Label>
         <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <Button type="submit" disabled={submitting}>{submitting ? "Creating…" : "Create"}</Button>
     </form>
   );

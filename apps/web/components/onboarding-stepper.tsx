@@ -5,37 +5,43 @@ const STEPS = [
   { slug: "invite", label: "Invite team" },
 ] as const;
 
+const DOT_CLASS = {
+  active: "bg-primary",
+  done: "bg-primary/50",
+  todo: "bg-surface-3",
+} as const;
+
+const TEXT_CLASS = {
+  active: "text-foreground",
+  done: "text-foreground-muted",
+  todo: "text-foreground-dim",
+} as const;
+
 export function OnboardingStepper({ active }: { active: string }) {
   const activeIdx = STEPS.findIndex((s) => s.slug === active);
   return (
-    <ol className="flex items-center gap-3 text-xs font-mono tracking-wide">
+    <ol className="flex items-center gap-3 font-mono text-xs tracking-wide">
       {STEPS.map((s, i) => {
-        const state =
+        const state: keyof typeof DOT_CLASS =
           i < activeIdx ? "done" : i === activeIdx ? "active" : "todo";
         return (
           <li key={s.slug} className="flex items-center gap-2">
             <span
-              aria-current={state === "active" ? "step" : undefined}
-              className={
-                state === "active"
-                  ? "h-2 w-2 rounded-full bg-[#06d6a0]"
-                  : state === "done"
-                    ? "h-2 w-2 rounded-full bg-[#06d6a0]/50"
-                    : "h-2 w-2 rounded-full bg-slate-700"
-              }
+              aria-hidden="true"
+              className={`h-2 w-2 rounded-full ${DOT_CLASS[state]}`}
             />
             <span
-              className={
-                state === "active"
-                  ? "text-slate-100"
-                  : state === "done"
-                    ? "text-slate-400"
-                    : "text-slate-600"
-              }
+              aria-current={state === "active" ? "step" : undefined}
+              className={TEXT_CLASS[state]}
             >
               {s.label}
+              {state === "done" && <span className="sr-only"> (completed)</span>}
             </span>
-            {i < STEPS.length - 1 && <span className="text-slate-700">—</span>}
+            {i < STEPS.length - 1 && (
+              <span aria-hidden="true" className="text-foreground-dim">
+                —
+              </span>
+            )}
           </li>
         );
       })}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Form,
   FormControl,
@@ -30,6 +31,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  useMerchantNetworks,
+  type PaymentType,
+} from "@/components/networks/use-merchant-networks";
 
 const billingIntervals = [
   { value: "minutely", label: "Every Minute (testing)" },
@@ -138,6 +143,7 @@ interface ProductFormProps {
   mode: "create" | "edit";
 }
 
+
 export function ProductForm({ initialData, mode }: ProductFormProps) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -207,83 +213,37 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
       : [{ id: crypto.randomUUID(), networkKey: "", tokenSymbol: "", amount: "" }],
   );
 
-  const [enabledNetworks, setEnabledNetworks] = useState<
-    Array<{
-      networkKey: string;
-      chainName: string;
-      displayLabel: string;
-      tokens: Array<{
-        symbol: string;
-        name: string;
-        bridged: boolean;
-        usable: boolean;
-      }>;
-    }>
-  >([]);
+  const paymentType: PaymentType =
+    type === "subscription" ? "subscription" : "one_time";
+  const {
+    settings,
+    networks: enabledNetworks,
+    loading: networksLoading,
+    error: settingsError,
+  } = useMerchantNetworks(paymentType);
 
-  // On create-mode mount, pre-fill the toggles from the merchant's
-  // per-account defaults (configured in /settings → Default Checkout Fields).
-  // We only do this on create — editing an existing product must show its
-  // own saved values, not the account defaults.
+  // On create-mode mount, pre-fill the toggles from the merchant's per-account
+  // defaults (configured in /settings -> Default Checkout Fields). We only do
+  // this on create -- editing an existing product must show its own saved
+  // values, not the account defaults.
+  //
+  // The ref makes "seed once" explicit rather than implied by `settings` being
+  // referentially stable: after the merchant has touched a toggle, no later
+  // re-run of this effect may overwrite their choice.
+  const defaultsApplied = useRef(false);
   useEffect(() => {
+    if (defaultsApplied.current) return;
     if (mode !== "create" || initialData) return;
-    let cancelled = false;
-    fetch("/api/settings")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data?.checkoutFieldDefaults) return;
-        setCheckoutFields({
-          firstName: Boolean(data.checkoutFieldDefaults.firstName),
-          lastName: Boolean(data.checkoutFieldDefaults.lastName),
-          email: Boolean(data.checkoutFieldDefaults.email),
-          phone: Boolean(data.checkoutFieldDefaults.phone),
-        });
-      })
-      .catch(() => {
-        // If the fetch fails the form just keeps the all-false defaults —
-        // merchant can still toggle manually.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, initialData]);
-
-  useEffect(() => {
-    // Load merchant's enabled networks from /api/settings. For each network
-    // we surface every registered token, filtered to those usable for the
-    // chosen payment type. DAI-permit is gated from subscription products
-    // here (contract + relay reject it further down the stack, but the UI
-    // should never show an option that would 400 at submit time).
-    let cancelled = false;
-    fetch("/api/settings")
-      .then((r) => (r.ok ? r.json() : null))
-      .then(async (data) => {
-        if (cancelled || !data?.networks) return;
-        const { NETWORKS, isTokenUsable } = await import("@paylix/config/networks");
-        const paymentType = type === "subscription" ? "subscription" : "one_time";
-        const enabled = data.networks
-          .filter((n: { enabled: boolean }) => n.enabled)
-          .map((n: { networkKey: string; chainName: string; displayLabel: string }) => {
-            const network = NETWORKS[n.networkKey as keyof typeof NETWORKS];
-            const tokens = Object.values(network.tokens).map((t) => ({
-              symbol: t.symbol,
-              name: t.name,
-              bridged: Boolean(t.bridged),
-              usable: isTokenUsable(t, paymentType),
-            }));
-            return {
-              networkKey: n.networkKey,
-              chainName: n.chainName,
-              displayLabel: n.displayLabel,
-              tokens,
-            };
-          });
-        if (!cancelled) setEnabledNetworks(enabled);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [type]);
+    const defaults = settings?.checkoutFieldDefaults;
+    if (!defaults) return;
+    defaultsApplied.current = true;
+    setCheckoutFields({
+      firstName: Boolean(defaults.firstName),
+      lastName: Boolean(defaults.lastName),
+      email: Boolean(defaults.email),
+      phone: Boolean(defaults.phone),
+    });
+  }, [settings, mode, initialData]);
 
   function updatePrice(
     index: number,
@@ -606,7 +566,18 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
               </p>
             </div>
 
-            {enabledNetworks.length === 0 ? (
+            {settingsError && (
+              <Alert variant="destructive">
+                <AlertDescription>{settingsError}</AlertDescription>
+              </Alert>
+            )}
+
+            {networksLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-2/3" />
+              </div>
+            ) : enabledNetworks.length === 0 ? (
               <Alert variant="destructive">
                 <AlertDescription>
                   No networks enabled. Go to Settings → Networks and enable at
@@ -621,8 +592,11 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                     className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end"
                   >
                     <div>
-                      <Label className="text-xs">Network</Label>
+                      <Label htmlFor={`price-network-${p.id}`} className="text-xs">
+                        Network
+                      </Label>
                       <select
+                        id={`price-network-${p.id}`}
                         value={p.networkKey}
                         onChange={(e) =>
                           updatePrice(i, "networkKey", e.target.value)
@@ -639,8 +613,11 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                     </div>
 
                     <div>
-                      <Label className="text-xs">Token</Label>
+                      <Label htmlFor={`price-token-${p.id}`} className="text-xs">
+                        Token
+                      </Label>
                       <select
+                        id={`price-token-${p.id}`}
                         value={p.tokenSymbol}
                         onChange={(e) =>
                           updatePrice(i, "tokenSymbol", e.target.value)
@@ -664,27 +641,32 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                               </option>
                             ))}
                       </select>
-                      {p.networkKey && p.tokenSymbol && (() => {
-                        const tok = enabledNetworks
-                          .find((n) => n.networkKey === p.networkKey)
-                          ?.tokens.find((t) => t.symbol === p.tokenSymbol);
-                        if (tok?.bridged) {
+                      {p.networkKey &&
+                        p.tokenSymbol &&
+                        (() => {
+                          const tok = enabledNetworks
+                            .find((n) => n.networkKey === p.networkKey)
+                            ?.tokens.find((t) => t.symbol === p.tokenSymbol);
+                          if (!tok?.bridged) return null;
                           return (
-                            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
-                              Bridged token — not the original issuer&apos;s deployment. Funds pass through a bridge contract.
+                            <p className="mt-1 text-[11px] text-warning">
+                              Bridged token — not the original issuer&apos;s
+                              deployment. Funds pass through a bridge contract.
                             </p>
                           );
-                        }
-                        return null;
-                      })()}
+                        })()}
                     </div>
 
                     <div>
-                      <Label className="text-xs">Amount</Label>
+                      <Label htmlFor={`price-amount-${p.id}`} className="text-xs">
+                        Amount
+                      </Label>
                       <Input
+                        id={`price-amount-${p.id}`}
                         type="text"
                         inputMode="decimal"
                         placeholder="10.00"
+                        className="font-mono"
                         value={p.amount}
                         onChange={(e) => updatePrice(i, "amount", e.target.value)}
                       />
@@ -727,6 +709,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                   className="flex flex-col gap-2 sm:flex-row sm:items-center"
                 >
                   <Input
+                    aria-label={`Metadata key ${i + 1}`}
                     placeholder="key"
                     value={row.key}
                     onChange={(e) =>
@@ -735,6 +718,7 @@ export function ProductForm({ initialData, mode }: ProductFormProps) {
                     className="sm:w-[40%]"
                   />
                   <Input
+                    aria-label={`Metadata value ${i + 1}`}
                     placeholder="value"
                     value={row.value}
                     onChange={(e) =>

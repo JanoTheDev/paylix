@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,12 @@ export interface PortalSubscription {
   trialConversionLastError: string | null;
   productId: string;
   pausedBy?: string | null;
+  /**
+   * Checkout session this subscription originated from. Drives the
+   * "Restart subscription" recovery link — null when we can't resolve one,
+   * in which case the link is hidden rather than pointed at a dead URL.
+   */
+  restartSessionId?: string | null;
 }
 
 function humanizeTrialReason(reason: string | null): string {
@@ -263,9 +270,10 @@ export function PortalClient({
     category: PortalNotificationCategory,
     optedIn: boolean,
   ) {
-    const prev = notifState;
-    setNotifState(
-      notifState.map((n) => (n.category === category ? { ...n, optedIn } : n)),
+    // Functional updater: two toggles inside one render cycle must not clobber
+    // each other, and the rollback below only reverts THIS category.
+    setNotifState((prev) =>
+      prev.map((n) => (n.category === category ? { ...n, optedIn } : n)),
     );
     const res = await fetch("/api/portal/notifications", {
       method: "PATCH",
@@ -273,7 +281,11 @@ export function PortalClient({
       body: JSON.stringify({ customerId, token: portalToken, category, optedIn }),
     });
     if (!res.ok) {
-      setNotifState(prev);
+      setNotifState((prev) =>
+        prev.map((n) =>
+          n.category === category ? { ...n, optedIn: !optedIn } : n,
+        ),
+      );
       const err = await res.json().catch(() => ({}));
       toast.error(err.error?.message ?? "Update failed");
     } else {
@@ -347,6 +359,31 @@ export function PortalClient({
     } finally {
       setRefundBusy(false);
     }
+  }
+
+  /**
+   * One shape for all four subscription actions. The four dialogs used to
+   * read `err.error` in two places and `err.error?.message` in the other two,
+   * so the same API error surfaced as "[object Object]" half the time.
+   */
+  async function postSubscriptionAction(
+    endpoint: string,
+    subscriptionId: string,
+    fallbackMessage: string,
+  ) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscriptionId, customerId, token: portalToken }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const raw = body?.error;
+      const message =
+        typeof raw === "string" ? raw : (raw?.message ?? fallbackMessage);
+      throw new Error(message);
+    }
+    await handleConfirmed();
   }
 
   async function handleConfirmed() {
@@ -518,12 +555,19 @@ export function PortalClient({
                       <p className="mt-1 text-xs text-foreground-muted">
                         Reason: {humanizeTrialReason(sub.trialConversionLastError)}
                       </p>
-                      <a
-                        href={`/checkout/restart?subscriptionId=${sub.id}`}
-                        className="mt-3 inline-block text-sm text-destructive hover:underline"
-                      >
-                        Restart subscription →
-                      </a>
+                      {sub.restartSessionId ? (
+                        <a
+                          href={`/checkout/restart/${sub.restartSessionId}`}
+                          className="mt-3 inline-block rounded-md text-sm text-destructive hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                        >
+                          Restart subscription →
+                        </a>
+                      ) : (
+                        <p className="mt-3 text-xs text-foreground-muted">
+                          Contact the merchant for a new checkout link to
+                          restart this subscription.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -591,15 +635,18 @@ export function PortalClient({
           {notifState.map((n) => {
             const meta = NOTIFICATION_LABELS[n.category];
             return (
-              <label
+              <div
                 key={n.category}
-                className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border border-border bg-surface-1 px-4 py-3 text-sm"
+                className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface-1 px-4 py-3 text-sm"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-foreground">
+                    <label
+                      htmlFor={`notif-${n.category}`}
+                      className="cursor-pointer font-medium text-foreground"
+                    >
                       {meta.label}
-                    </span>
+                    </label>
                     {meta.transactional && (
                       <Badge variant="info">Recommended</Badge>
                     )}
@@ -608,15 +655,15 @@ export function PortalClient({
                     {meta.description}
                   </p>
                 </div>
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4"
+                <Switch
+                  id={`notif-${n.category}`}
+                  className="mt-1"
                   checked={n.optedIn}
-                  onChange={(e) =>
-                    toggleNotification(n.category, e.target.checked)
+                  onCheckedChange={(checked) =>
+                    toggleNotification(n.category, checked)
                   }
                 />
-              </label>
+              </div>
             );
           })}
         </div>
@@ -779,20 +826,11 @@ export function PortalClient({
         variant="destructive"
         onConfirm={async () => {
           if (!cancelTarget) return;
-          const res = await fetch("/api/portal/cancel-subscription", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subscriptionId: cancelTarget.id,
-              customerId,
-              token: portalToken,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || "Cancel failed");
-          }
-          await handleConfirmed();
+          await postSubscriptionAction(
+            "/api/portal/cancel-subscription",
+            cancelTarget.id,
+            "Cancel failed",
+          );
         }}
       />
 
@@ -809,20 +847,11 @@ export function PortalClient({
         variant="destructive"
         onConfirm={async () => {
           if (!cancelTrialTarget) return;
-          const res = await fetch("/api/portal/cancel-trial", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subscriptionId: cancelTrialTarget.id,
-              customerId,
-              token: portalToken,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || "Cancel trial failed");
-          }
-          await handleConfirmed();
+          await postSubscriptionAction(
+            "/api/portal/cancel-trial",
+            cancelTrialTarget.id,
+            "Cancel trial failed",
+          );
         }}
       />
 
@@ -838,20 +867,11 @@ export function PortalClient({
         confirmLabel="Pause subscription"
         onConfirm={async () => {
           if (!pauseTarget) return;
-          const res = await fetch("/api/portal/pause-subscription", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subscriptionId: pauseTarget.id,
-              customerId,
-              token: portalToken,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error?.message || "Pause failed");
-          }
-          await handleConfirmed();
+          await postSubscriptionAction(
+            "/api/portal/pause-subscription",
+            pauseTarget.id,
+            "Pause failed",
+          );
         }}
       />
 
@@ -867,20 +887,11 @@ export function PortalClient({
         confirmLabel="Resume subscription"
         onConfirm={async () => {
           if (!resumeTarget) return;
-          const res = await fetch("/api/portal/resume-subscription", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subscriptionId: resumeTarget.id,
-              customerId,
-              token: portalToken,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error?.message || "Resume failed");
-          }
-          await handleConfirmed();
+          await postSubscriptionAction(
+            "/api/portal/resume-subscription",
+            resumeTarget.id,
+            "Resume failed",
+          );
         }}
       />
 

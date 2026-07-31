@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 type Row = { id: string; key: string; value: string };
@@ -84,20 +83,28 @@ export function MetadataEditor({
     update(next);
   }
 
+  // The editor is a repeating group, not a single control, so it is a
+  // <fieldset>/<legend> and each input carries its own accessible name —
+  // a bare <Label> with no `htmlFor` labels nothing.
+  const groupId = useId();
+
   return (
-    <div className={cn("space-y-2", className)}>
+    <fieldset className={cn("min-w-0 space-y-2", className)}>
       <div>
-        <Label>{label}</Label>
+        <legend className="text-sm leading-none font-medium">{label}</legend>
         {description && (
           <p className="mt-0.5 text-xs text-foreground-muted">{description}</p>
         )}
       </div>
       <div className="flex flex-col gap-2">
-        {rows.map((r) => {
+        {rows.map((r, i) => {
           const isDup = r.key.trim() && duplicates.has(r.key.trim());
           return (
             <div key={r.id} className="flex items-start gap-2">
               <Input
+                id={`${groupId}-key-${r.id}`}
+                aria-label={`${label} key ${i + 1}`}
+                aria-invalid={isDup ? true : undefined}
                 placeholder="key"
                 value={r.key}
                 disabled={disabled}
@@ -108,6 +115,8 @@ export function MetadataEditor({
                 )}
               />
               <Input
+                id={`${groupId}-value-${r.id}`}
+                aria-label={`${label} value ${i + 1}`}
                 placeholder="value"
                 value={r.value}
                 disabled={disabled}
@@ -121,7 +130,11 @@ export function MetadataEditor({
                 disabled={disabled}
                 onClick={() => removeRow(r.id)}
                 className="shrink-0"
-                aria-label="Remove row"
+                aria-label={
+                  r.key.trim()
+                    ? `Remove ${r.key.trim()}`
+                    : `Remove ${label.toLowerCase()} row ${i + 1}`
+                }
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -130,7 +143,7 @@ export function MetadataEditor({
         })}
       </div>
       {duplicates.size > 0 && (
-        <p className="text-xs text-destructive">
+        <p role="alert" className="text-xs text-destructive">
           Duplicate keys are not allowed: {Array.from(duplicates).join(", ")}
         </p>
       )}
@@ -143,6 +156,6 @@ export function MetadataEditor({
       >
         <Plus className="mr-1.5 h-3.5 w-3.5" /> Add row
       </Button>
-    </div>
+    </fieldset>
   );
 }

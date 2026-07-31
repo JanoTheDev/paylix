@@ -1,5 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import {
+  checkoutSessions,
   customerNotificationPreferences,
   customerWallets,
   customers,
@@ -85,6 +86,29 @@ export default async function PortalPage({
     .innerJoin(products, eq(subscriptions.productId, products.id))
     .where(eq(subscriptions.customerId, customer.id))
     .orderBy(desc(subscriptions.createdAt));
+
+  // Map each subscription back to the checkout session that created it, so the
+  // "Restart subscription" recovery link can point at the real
+  // /checkout/restart/[sessionId] route rather than a bare path that 404s.
+  const subIds = subRows.map((s) => s.id);
+  const originSessions = subIds.length
+    ? await db
+        .select({
+          id: checkoutSessions.id,
+          subscriptionId: checkoutSessions.subscriptionId,
+          createdAt: checkoutSessions.createdAt,
+        })
+        .from(checkoutSessions)
+        .where(inArray(checkoutSessions.subscriptionId, subIds))
+        .orderBy(desc(checkoutSessions.createdAt))
+    : [];
+
+  const restartSessionBySub = new Map<string, string>();
+  for (const row of originSessions) {
+    if (row.subscriptionId && !restartSessionBySub.has(row.subscriptionId)) {
+      restartSessionBySub.set(row.subscriptionId, row.id);
+    }
+  }
 
   const payRows = await db
     .select({
@@ -198,6 +222,7 @@ export default async function PortalPage({
     trialConversionLastError: r.trialConversionLastError,
     productId: r.productId,
     pausedBy: r.pausedBy,
+    restartSessionId: restartSessionBySub.get(r.id) ?? null,
   }));
 
   const portalPayments: PortalPayment[] = payRows.map((r) => ({

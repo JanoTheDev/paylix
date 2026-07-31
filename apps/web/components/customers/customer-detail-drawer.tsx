@@ -13,7 +13,6 @@ import { MetadataEditor } from "@/components/metadata-editor";
 import { SubscriptionActionsMenu } from "@/components/subscriptions/subscription-actions-menu";
 import { TrialActionButton } from "@/components/subscriptions/trial-action-button";
 import { formatTrialRemaining } from "@/lib/format-trial";
-import { cn } from "@/lib/utils";
 
 interface Props {
   customerId: string | null;
@@ -101,38 +100,59 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
   const [savingPaymentId, setSavingPaymentId] = useState<string | null>(null);
   const [paymentSavedId, setPaymentSavedId] = useState<string | null>(null);
 
-  const load = useCallback(async (id: string) => {
-    setLoading(true);
-    setData(null);
-    setProfileDraft(null);
-    setProfileError("");
-    try {
-      const res = await fetch(`/api/customers/${id}`);
-      if (!res.ok) {
-        setProfileError("Failed to load customer");
-        return;
+  // Closing the drawer or switching customers mid-flight must not let the
+  // stale response overwrite the newer one — matches the `cancelled` +
+  // AbortController convention used across the rest of the app.
+  const load = useCallback(
+    async (id: string, signal: AbortSignal, isStale: () => boolean) => {
+      setLoading(true);
+      setData(null);
+      setProfileDraft(null);
+      setProfileError("");
+      try {
+        const res = await fetch(`/api/customers/${id}`, { signal });
+        if (isStale()) return;
+        if (!res.ok) {
+          setProfileError("Failed to load customer");
+          return;
+        }
+        const json = (await res.json()) as CustomerData;
+        if (isStale()) return;
+        setData(json);
+        setProfileDraft(json.customer);
+        const drafts: Record<string, Record<string, string>> = {};
+        for (const p of json.payments) {
+          drafts[p.id] = p.metadata ?? {};
+        }
+        setPaymentMetadataDraft(drafts);
+      } catch (err) {
+        if (isStale()) return;
+        setProfileError(
+          err instanceof Error
+            ? `Failed to load customer: ${err.message}`
+            : "Failed to load customer",
+        );
+      } finally {
+        if (!isStale()) setLoading(false);
       }
-      const json = (await res.json()) as CustomerData;
-      setData(json);
-      setProfileDraft(json.customer);
-      const drafts: Record<string, Record<string, string>> = {};
-      for (const p of json.payments) {
-        drafts[p.id] = p.metadata ?? {};
-      }
-      setPaymentMetadataDraft(drafts);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (customerId) {
-      load(customerId);
-    } else {
+    if (!customerId) {
       setData(null);
       setProfileDraft(null);
       setExpandedPayment(null);
+      return;
     }
+    const controller = new AbortController();
+    let cancelled = false;
+    load(customerId, controller.signal, () => cancelled);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [customerId, load]);
 
   async function saveProfile() {
@@ -563,9 +583,7 @@ export function CustomerDetailDrawer({ customerId, onOpenChange }: Props) {
                     </Badge>
                     <a
                       href={`/i/${i.hostedToken}/pdf`}
-                      className={cn(
-                        "inline-flex items-center gap-1 text-[11px] text-accent hover:underline",
-                      )}
+                      className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
                       target="_blank"
                       rel="noreferrer"
                     >

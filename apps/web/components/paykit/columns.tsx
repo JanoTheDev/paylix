@@ -2,7 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Amount } from "./amount";
 import { AddressText } from "./address-text";
 import { HashText } from "./hash-text";
-import { StatusBadge } from "./status-badge";
+import { StatusBadge, type StatusKind } from "./status-badge";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
@@ -20,6 +20,15 @@ function textCell(value: unknown, align: Align, muted: boolean): ReactNode {
       {(value as ReactNode) ?? "—"}
     </div>
   );
+}
+
+function networkKeyOf<T>(
+  row: T,
+  field: keyof T | undefined,
+): string | undefined {
+  if (!field) return undefined;
+  const v = row[field];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
 export const col = {
@@ -55,17 +64,33 @@ export const col = {
     };
   },
 
+  /**
+   * Integer-cents amount column. `symbolKey` points at the row field holding
+   * the settlement token (e.g. `token`, `tokenSymbol`) so the badge doesn't
+   * mislabel a DAI or USDT payment as USDC; `symbol` pins it when the whole
+   * table is one token.
+   */
   amount<T>(
     key: keyof T,
     header: string,
-    opts: { withBadge?: boolean } = {},
+    opts: { withBadge?: boolean; symbol?: string; symbolKey?: keyof T } = {},
   ): ColumnDef<T, unknown> {
     return {
       accessorKey: key as string,
       header: () => <div className="text-right">{header}</div>,
       cell: ({ row }) => {
         const v = row.getValue(key as string) as number;
-        return <Amount cents={v} withBadge={opts.withBadge} align="right" />;
+        const fromRow = opts.symbolKey
+          ? (row.original[opts.symbolKey] as string | null | undefined)
+          : undefined;
+        return (
+          <Amount
+            cents={v}
+            withBadge={opts.withBadge}
+            symbol={fromRow ?? opts.symbol}
+            align="right"
+          />
+        );
       },
     };
   },
@@ -100,17 +125,30 @@ export const col = {
     };
   },
 
+  /**
+   * `networkKeyField` points at the row field holding the chain the address
+   * lives on, so the explorer link resolves per-row instead of on whatever
+   * chain the deployment defaults to.
+   */
   address<T>(
     key: keyof T,
     header: string,
-    opts: { link?: boolean } = {},
+    opts: { link?: boolean; networkKeyField?: keyof T } = {},
   ): ColumnDef<T, unknown> {
     return {
       accessorKey: key as string,
       header,
       cell: ({ row }) => {
         const v = row.getValue(key as string) as string | null | undefined;
-        return v ? <AddressText address={v} link={opts.link} /> : "—";
+        return v ? (
+          <AddressText
+            address={v}
+            link={opts.link}
+            networkKey={networkKeyOf(row.original, opts.networkKeyField)}
+          />
+        ) : (
+          "—"
+        );
       },
     };
   },
@@ -118,14 +156,22 @@ export const col = {
   hash<T>(
     key: keyof T,
     header: string,
-    opts: { explorer?: "tx" | "none" } = {},
+    opts: { explorer?: "tx" | "none"; networkKeyField?: keyof T } = {},
   ): ColumnDef<T, unknown> {
     return {
       accessorKey: key as string,
       header,
       cell: ({ row }) => {
         const v = row.getValue(key as string) as string | null | undefined;
-        return v ? <HashText hash={v} link={opts.explorer ?? "tx"} /> : "—";
+        return v ? (
+          <HashText
+            hash={v}
+            link={opts.explorer ?? "tx"}
+            networkKey={networkKeyOf(row.original, opts.networkKeyField)}
+          />
+        ) : (
+          "—"
+        );
       },
     };
   },
@@ -133,23 +179,17 @@ export const col = {
   status<T>(
     key: keyof T,
     header: string,
-    kind:
-      | "payment"
-      | "subscription"
-      | "apiKey"
-      | "webhook"
-      | "productType"
-      | "productState"
-      | "checkout"
-      | "delivery",
+    kind: StatusKind["kind"],
   ): ColumnDef<T, unknown> {
     return {
       accessorKey: key as string,
       header,
       cell: ({ row }) => {
         const v = row.getValue(key as string) as string;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return <StatusBadge kind={kind as any} status={v as any} />;
+        // The row value is a DB string; the pairing of `kind` and `status` is
+        // guaranteed by the caller, not by the type system. One narrowing
+        // cast here keeps `StatusBadge`'s public union strict.
+        return <StatusBadge {...({ kind, status: v } as StatusKind)} />;
       },
     };
   },

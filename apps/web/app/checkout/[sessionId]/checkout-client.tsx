@@ -16,6 +16,7 @@ import { SolanaPay } from "./solana-pay";
 import { intervalToSeconds, formatInterval } from "@/lib/billing-intervals";
 import { formatTrialDuration } from "@/lib/format-trial";
 import { fromNativeUnits, formatNativeAmount } from "@/lib/amounts";
+import { formatAmount } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { MonoText } from "@/components/mono-text";
 import { UsdcBadge } from "@/components/usdc-badge";
+import { HashText } from "@/components/paykit/hash-text";
+import {
+  UTXO_BUYER_NOTICE,
+  UTXO_PAYMENTS_ENABLED,
+  isUtxoNetwork,
+} from "@/app/_lib/utxo-payments";
 
 type CheckoutStatus = "active" | "viewed" | "abandoned" | "completed" | "expired" | "awaiting_currency";
 
@@ -61,11 +68,41 @@ interface CheckoutSession {
   taxAmount?: number | bigint | null;
   taxRateBps?: number | null;
   taxLabel?: string | null;
+  /**
+   * Highest platform fee, in basis points, the buyer is asked to agree to.
+   * Bound into every signed intent (SC-03) so an owner raising `platformFee`
+   * cannot settle an already-signed intent at a worse rate.
+   *
+   * MUST be supplied by the server — see `audit/_requests-web-pages.md`. It is
+   * deliberately optional in this type and validated at pay time rather than
+   * defaulted, because a client-invented ceiling is a signature the buyer did
+   * not knowingly give.
+   */
+  maxFeeBps?: number | null;
   couponDuration?: "once" | "forever" | "repeating" | null;
   /** UTXO-chain receive address. Null on EVM/Solana sessions. */
   btcReceiveAddress?: string | null;
   couponDurationInCycles?: number | null;
 }
+
+/**
+ * Settlement-flow identifiers bound into every signed intent (SC-23).
+ *
+ * Source of truth: `packages/contracts/src/PaymentVault.sol` (`FLOW_EIP2612 = 1`,
+ * `FLOW_PERMIT2 = 2`, `FLOW_DAI_PERMIT = 3`) and
+ * `packages/contracts/src/SubscriptionManager.sol` (`FLOW_EIP2612 = 1`,
+ * `FLOW_PERMIT2 = 2` — the manager has no DAI path).
+ *
+ * Each signing branch MUST pass the value for the mechanism it actually uses.
+ * A wrong value still verifies structurally but binds the intent to a flow the
+ * buyer did not present, which is the exact replay `flow` exists to prevent.
+ */
+const FLOW_EIP2612 = 1;
+const FLOW_PERMIT2 = 2;
+const FLOW_DAI_PERMIT = 3;
+
+/** Contract-side hard ceiling on the platform fee (PaymentVault.MAX_PLATFORM_FEE_BPS). */
+const MAX_PLATFORM_FEE_BPS = 1000;
 
 interface SolanaConfig {
   paymentVaultProgramId: string;
@@ -214,7 +251,15 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     }).catch(() => {});
   }, [session.id]);
 
+  // Status polling runs every 3s; 40 ticks ≈ 2 minutes before we stop and
+  // tell the buyer what to do instead of spinning indefinitely.
+  const POLL_INTERVAL_MS = 3000;
+  const MAX_POLL_TICKS = 40;
+
   // Poll for status changes
+  const pollTicksRef = useRef(0);
+  const [pollStalled, setPollStalled] = useState(false);
+
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -226,8 +271,21 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
     setIsPolling(true);
+    setPollStalled(false);
+    pollTicksRef.current = 0;
 
     pollRef.current = setInterval(async () => {
+      // Cap the wait. A confirmed transaction whose event the indexer never
+      // ingests (indexer down, reorg, unmatched-event backlog) would
+      // otherwise leave the buyer under "Please don't close this window"
+      // forever with no way out.
+      pollTicksRef.current += 1;
+      if (pollTicksRef.current > MAX_POLL_TICKS) {
+        stopPolling();
+        setPollStalled(true);
+        return;
+      }
+
       try {
         const res = await fetch(`/api/checkout/${session.id}`);
         if (!res.ok) return;
@@ -251,7 +309,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       } catch {
         // ignore polling errors
       }
-    }, 3000);
+    }, POLL_INTERVAL_MS);
   }, [session.id, session.successUrl, stopPolling]);
 
   // Cleanup polling on unmount
@@ -281,8 +339,19 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
   const [funding, setFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
 
-  const { data: usdcBalance } = useReadContract({
-    address: usdcAddress,
+  // Balance must be read from the token this session is actually denominated
+  // in — not the deployment's USDC. `requiredTokenAmount` below is in the
+  // active token's decimals, so comparing it against a USDC balance made
+  // every 18-decimal session look insufficient.
+  //
+  // When the session's token isn't in the registry `activeToken` is null; we
+  // disable the read entirely rather than silently falling back to USDC,
+  // which would compare two different tokens' balances. `isInsufficient`
+  // then stays false (unknown) instead of being confidently wrong.
+  const balanceTokenAddress = (activeToken?.address ?? usdcAddress) as `0x${string}`;
+
+  const { data: tokenBalance } = useReadContract({
+    address: balanceTokenAddress,
     abi: [
       {
         name: "balanceOf",
@@ -294,7 +363,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     ] as const,
     functionName: "balanceOf",
     args: address ? [address as `0x${string}`] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && !!activeToken },
   });
 
   useEffect(() => {
@@ -335,7 +404,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     };
   }, [address, session.id, customerFields.email]);
   const {
-    isSuccess: txConfirmed,
+    data: txReceipt,
+    isSuccess: txMined,
     isError: txFailed,
     error: txError,
   } = useWaitForTransactionReceipt({
@@ -343,12 +413,25 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     chainId,
   });
 
-  // Start polling when tx confirmed
+  // viem's waitForTransactionReceipt RESOLVES for a reverted transaction — it
+  // only rejects on not-found / timeout / replacement. So `isSuccess` means
+  // "mined", not "succeeded". Every relay branch funnels through here, so
+  // without the explicit status check a revert (reused intent nonce, expired
+  // permit) would look identical to a successful payment and hang the buyer
+  // on "Processing…" forever.
   useEffect(() => {
-    if (txConfirmed) {
-      startPolling();
+    if (!txMined || !txReceipt) return;
+    if (txReceipt.status === "reverted") {
+      setPayError(
+        "Transaction reverted on-chain. You were not charged — please try again.",
+      );
+      setPayStep("idle");
+      setTxHash(null);
+      payLockRef.current = false;
+      return;
     }
-  }, [txConfirmed, startPolling]);
+    startPolling();
+  }, [txMined, txReceipt, startPolling]);
 
   // Handle on-chain transaction failures (reverts, dropped, etc.)
   useEffect(() => {
@@ -476,6 +559,22 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         }
       }
 
+      // Fee ceiling bound into the intent (SC-03). This is a number the buyer
+      // is agreeing to be charged up to, so it has to come from the server —
+      // inventing one here would be signing on the buyer's behalf. Refuse to
+      // request a signature at all rather than guess.
+      if (
+        typeof session.maxFeeBps !== "number" ||
+        !Number.isInteger(session.maxFeeBps) ||
+        session.maxFeeBps < 0 ||
+        session.maxFeeBps > MAX_PLATFORM_FEE_BPS
+      ) {
+        throw new Error(
+          "This checkout is missing its platform fee ceiling, so we can't ask you to sign. Nothing was charged — please contact the merchant.",
+        );
+      }
+      const maxFeeBps = BigInt(session.maxFeeBps);
+
       // Read EIP-712 domain version from the registry. We no longer call
       // contract.version() — the registry is authoritative.
       const activeNetwork = session.networkKey
@@ -560,6 +659,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             verifyingContract: paymentVaultAddress,
           },
           types: {
+            // Field order is the PAYMENT_INTENT_TYPEHASH string verbatim —
+            // packages/contracts/src/PaymentVault.sol:55. Reordering changes
+            // the digest and every signature fails.
             PaymentIntent: [
               { name: "buyer", type: "address" },
               { name: "token", type: "address" },
@@ -567,6 +669,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               { name: "amount", type: "uint256" },
               { name: "productId", type: "bytes32" },
               { name: "customerId", type: "bytes32" },
+              { name: "maxFeeBps", type: "uint256" },
+              { name: "flow", type: "uint8" },
               { name: "nonce", type: "uint256" },
               { name: "deadline", type: "uint256" },
             ],
@@ -579,6 +683,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             amount: usdcAmount,
             productId: productIdBytesDai,
             customerId: customerIdBytesDai,
+            maxFeeBps,
+            flow: FLOW_DAI_PERMIT,
             nonce: intentNonceDai,
             deadline,
           },
@@ -611,8 +717,13 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
           throw new Error(errMsg);
         }
         const relayBodyDai = (await relayResDai.json()) as { txHash?: `0x${string}` };
-        if (relayBodyDai.txHash) setTxHash(relayBodyDai.txHash);
-        setStatus("completed");
+        if (!relayBodyDai.txHash) {
+          throw new Error("Relay returned no txHash");
+        }
+        // Never claim success here — the relay only broadcast the tx. The
+        // receipt watcher + status poll flip the card to "completed".
+        setTxHash(relayBodyDai.txHash);
+        setPayStep("confirming");
         return;
       }
 
@@ -695,6 +806,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             verifyingContract: subscriptionManagerAddress,
           },
           types: {
+            // Field order is the SUBSCRIPTION_INTENT_TYPEHASH string verbatim —
+            // packages/contracts/src/SubscriptionManager.sol:37.
             SubscriptionIntent: [
               { name: "buyer", type: "address" },
               { name: "token", type: "address" },
@@ -704,6 +817,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               { name: "productId", type: "bytes32" },
               { name: "customerId", type: "bytes32" },
               { name: "permitValue", type: "uint256" },
+              { name: "maxFeeBps", type: "uint256" },
+              { name: "flow", type: "uint8" },
               { name: "nonce", type: "uint256" },
               { name: "deadline", type: "uint256" },
             ],
@@ -718,6 +833,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             productId: productIdBytes,
             customerId: customerIdBytes,
             permitValue: allowanceAmount,
+            maxFeeBps,
+            flow: FLOW_PERMIT2,
             nonce: intentNonceSub,
             deadline,
           },
@@ -751,8 +868,11 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
           throw new Error(errMsg);
         }
         const relayBodySub = (await relayResSub.json()) as { txHash?: `0x${string}` };
-        if (relayBodySub.txHash) setTxHash(relayBodySub.txHash);
-        setStatus("completed");
+        if (!relayBodySub.txHash) {
+          throw new Error("Relay returned no txHash");
+        }
+        setTxHash(relayBodySub.txHash);
+        setPayStep("confirming");
         return;
       }
 
@@ -830,6 +950,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             verifyingContract: paymentVaultAddress,
           },
           types: {
+            // Field order is the PAYMENT_INTENT_TYPEHASH string verbatim —
+            // packages/contracts/src/PaymentVault.sol:55.
             PaymentIntent: [
               { name: "buyer", type: "address" },
               { name: "token", type: "address" },
@@ -837,6 +959,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               { name: "amount", type: "uint256" },
               { name: "productId", type: "bytes32" },
               { name: "customerId", type: "bytes32" },
+              { name: "maxFeeBps", type: "uint256" },
+              { name: "flow", type: "uint8" },
               { name: "nonce", type: "uint256" },
               { name: "deadline", type: "uint256" },
             ],
@@ -849,6 +973,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             amount: usdcAmount,
             productId: productIdBytesP2,
             customerId: customerIdBytesP2,
+            maxFeeBps,
+            flow: FLOW_PERMIT2,
             nonce: intentNonceP2,
             deadline,
           },
@@ -881,8 +1007,11 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         const relayBodyP2 = (await relayResP2.json()) as {
           txHash?: `0x${string}`;
         };
-        if (relayBodyP2.txHash) setTxHash(relayBodyP2.txHash);
-        setStatus("completed");
+        if (!relayBodyP2.txHash) {
+          throw new Error("Relay returned no txHash");
+        }
+        setTxHash(relayBodyP2.txHash);
+        setPayStep("confirming");
         return;
       }
       // ──────────────────────────────────────────────────────────────────
@@ -987,6 +1116,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               verifyingContract: spender as `0x${string}`,
             },
             types: {
+              // Field order is the SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH string
+              // verbatim — packages/contracts/src/SubscriptionManager.sol:51.
               SubscriptionIntentDiscount: [
                 { name: "buyer", type: "address" },
                 { name: "token", type: "address" },
@@ -998,6 +1129,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 { name: "permitValue", type: "uint256" },
                 { name: "discountAmount", type: "uint256" },
                 { name: "discountCycles", type: "uint256" },
+                { name: "maxFeeBps", type: "uint256" },
+                { name: "flow", type: "uint8" },
                 { name: "nonce", type: "uint256" },
                 { name: "deadline", type: "uint256" },
               ],
@@ -1014,6 +1147,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               permitValue,
               discountAmount,
               discountCycles,
+              maxFeeBps,
+              flow: FLOW_EIP2612,
               nonce: intentNonce,
               deadline,
             },
@@ -1027,6 +1162,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               verifyingContract: spender as `0x${string}`,
             },
             types: {
+              // Field order is the SUBSCRIPTION_INTENT_TYPEHASH string verbatim —
+              // packages/contracts/src/SubscriptionManager.sol:37.
               SubscriptionIntent: [
                 { name: "buyer", type: "address" },
                 { name: "token", type: "address" },
@@ -1036,6 +1173,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 { name: "productId", type: "bytes32" },
                 { name: "customerId", type: "bytes32" },
                 { name: "permitValue", type: "uint256" },
+                { name: "maxFeeBps", type: "uint256" },
+                { name: "flow", type: "uint8" },
                 { name: "nonce", type: "uint256" },
                 { name: "deadline", type: "uint256" },
               ],
@@ -1050,6 +1189,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               productId: productIdBytes,
               customerId: customerIdBytes,
               permitValue,
+              maxFeeBps,
+              flow: FLOW_EIP2612,
               nonce: intentNonce,
               deadline,
             },
@@ -1064,6 +1205,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             verifyingContract: spender as `0x${string}`,
           },
           types: {
+            // Field order is the PAYMENT_INTENT_TYPEHASH string verbatim —
+            // packages/contracts/src/PaymentVault.sol:55.
             PaymentIntent: [
               { name: "buyer", type: "address" },
               { name: "token", type: "address" },
@@ -1071,6 +1214,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               { name: "amount", type: "uint256" },
               { name: "productId", type: "bytes32" },
               { name: "customerId", type: "bytes32" },
+              { name: "maxFeeBps", type: "uint256" },
+              { name: "flow", type: "uint8" },
               { name: "nonce", type: "uint256" },
               { name: "deadline", type: "uint256" },
             ],
@@ -1083,6 +1228,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             amount: usdcAmount,
             productId: productIdBytes,
             customerId: customerIdBytes,
+            maxFeeBps,
+            flow: FLOW_EIP2612,
             nonce: intentNonce,
             deadline,
           },
@@ -1147,7 +1294,6 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       setTxHash(relayBody.txHash);
       setPayStep("confirming");
     } catch (err) {
-      console.error("Payment failed:", err);
       const msg = err instanceof Error ? err.message : "Payment failed";
       setPayError(msg.slice(0, 200));
       setPayStep("idle");
@@ -1168,8 +1314,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
   const displayAmount = fromNativeUnits(requiredTokenAmount, tokenDecimals);
 
   const isInsufficient =
-    usdcBalance !== undefined
-      ? usdcBalance < requiredTokenAmount
+    tokenBalance !== undefined
+      ? tokenBalance < requiredTokenAmount
       : false;
 
   const trialDuration = formatTrialDuration(session.trialDays, session.trialMinutes);
@@ -1243,7 +1389,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
       solanaConfig.subscriptionManagerProgramId &&
       solanaConfig.platformWallet &&
       solanaConfig.usdcMint &&
-      session.networkKey === "solana-devnet" || session.networkKey === "solana";
+      (session.networkKey === "solana-devnet" ||
+        session.networkKey === "solana");
 
     if (solanaReady && solanaConfig) {
       const isSub = session.type === "subscription";
@@ -1298,7 +1445,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     const merchantTruncated = `${session.merchantWallet.slice(0, 8)}…${session.merchantWallet.slice(-4)}`;
 
     return (
-      <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+      <Card className="w-full max-w-[480px] p-8 shadow-floating">
         <div className="mb-6">
           <h1 className="text-xl font-semibold tracking-[-0.4px]">
             {session.productName}
@@ -1313,7 +1460,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         <div className="rounded-xl border border-border bg-surface-1 p-5">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Pay on Solana</span>
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            <span className="rounded-full border border-warning-border bg-warning-muted px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-[0.3px] text-warning">
               Beta
             </span>
           </div>
@@ -1352,7 +1499,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         </p>
 
         <div className="mt-6 text-center">
-          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+          <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
             Powered by Paylix
           </span>
         </div>
@@ -1372,9 +1519,50 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     const decimals = activeToken?.decimals ?? 8;
     const amountStr = formatNativeAmount(BigInt(session.amount), decimals, coinLabel);
 
+    // Hard gate. Until `checkout_sessions.fiat_rate_cents` is captured at
+    // quote time the indexer cannot record a UTXO payment at all — it
+    // deliberately retains the event rather than writing a wrong cents value.
+    // A buyer who sends coin here would lose it to an expired session, so we
+    // never show the receive address or the QR code.
+    if (!UTXO_PAYMENTS_ENABLED) {
+      return (
+        <Card className="w-full max-w-[480px] p-8 shadow-floating">
+          <div className="mb-4 flex items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-[-0.4px]">
+              {session.productName}
+            </h1>
+            <span className="inline-flex items-center rounded-full border border-warning-border bg-warning-muted px-2.5 py-[3px] text-[11px] font-semibold tracking-[0.3px] text-warning">
+              Unavailable
+            </span>
+          </div>
+
+          <Alert className="border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10">
+            <AlertTitle className="text-[color:var(--warning)]">
+              {coinLabel === "BTC" ? "Bitcoin" : "Litecoin"} payments are
+              temporarily unavailable
+            </AlertTitle>
+            <AlertDescription className="text-xs leading-relaxed">
+              {UTXO_BUYER_NOTICE}
+            </AlertDescription>
+          </Alert>
+
+          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+            Do not send {coinLabel} for this order — it would not be matched to
+            your purchase.
+          </p>
+
+          <div className="mt-6 text-center">
+            <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
+              Powered by Paylix
+            </span>
+          </div>
+        </Card>
+      );
+    }
+
     if (!session.btcReceiveAddress) {
       return (
-        <Card className="w-full max-w-[480px] p-8 shadow-2xl">
+        <Card className="w-full max-w-[480px] p-8 shadow-floating">
           <h1 className="text-xl font-semibold tracking-[-0.4px]">
             {session.productName}
           </h1>
@@ -1390,7 +1578,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     }
 
     return (
-      <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+      <Card className="w-full max-w-[480px] p-8 shadow-floating">
         <div className="mb-6">
           <h1 className="text-xl font-semibold tracking-[-0.4px]">
             {session.productName}
@@ -1450,7 +1638,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         </p>
 
         <div className="mt-6 text-center">
-          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+          <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
             Powered by Paylix
           </span>
         </div>
@@ -1482,7 +1670,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
     }
 
     return (
-      <Card className="w-full max-w-[520px] p-8 shadow-2xl">
+      <Card className="w-full max-w-[480px] p-8 shadow-floating">
         <div className="mb-6">
           <h1 className="text-xl font-semibold tracking-[-0.4px]">
             {session.productName}
@@ -1518,31 +1706,42 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 </span>
               </div>
               <div className="flex flex-col gap-2">
-                {g.items.map((p) => (
-                  <button
-                    key={`${p.networkKey}:${p.tokenSymbol}`}
-                    type="button"
-                    onClick={() =>
-                      handlePickCurrency(p.networkKey, p.tokenSymbol)
-                    }
-                    disabled={isPicking}
-                    className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3 text-sm transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-                  >
-                    <div className="flex flex-col items-start">
-                      <span className="font-medium">{p.tokenSymbol}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {p.tokenName}
-                      </span>
-                    </div>
-                    <MonoText className="tabular-nums font-medium">
-                      {formatNativeAmount(
-                        BigInt(p.amount),
-                        p.decimals,
-                        p.tokenSymbol,
-                      )}
-                    </MonoText>
-                  </button>
-                ))}
+                {g.items.map((p) => {
+                  // Show BTC/LTC as explicitly unavailable rather than
+                  // dropping them from the list — a silently missing option
+                  // reads as "this merchant doesn't take Bitcoin", which is
+                  // not what happened.
+                  const utxoBlocked =
+                    !UTXO_PAYMENTS_ENABLED && isUtxoNetwork(p.networkKey);
+                  return (
+                    <button
+                      key={`${p.networkKey}:${p.tokenSymbol}`}
+                      type="button"
+                      onClick={() =>
+                        handlePickCurrency(p.networkKey, p.tokenSymbol)
+                      }
+                      disabled={isPicking || utxoBlocked}
+                      title={utxoBlocked ? UTXO_BUYER_NOTICE : undefined}
+                      className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3 text-sm transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-background"
+                    >
+                      <div className="flex flex-col items-start">
+                        <span className="font-medium">{p.tokenSymbol}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {utxoBlocked
+                            ? "Temporarily unavailable"
+                            : p.tokenName}
+                        </span>
+                      </div>
+                      <MonoText className="tabular-nums font-medium">
+                        {formatNativeAmount(
+                          BigInt(p.amount),
+                          p.decimals,
+                          p.tokenSymbol,
+                        )}
+                      </MonoText>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -1553,6 +1752,14 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               </AlertDescription>
             </Alert>
           )}
+          {!UTXO_PAYMENTS_ENABLED &&
+            availablePrices.some((p) => isUtxoNetwork(p.networkKey)) && (
+              <Alert className="border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10">
+                <AlertDescription className="text-xs leading-relaxed">
+                  {UTXO_BUYER_NOTICE}
+                </AlertDescription>
+              </Alert>
+            )}
         </div>
 
         {payError && (
@@ -1567,7 +1774,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         </p>
 
         <div className="mt-2 text-center">
-          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+          <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
             Powered by Paylix
           </span>
         </div>
@@ -1578,7 +1785,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
   if (status === "completed") {
     const isSubscription = session.type === "subscription";
     return (
-      <Card className="w-full max-w-[480px] p-8 shadow-2xl">
+      <Card className="w-full max-w-[480px] p-8 shadow-floating">
         <div className="flex flex-col items-center text-center">
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--success)]/30 bg-[color:var(--success)]/10">
             <CheckCircle2 size={32} className="text-[color:var(--success)]" />
@@ -1614,7 +1821,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         </div>
 
         <div className="text-center">
-          <span className="text-xs tracking-[0.2px] text-muted-foreground">
+          <span className="text-[11px] tracking-[0.2px] text-muted-foreground">
             Powered by Paylix
           </span>
         </div>
@@ -1624,7 +1831,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
 
   if (status === "expired") {
     return (
-      <Card className="w-full max-w-[480px] p-8 text-center shadow-2xl">
+      <Card className="w-full max-w-[480px] p-8 text-center shadow-floating">
         <div className="mb-3 flex justify-center text-[color:var(--warning)]">
           <Clock size={40} />
         </div>
@@ -1640,7 +1847,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
   }
 
   return (
-    <Card className="w-full max-w-[720px] shadow-2xl overflow-hidden">
+    <Card className="w-full max-w-[720px] shadow-floating overflow-hidden">
       <div className="grid grid-cols-1 lg:grid-cols-2">
         {/* Left: Product Info */}
         <div className="p-8 lg:border-r lg:border-border">
@@ -1650,7 +1857,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
             </h1>
             {session.type === "subscription" && (
               isTrial ? (
-                <span className="inline-flex items-center rounded-sm bg-info/10 px-2 py-0.5 text-xs font-medium text-info ring-1 ring-inset ring-info/20">
+                <span className="inline-flex items-center rounded-full border border-info-border bg-info-muted px-2.5 py-[3px] text-[11px] font-semibold tracking-[0.3px] text-info">
                   Free trial
                 </span>
               ) : (
@@ -1745,8 +1952,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
               <div className="flex flex-col gap-3">
                 {session.checkoutFields?.firstName && (
                   <div className="space-y-1.5">
-                    <Label>First Name</Label>
+                    <Label htmlFor="checkout-first-name">First Name</Label>
                     <Input
+                      id="checkout-first-name"
                       type="text"
                       value={customerFields.firstName}
                       onChange={(e) =>
@@ -1761,8 +1969,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 )}
                 {session.checkoutFields?.lastName && (
                   <div className="space-y-1.5">
-                    <Label>Last Name</Label>
+                    <Label htmlFor="checkout-last-name">Last Name</Label>
                     <Input
+                      id="checkout-last-name"
                       type="text"
                       value={customerFields.lastName}
                       onChange={(e) =>
@@ -1777,8 +1986,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 )}
                 {session.checkoutFields?.email && (
                   <div className="space-y-1.5">
-                    <Label>Email</Label>
+                    <Label htmlFor="checkout-email">Email</Label>
                     <Input
+                      id="checkout-email"
                       type="email"
                       value={customerFields.email}
                       onChange={(e) =>
@@ -1793,8 +2003,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 )}
                 {session.checkoutFields?.phone && (
                   <div className="space-y-1.5">
-                    <Label>Phone</Label>
+                    <Label htmlFor="checkout-phone">Phone</Label>
                     <Input
+                      id="checkout-phone"
                       type="tel"
                       value={customerFields.phone}
                       onChange={(e) =>
@@ -1809,8 +2020,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 )}
                 {session.collectCountry && (
                   <div className="space-y-1.5">
-                    <Label>Country (ISO code)</Label>
+                    <Label htmlFor="checkout-country">Country (ISO code)</Label>
                     <Input
+                      id="checkout-country"
                       type="text"
                       maxLength={2}
                       value={customerFields.country}
@@ -1826,8 +2038,9 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                 )}
                 {session.collectTaxId && (
                   <div className="space-y-1.5">
-                    <Label>Tax / VAT ID (optional)</Label>
+                    <Label htmlFor="checkout-tax-id">Tax / VAT ID (optional)</Label>
                     <Input
+                      id="checkout-tax-id"
                       type="text"
                       value={customerFields.taxId}
                       onChange={(e) =>
@@ -1874,6 +2087,8 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                         const selected =
                           p.networkKey === session.networkKey &&
                           p.tokenSymbol === session.tokenSymbol;
+                        const utxoBlocked =
+                          !UTXO_PAYMENTS_ENABLED && isUtxoNetwork(p.networkKey);
                         return (
                           <button
                             key={`${p.networkKey}:${p.tokenSymbol}`}
@@ -1882,15 +2097,21 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                               !selected &&
                               handlePickCurrency(p.networkKey, p.tokenSymbol)
                             }
-                            disabled={isPicking || selected}
-                            className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors ${
+                            disabled={isPicking || selected || utxoBlocked}
+                            title={utxoBlocked ? UTXO_BUYER_NOTICE : undefined}
+                            className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed ${
                               selected
                                 ? "border-primary/50 bg-primary/5"
-                                : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                                : "border-border bg-background hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-background"
                             }`}
                           >
                             <span className="font-medium text-foreground">
                               {p.tokenSymbol} on {p.displayLabel}
+                              {utxoBlocked && (
+                                <span className="ml-2 font-normal text-warning">
+                                  Unavailable
+                                </span>
+                              )}
                             </span>
                             <MonoText className="tabular-nums text-muted-foreground">
                               {formatNativeAmount(
@@ -1939,7 +2160,11 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                           </span>
                           {session.discountCents ? (
                             <span className="ml-2 text-muted-foreground">
-                              — {session.discountCents} off
+                              —{" "}
+                              <MonoText className="tabular-nums">
+                                {formatAmount(session.discountCents)}
+                              </MonoText>{" "}
+                              off
                             </span>
                           ) : null}
                         </div>
@@ -2019,7 +2244,30 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
                   </p>
                 )}
 
-                {payStep !== "idle" && (
+                {pollStalled && (
+                  <Alert className="border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10">
+                    <AlertTitle className="text-[color:var(--warning)]">
+                      Still confirming
+                    </AlertTitle>
+                    <AlertDescription className="flex flex-col gap-2 text-xs">
+                      <span className="text-muted-foreground">
+                        Your transaction is on-chain but we haven&apos;t
+                        finished matching it yet. It&apos;s safe to close this
+                        window — check the transaction on the block explorer,
+                        or contact the merchant with the hash below if it
+                        doesn&apos;t clear.
+                      </span>
+                      {txHash && (
+                        <HashText
+                          hash={txHash}
+                          networkKey={session.networkKey ?? undefined}
+                        />
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {payStep !== "idle" && !pollStalled && (
                   <Alert className="border-primary/30 bg-primary/5">
                     <AlertDescription className="text-xs">
                       <span className="font-medium text-foreground">
@@ -2058,7 +2306,7 @@ export function CheckoutClient({ session, availablePrices, chainId, paymentVault
         </span>
       </div>
 
-      {(isPolling || status === "viewed") && (
+      {(isPolling || status === "viewed") && !pollStalled && (
         <div className="border-t border-border px-8 py-3 flex items-center justify-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />

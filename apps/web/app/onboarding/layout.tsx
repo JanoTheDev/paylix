@@ -12,7 +12,7 @@ export default async function OnboardingLayout({
   if (!session) redirect("/login");
 
   return (
-    <div className="min-h-screen bg-[#07070a] flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-lg">{children}</div>
     </div>
   );

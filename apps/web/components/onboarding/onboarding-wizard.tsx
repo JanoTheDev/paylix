@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Rocket, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CopyIconButton } from "@/components/paykit";
+import { useMerchantNetworks } from "@/components/networks/use-merchant-networks";
 
 const BILLING_INTERVALS = [
   { value: "weekly", label: "Weekly" },
@@ -24,15 +26,6 @@ const BILLING_INTERVALS = [
   { value: "quarterly", label: "Quarterly" },
   { value: "yearly", label: "Yearly" },
 ] as const;
-
-const _STEPS = ["Welcome", "Create product", "Payout wallet", "Done"] as const;
-
-interface NetworkInfo {
-  networkKey: string;
-  chainName: string;
-  displayLabel: string;
-  tokens: string[];
-}
 
 export function OnboardingWizard({
   hasWallet,
@@ -62,38 +55,17 @@ export function OnboardingWizard({
   });
   const [prices, setPrices] = useState<PriceEntry[]>([makePriceEntry()]);
   const [trialDays, setTrialDays] = useState("");
-  const [enabledNetworks, setEnabledNetworks] = useState<NetworkInfo[]>([]);
+  const {
+    networks: enabledNetworks,
+    loading: networksLoading,
+    error: networksError,
+  } = useMerchantNetworks(productType);
 
   // Step 3 — wallet
   const [walletAddress, setWalletAddress] = useState("");
 
   // Step 4 — result
   const [checkoutUrl, setCheckoutUrl] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings")
-      .then((r) => (r.ok ? r.json() : null))
-      .then(async (data) => {
-        if (cancelled || !data?.networks) return;
-        const { NETWORKS } = await import("@paylix/config/networks");
-        const enabled: NetworkInfo[] = data.networks
-          .filter((n: { enabled: boolean }) => n.enabled)
-          .map((n: { networkKey: string; chainName: string; displayLabel: string }) => ({
-            networkKey: n.networkKey,
-            chainName: n.chainName,
-            displayLabel: n.displayLabel,
-            tokens: Object.keys(
-              NETWORKS[n.networkKey as keyof typeof NETWORKS].tokens,
-            ),
-          }));
-        if (!cancelled) setEnabledNetworks(enabled);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function createProduct() {
     setError("");
@@ -119,7 +91,16 @@ export function OnboardingWizard({
         .filter((p) => p.networkKey && p.tokenSymbol && p.amount.trim())
         .map((p) => {
           const network = NETWORKS[p.networkKey as keyof typeof NETWORKS];
-          const token = (network.tokens as Record<string, { decimals: number }>)[p.tokenSymbol];
+          const token = network
+            ? (network.tokens as Record<string, { decimals: number }>)[
+                p.tokenSymbol
+              ]
+            : undefined;
+          if (!token) {
+            throw new Error(
+              `Unknown token ${p.tokenSymbol} on ${p.networkKey}`,
+            );
+          }
           return {
             networkKey: p.networkKey,
             tokenSymbol: p.tokenSymbol,
@@ -167,8 +148,8 @@ export function OnboardingWizard({
       } else {
         setStep(3);
       }
-    } catch {
-      setError("Network error");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
     } finally {
       setSubmitting(false);
     }
@@ -302,12 +283,12 @@ export function OnboardingWizard({
             </div>
 
             <div className="space-y-1">
-              <Label>Type</Label>
+              <Label htmlFor="onb-type">Type</Label>
               <Select
                 value={productType}
                 onValueChange={(v) => setProductType(v as "one_time" | "subscription")}
               >
-                <SelectTrigger>
+                <SelectTrigger id="onb-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -319,9 +300,9 @@ export function OnboardingWizard({
 
             {productType === "subscription" && (
               <div className="space-y-1">
-                <Label>Billing interval</Label>
+                <Label htmlFor="onb-interval">Billing interval</Label>
                 <Select value={billingInterval} onValueChange={setBillingInterval}>
-                  <SelectTrigger>
+                  <SelectTrigger id="onb-interval">
                     <SelectValue placeholder="Select interval" />
                   </SelectTrigger>
                   <SelectContent>
@@ -351,9 +332,21 @@ export function OnboardingWizard({
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>Prices</Label>
-              {enabledNetworks.length === 0 ? (
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="text-sm leading-none font-medium">
+                Prices
+              </legend>
+              {networksError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {networksError}
+                </p>
+              )}
+              {networksLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-2/3" />
+                </div>
+              ) : enabledNetworks.length === 0 ? (
                 <p className="text-xs text-destructive">
                   No networks enabled. Go to Settings and enable at least one
                   network first.
@@ -387,7 +380,9 @@ export function OnboardingWizard({
                             );
                           }}
                         >
-                          <SelectTrigger><SelectValue placeholder="Network" /></SelectTrigger>
+                          <SelectTrigger aria-label={`Price ${idx + 1} network`}>
+                            <SelectValue placeholder="Network" />
+                          </SelectTrigger>
                           <SelectContent>
                             {enabledNetworks.map((n) => (
                               <SelectItem key={n.networkKey} value={n.networkKey}>{n.displayLabel}</SelectItem>
@@ -404,16 +399,27 @@ export function OnboardingWizard({
                             );
                           }}
                         >
-                          <SelectTrigger><SelectValue placeholder="Token" /></SelectTrigger>
+                          <SelectTrigger aria-label={`Price ${idx + 1} token`}>
+                            <SelectValue placeholder="Token" />
+                          </SelectTrigger>
                           <SelectContent>
                             {enabledNetworks
                               .find((n) => n.networkKey === price.networkKey)
                               ?.tokens.map((t) => (
-                                <SelectItem key={t} value={t}>{t}</SelectItem>
+                                <SelectItem
+                                  key={t.symbol}
+                                  value={t.symbol}
+                                  disabled={!t.usable}
+                                >
+                                  {t.symbol}
+                                  {t.bridged ? " (bridged)" : ""}
+                                  {!t.usable ? " — coming soon" : ""}
+                                </SelectItem>
                               ))}
                           </SelectContent>
                         </Select>
                         <Input
+                          aria-label={`Price ${idx + 1} amount`}
                           type="text"
                           inputMode="decimal"
                           placeholder="10.00"
@@ -444,7 +450,7 @@ export function OnboardingWizard({
               <p className="text-xs text-foreground-muted">
                 In token units (e.g. 10.00 USDC).
               </p>
-            </div>
+            </fieldset>
 
             <div className="flex justify-between pt-2">
               <Button variant="ghost" onClick={() => setStep(1)}>

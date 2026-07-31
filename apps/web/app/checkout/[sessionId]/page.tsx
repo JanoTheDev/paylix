@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import { eq, and } from "drizzle-orm";
+import { Ban, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { checkoutSessions, products, productPrices, coupons } from "@paylix/db/schema";
 import { db } from "@/lib/db";
 import { NETWORKS } from "@paylix/config/networks";
@@ -6,6 +8,11 @@ import { CheckoutProviders } from "@/components/providers";
 import { CheckoutClient } from "./checkout-client";
 import { SolanaProviders } from "@/components/solana-providers";
 import { resolveDeploymentForMode } from "@/lib/deployment";
+import {
+  UTXO_BUYER_NOTICE,
+  UTXO_PAYMENTS_ENABLED,
+  isUtxoNetwork,
+} from "@/app/_lib/utxo-payments";
 
 interface CheckoutPageProps {
   params: Promise<{ sessionId: string }>;
@@ -16,13 +23,13 @@ function CheckoutStateCard({
   title,
   description,
 }: {
-  icon: string;
+  icon: ReactNode;
   title: string;
   description: string;
 }) {
   return (
     <div className="w-full max-w-[480px] rounded-xl border border-border bg-surface-1 p-8 text-center">
-      <div className="mb-3 text-4xl">{icon}</div>
+      <div className="mb-3 flex justify-center">{icon}</div>
       <h1 className="mb-2 text-xl font-semibold tracking-tight">{title}</h1>
       <p className="text-sm leading-relaxed text-foreground-muted">
         {description}
@@ -73,7 +80,9 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
   if (!session) {
     return (
       <CheckoutStateCard
-        icon="✘"
+        icon={
+          <XCircle size={40} strokeWidth={1.5} className="text-destructive" />
+        }
         title="Checkout not found"
         description="This checkout session does not exist or has been removed."
       />
@@ -85,7 +94,9 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
   if (session.status === "completed") {
     return (
       <CheckoutStateCard
-        icon="✓"
+        icon={
+          <CheckCircle2 size={40} strokeWidth={1.5} className="text-success" />
+        }
         title="This checkout has already been paid"
         description="This payment link has already been used. If you need a receipt, contact the merchant or check your email for the invoice."
       />
@@ -99,9 +110,22 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
   if (isExpired) {
     return (
       <CheckoutStateCard
-        icon="⏳"
+        icon={<Clock size={40} strokeWidth={1.5} className="text-warning" />}
         title="This checkout has expired"
         description="This payment session is no longer active. Please request a new checkout link."
+      />
+    );
+  }
+
+  // Server-side gate so the BIP32 receive address never reaches the browser
+  // for a session that cannot settle. The client branch in checkout-client
+  // repeats this check as defence in depth.
+  if (!UTXO_PAYMENTS_ENABLED && isUtxoNetwork(session.networkKey)) {
+    return (
+      <CheckoutStateCard
+        icon={<Ban size={40} strokeWidth={1.5} className="text-warning" />}
+        title={`${session.networkKey?.startsWith("bitcoin") ? "Bitcoin" : "Litecoin"} payments are temporarily unavailable`}
+        description={UTXO_BUYER_NOTICE}
       />
     );
   }
