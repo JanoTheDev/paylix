@@ -74,6 +74,8 @@ contract PaymentVaultDaiPermitTest is Test {
     uint256 buyerPk = 0xD01D01;
     address buyer;
 
+    uint256 constant MAX_FEE_BPS = 50;
+
     function setUp() public {
         buyer = vm.addr(buyerPk);
         dai = new MockDai();
@@ -91,10 +93,22 @@ contract PaymentVaultDaiPermitTest is Test {
         uint256 deadline
     ) internal view returns (bytes memory) {
         bytes32 typeHash = keccak256(
-            "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+            "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
         );
         bytes32 structHash = keccak256(
-            abi.encode(typeHash, buyer, address(dai), merchantAddr, amount, productId, customerId, uint256(0), deadline)
+            abi.encode(
+                typeHash,
+                buyer,
+                address(dai),
+                merchantAddr,
+                amount,
+                productId,
+                customerId,
+                MAX_FEE_BPS,
+                vault.FLOW_DAI_PERMIT(),
+                uint256(0),
+                deadline
+            )
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", vault.domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPk, digest);
@@ -113,6 +127,7 @@ contract PaymentVaultDaiPermitTest is Test {
             amount: amount,
             productId: "p",
             customerId: "c",
+            maxFeeBps: MAX_FEE_BPS,
             daiNonce: 0,
             permitExpiry: deadline,
             v: 27,

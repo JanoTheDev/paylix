@@ -84,4 +84,12 @@ interface IPermit2 {
         uint160 amount,
         address token
     ) external;
+
+    /// Current AllowanceTransfer grant. Read before charging so the keeper can
+    /// decide payability without an external state-changing call — that is what
+    /// lets the charge path write its effects before any interaction.
+    function allowance(address user, address token, address spender)
+        external
+        view
+        returns (uint160 amount, uint48 expiration, uint48 nonce);
 }

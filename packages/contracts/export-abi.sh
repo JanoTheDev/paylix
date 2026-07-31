@@ -1,13 +1,30 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="$SCRIPT_DIR/abi"
 
+# Resolve forge from PATH first (foundryup, package managers, and CI's
+# foundry-toolchain action all put it there), falling back to foundryup's
+# default install dir for shells that never sourced the profile. Hardcoding
+# ~/.foundry/bin/forge broke this script on macOS, on package-manager installs,
+# and in CI.
+FORGE="${FORGE:-}"
+if [ -z "$FORGE" ]; then
+  FORGE="$(command -v forge || true)"
+fi
+if [ -z "$FORGE" ] && [ -x "$HOME/.foundry/bin/forge" ]; then
+  FORGE="$HOME/.foundry/bin/forge"
+fi
+if [ -z "$FORGE" ]; then
+  echo "forge not found. Install Foundry: https://getfoundry.sh" >&2
+  exit 1
+fi
+
 mkdir -p "$OUT_DIR"
 
 cd "$SCRIPT_DIR"
-~/.foundry/bin/forge build
+"$FORGE" build
 
 extract_abi() {
   node -e "

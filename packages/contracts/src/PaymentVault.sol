@@ -40,9 +40,28 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
     // Binds the buyer's signature to the exact merchant/amount/token/etc. so a
     // compromised relayer cannot redirect a signed permit to a different payee.
     // nonce is per-buyer and strictly increments on use (replay protection).
+    //
+    // `maxFeeBps` is the highest platform fee the signer agreed to. The owner
+    // can raise `platformFee` at any time; binding the ceiling into the signature
+    // means an already-signed intent can never be settled at a worse rate than
+    // it was signed at (SC-03).
+    //
+    // `flow` binds the intent to the settlement mechanism the buyer's wallet
+    // actually presented (SC-23). All three gasless entry points share this
+    // typehash; without `flow`, a relayer holding an intent signed for the
+    // Permit2 flow could settle it through the EIP-2612 or DAI flow instead,
+    // against whatever residual allowance the buyer happens to carry.
     bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
-        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
+
+    /// @notice Hard ceiling on the platform fee, in basis points (10%).
+    uint256 public constant MAX_PLATFORM_FEE_BPS = 1000;
+
+    /// @notice Settlement flow identifiers bound into every signed intent.
+    uint8 public constant FLOW_EIP2612 = 1;
+    uint8 public constant FLOW_PERMIT2 = 2;
+    uint8 public constant FLOW_DAI_PERMIT = 3;
 
     mapping(address => uint256) public intentNonces;
 
@@ -67,18 +86,24 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         uint256 timestamp
     );
     event AcceptedTokenUpdated(address indexed token, bool accepted);
-    event PlatformFeeUpdated(uint256 newFee);
-    event PlatformWalletUpdated(address newWallet);
+    event PlatformFeeUpdated(uint256 oldFee, uint256 newFee);
+    event PlatformWalletUpdated(address oldWallet, address newWallet);
     event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
     event GaslessPausedUpdated(bool paused);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
 
     constructor(address _platformWallet, uint256 _platformFee)
         Ownable(msg.sender)
         EIP712("Paylix PaymentVault", "1")
     {
-        require(_platformFee <= 1000, "Fee too high");
+        require(_platformFee <= MAX_PLATFORM_FEE_BPS, "Fee too high");
+        require(_platformWallet != address(0), "Invalid wallet");
         platformWallet = _platformWallet;
         platformFee = _platformFee;
+        // Emit from the constructor so a deployment's fee/wallet configuration
+        // is observable in logs without an archive-node storage read (SC-18).
+        emit PlatformWalletUpdated(address(0), _platformWallet);
+        emit PlatformFeeUpdated(0, _platformFee);
     }
 
     /// @notice EIP-712 domain separator — exposed for off-chain signers.
@@ -93,42 +118,72 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         return intentNonces[buyer];
     }
 
+    /// @dev Fields of the EIP-712 PaymentIntent, grouped so the settlement
+    /// entry points stay under the EVM stack-depth limit.
+    struct PaymentIntentData {
+        address buyer;
+        address token;
+        address merchant;
+        uint256 amount;
+        bytes32 productId;
+        bytes32 customerId;
+        uint256 maxFeeBps;
+        uint256 deadline;
+    }
+
     /// @dev Verifies the buyer signed an EIP-712 PaymentIntent binding this
-    /// exact merchant/amount/token/etc., then consumes the nonce. Reverts on
-    /// bad signature or wrong nonce.
+    /// exact merchant/amount/token/fee-ceiling, then consumes the nonce.
+    /// Reverts on bad signature, expired deadline, or a platform fee above the
+    /// one the buyer signed.
     function _consumePaymentIntent(
-        address buyer,
-        address token,
-        address merchant,
-        uint256 amount,
-        bytes32 productId,
-        bytes32 customerId,
-        uint256 deadline,
+        PaymentIntentData memory d,
+        uint8 flow,
         bytes calldata intentSignature
     ) internal {
-        require(block.timestamp <= deadline, "Payment intent expired");
-        uint256 nonce = intentNonces[buyer];
+        require(block.timestamp <= d.deadline, "Payment intent expired");
+        require(d.maxFeeBps <= MAX_PLATFORM_FEE_BPS, "maxFeeBps too high");
+        // The fee the buyer/merchant agreed to at signing time is the ceiling.
+        // An owner fee raise voids outstanding signatures instead of silently
+        // repricing them.
+        require(platformFee <= d.maxFeeBps, "Fee above signed max");
+        uint256 nonce = intentNonces[d.buyer];
         bytes32 structHash = keccak256(
             abi.encode(
                 PAYMENT_INTENT_TYPEHASH,
-                buyer,
-                token,
-                merchant,
-                amount,
-                productId,
-                customerId,
+                d.buyer,
+                d.token,
+                d.merchant,
+                d.amount,
+                d.productId,
+                d.customerId,
+                d.maxFeeBps,
+                flow,
                 nonce,
-                deadline
+                d.deadline
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, intentSignature);
-        require(recovered == buyer, "Invalid intent signature");
-        unchecked { intentNonces[buyer] = nonce + 1; }
+        require(recovered != address(0), "Invalid signer");
+        require(recovered == d.buyer, "Invalid intent signature");
+        unchecked { intentNonces[d.buyer] = nonce + 1; }
+    }
+
+    /// @dev Platform fee for `amount` at the current rate. Rounds down, i.e.
+    /// in the merchant's favour, so `fee + merchantAmount == amount` exactly.
+    function _feeFor(uint256 amount) internal view returns (uint256) {
+        if (platformFee == 0 || platformWallet == address(0)) return 0;
+        return (amount * platformFee) / 10000;
     }
 
     /// @notice Execute a direct one-time payment. Caller (buyer) must have
     ///         pre-approved this contract for at least `amount` of `token`.
+    /// @dev    No signed fee ceiling applies here: there is no intent, so the
+    ///         fee is read from storage at settlement time. The owner can
+    ///         therefore front-run a direct payment with a `setPlatformFee`
+    ///         raise (bounded by MAX_PLATFORM_FEE_BPS). Gasless callers get the
+    ///         `maxFeeBps` binding; direct callers must check `platformFee()`
+    ///         themselves, or use the gasless path.
     /// @param token   ERC-20 token address (must be in acceptedTokens)
     /// @param merchant Recipient of the payment minus platform fee
     /// @param amount  Total payment amount in token units
@@ -145,16 +200,12 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         require(amount > 0, "Amount must be > 0");
         require(merchant != address(0), "Invalid merchant");
 
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
+        uint256 fee = _feeFor(amount);
         uint256 merchantAmount = amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
 
         IERC20(token).safeTransferFrom(msg.sender, merchant, merchantAmount);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             IERC20(token).safeTransferFrom(msg.sender, platformWallet, fee);
         }
 
@@ -170,51 +221,33 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
 
     /// @notice Gasless payment: relayer submits the buyer's EIP-2612 permit and
     ///         EIP-712 PaymentIntent signature. Buyer never needs ETH.
-    /// @param token   ERC-20 token address (must be in acceptedTokens)
-    /// @param buyer   Wallet that signed the permit and intent
-    /// @param merchant Recipient of the payment minus platform fee
-    /// @param amount  Total payment amount in token units
-    /// @param productId  Off-chain product identifier
-    /// @param customerId Off-chain customer identifier
+    /// @param d          Signed PaymentIntent fields (deadline must equal permitSig.deadline)
     /// @param permitSig  EIP-2612 permit signature components
     /// @param intentSignature EIP-712 PaymentIntent signature from the buyer
     function createPaymentWithPermit(
-        address token,
-        address buyer,
-        address merchant,
-        uint256 amount,
-        bytes32 productId,
-        bytes32 customerId,
+        PaymentIntentData calldata d,
         PermitSig calldata permitSig,
         bytes calldata intentSignature
     ) external nonReentrant whenNotPaused {
         require(msg.sender == relayer, "Only relayer");
         require(!gaslessPaused, "Gasless paused");
-        require(acceptedTokens[token], "Token not accepted");
-        require(amount > 0, "Amount must be > 0");
-        require(merchant != address(0), "Invalid merchant");
-        require(buyer != address(0), "Invalid buyer");
+        require(acceptedTokens[d.token], "Token not accepted");
+        require(d.amount > 0, "Amount must be > 0");
+        require(d.merchant != address(0), "Invalid merchant");
+        require(d.buyer != address(0), "Invalid buyer");
+        require(d.deadline == permitSig.deadline, "Deadline mismatch");
         require(block.timestamp <= permitSig.deadline, "Intent expired");
 
         // Verify the buyer signed an EIP-712 PaymentIntent committing to this
-        // exact merchant/amount. Consumes the per-buyer nonce. A compromised
-        // relayer cannot swap the merchant or amount — recover() will fail.
-        _consumePaymentIntent(
-            buyer,
-            token,
-            merchant,
-            amount,
-            productId,
-            customerId,
-            permitSig.deadline,
-            intentSignature
-        );
+        // exact merchant/amount/fee-ceiling. Consumes the per-buyer nonce. A
+        // compromised relayer cannot swap any field — recover() will fail.
+        _consumePaymentIntent(d, FLOW_EIP2612, intentSignature);
 
         // Consume the buyer's permit signature to set allowance for this vault.
         // Wrapped in try/catch so a front-run that already consumed the nonce
         // doesn't DOS the relayer — if allowance is already sufficient, proceed.
-        try IERC20Permit(token).permit(
-            buyer, address(this), amount, permitSig.deadline, permitSig.v, permitSig.r, permitSig.s
+        try IERC20Permit(d.token).permit(
+            d.buyer, address(this), d.amount, permitSig.deadline, permitSig.v, permitSig.r, permitSig.s
         ) {
             // permit succeeded, allowance is now at least `amount`
         } catch {
@@ -223,28 +256,24 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
             // succeed; otherwise it'll revert cleanly.
         }
 
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
-        uint256 merchantAmount = amount - fee;
+        uint256 fee = _feeFor(d.amount);
+        uint256 merchantAmount = d.amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
 
-        // The `buyer` parameter is *not* arbitrary here: _consumePaymentIntent
+        // The `buyer` field is *not* arbitrary here: _consumePaymentIntent
         // above proves the buyer signed an EIP-712 PaymentIntent committing to
-        // exactly this `(merchant, amount, token, productId, customerId, nonce,
-        // deadline)` tuple. A compromised relayer cannot vary any field —
-        // recover() would fail. See test_reverts_if_relayer_swaps_merchant
+        // exactly this `(merchant, amount, token, productId, customerId,
+        // maxFeeBps, nonce, deadline)` tuple. A compromised relayer cannot vary
+        // any field — recover() would fail. See test_reverts_if_relayer_swaps_merchant
         // in test/PaymentVaultPermit.t.sol.
         // slither-disable-next-line arbitrary-send-erc20
-        IERC20(token).safeTransferFrom(buyer, merchant, merchantAmount);
+        IERC20(d.token).safeTransferFrom(d.buyer, d.merchant, merchantAmount);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
-            IERC20(token).safeTransferFrom(buyer, platformWallet, fee);
+            IERC20(d.token).safeTransferFrom(d.buyer, platformWallet, fee);
         }
 
-        emit PaymentReceived(buyer, merchant, token, amount, fee, productId, customerId, block.timestamp);
+        emit PaymentReceived(d.buyer, d.merchant, d.token, d.amount, fee, d.productId, d.customerId, block.timestamp);
     }
 
     /// @dev Packed params for createPaymentWithPermit2. Needed to stay under
@@ -256,6 +285,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         uint256 amount;
         bytes32 productId;
         bytes32 customerId;
+        uint256 maxFeeBps;
         uint256 permit2Nonce;
         uint256 permit2Deadline;
         bytes permit2Signature;
@@ -305,31 +335,37 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         require(block.timestamp <= p.permit2Deadline, "Intent expired");
 
         // Verify the buyer signed an EIP-712 PaymentIntent over the active
-        // merchant/amount/token/etc. Consumes the per-buyer nonce so a
+        // merchant/amount/token/fee-ceiling. Consumes the per-buyer nonce so a
         // compromised relayer cannot swap the merchant or amount.
         _consumePaymentIntent(
-            p.buyer,
-            p.token,
-            p.merchant,
-            p.amount,
-            p.productId,
-            p.customerId,
-            p.permit2Deadline,
+            PaymentIntentData({
+                buyer: p.buyer,
+                token: p.token,
+                merchant: p.merchant,
+                amount: p.amount,
+                productId: p.productId,
+                customerId: p.customerId,
+                maxFeeBps: p.maxFeeBps,
+                deadline: p.permit2Deadline
+            }),
+            FLOW_PERMIT2,
             p.intentSignature
         );
 
+        // This is the one path where the vault takes temporary custody, so
+        // measure what actually arrived. A fee-on-transfer or rebasing token
+        // would otherwise let the split drain a residual balance (SC-12).
+        uint256 balanceBefore = IERC20(p.token).balanceOf(address(this));
         _pullViaPermit2(p.token, p.buyer, p.amount, p.permit2Nonce, p.permit2Deadline, p.permit2Signature);
+        uint256 received = IERC20(p.token).balanceOf(address(this)) - balanceBefore;
+        require(received == p.amount, "Fee-on-transfer token");
 
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (p.amount * platformFee) / 10000;
-        }
+        uint256 fee = _feeFor(p.amount);
         uint256 merchantAmount = p.amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
 
         IERC20(p.token).safeTransfer(p.merchant, merchantAmount);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             IERC20(p.token).safeTransfer(platformWallet, fee);
         }
 
@@ -343,6 +379,7 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         uint256 amount;
         bytes32 productId;
         bytes32 customerId;
+        uint256 maxFeeBps;
         uint256 daiNonce;
         uint256 permitExpiry;
         uint8 v;
@@ -355,6 +392,10 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
     ///         expiry, allowed, v, r, s)` flow. Ethereum-mainnet DAI only.
     ///         Buyer signs with `allowed=true` to grant max allowance; the
     ///         vault then executes a normal safeTransferFrom.
+    /// @dev    NOTE: `allowed=true` leaves this vault with an unlimited standing
+    ///         DAI allowance on the buyer. Nothing here can move it without a
+    ///         fresh buyer intent signature, but buyers who want it gone must
+    ///         revoke on the token itself. Documented in README.md.
     function createPaymentWithDaiPermit(DaiPermitPayment calldata p)
         external
         nonReentrant
@@ -369,13 +410,17 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         require(block.timestamp <= p.permitExpiry, "Intent expired");
 
         _consumePaymentIntent(
-            p.buyer,
-            p.token,
-            p.merchant,
-            p.amount,
-            p.productId,
-            p.customerId,
-            p.permitExpiry,
+            PaymentIntentData({
+                buyer: p.buyer,
+                token: p.token,
+                merchant: p.merchant,
+                amount: p.amount,
+                productId: p.productId,
+                customerId: p.customerId,
+                maxFeeBps: p.maxFeeBps,
+                deadline: p.permitExpiry
+            }),
+            FLOW_DAI_PERMIT,
             p.intentSignature
         );
 
@@ -388,17 +433,13 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         } catch {
         }
 
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (p.amount * platformFee) / 10000;
-        }
+        uint256 fee = _feeFor(p.amount);
         uint256 merchantAmount = p.amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
 
         // slither-disable-next-line arbitrary-send-erc20
         IERC20(p.token).safeTransferFrom(p.buyer, p.merchant, merchantAmount);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(p.token).safeTransferFrom(p.buyer, platformWallet, fee);
         }
@@ -412,18 +453,22 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         emit AcceptedTokenUpdated(token, accepted);
     }
 
-    /// @notice Update the platform fee. Max 1000 bps (10%).
+    /// @notice Update the platform fee. Max 1000 bps (10%). Existing signed
+    ///         intents carry their own `maxFeeBps` ceiling, so raising the fee
+    ///         voids them rather than repricing them.
     function setPlatformFee(uint256 _fee) external onlyOwner {
-        require(_fee <= 1000, "Fee too high");
+        require(_fee <= MAX_PLATFORM_FEE_BPS, "Fee too high");
+        uint256 old = platformFee;
         platformFee = _fee;
-        emit PlatformFeeUpdated(_fee);
+        emit PlatformFeeUpdated(old, _fee);
     }
 
     /// @notice Update the wallet that receives platform fees.
     function setPlatformWallet(address _wallet) external onlyOwner {
         require(_wallet != address(0), "Invalid wallet");
+        address old = platformWallet;
         platformWallet = _wallet;
-        emit PlatformWalletUpdated(_wallet);
+        emit PlatformWalletUpdated(old, _wallet);
     }
 
     /// @notice Set the authorized relayer address for gasless payments.
@@ -440,6 +485,22 @@ contract PaymentVault is Ownable2Step, ReentrancyGuard, Pausable, EIP712 {
         emit GaslessPausedUpdated(_paused);
     }
 
+    /// @notice Sweep tokens that were sent here directly or left behind by a
+    ///         misbehaving token. The vault holds no user balances between
+    ///         transactions, so an owner-only sweep cannot touch user funds.
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+        emit TokenRescued(token, to, amount);
+        IERC20(token).safeTransfer(to, amount);
+    }
+
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
+
+    /// @notice Disabled. Renouncing would permanently brick setRelayer,
+    ///         setPlatformWallet, setPlatformFee, setAcceptedToken, pause and
+    ///         unpause with no recovery path (SC-14).
+    function renounceOwnership() public pure override {
+        revert("Renounce disabled");
+    }
 }

@@ -20,8 +20,10 @@ contract PaymentVaultPauseTest is Test {
     bytes32 public productId = keccak256("prod_pause");
     bytes32 public customerId = keccak256("cust_pause");
 
+    uint256 public constant MAX_FEE_BPS = 50;
+
     bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
-        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -77,9 +79,7 @@ contract PaymentVaultPauseTest is Test {
 
         vm.prank(relayer);
         vm.expectRevert("Gasless paused");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(_data(amount, deadline), permitSig, intentSig);
     }
 
     function test_createPayment_still_works_when_gasless_paused() public {
@@ -108,12 +108,27 @@ contract PaymentVaultPauseTest is Test {
         bytes memory intentSig = _signIntent(amount, deadline);
 
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(_data(amount, deadline), permitSig, intentSig);
 
         uint256 fee = (amount * 50) / 10000;
         assertEq(usdc.balanceOf(merchant), amount - fee);
+    }
+
+    function _data(uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (PaymentVault.PaymentIntentData memory)
+    {
+        return PaymentVault.PaymentIntentData({
+            buyer: buyer,
+            token: address(usdc),
+            merchant: merchant,
+            amount: amount,
+            productId: productId,
+            customerId: customerId,
+            maxFeeBps: MAX_FEE_BPS,
+            deadline: deadline
+        });
     }
 
     function _signPermit(uint256 value, uint256 deadline)
@@ -149,6 +164,8 @@ contract PaymentVaultPauseTest is Test {
                 amount,
                 productId,
                 customerId,
+                MAX_FEE_BPS,
+                vault.FLOW_EIP2612(),
                 vault.getIntentNonce(buyer),
                 deadline
             )

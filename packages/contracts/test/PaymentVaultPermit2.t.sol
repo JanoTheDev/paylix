@@ -55,6 +55,8 @@ contract PaymentVaultPermit2Test is Test {
 
     address constant PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
+    uint256 constant MAX_FEE_BPS = 50;
+
     function setUp() public {
         buyer = vm.addr(buyerPk);
 
@@ -82,10 +84,10 @@ contract PaymentVaultPermit2Test is Test {
         uint256 nonce
     ) internal view returns (bytes memory) {
         bytes32 typeHash = keccak256(
-            "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+            "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
         );
         bytes32 structHash = keccak256(
-            abi.encode(typeHash, buyer, token, m, amount, productId, customerId, nonce, deadline)
+            abi.encode(typeHash, buyer, token, m, amount, productId, customerId, MAX_FEE_BPS, vault.FLOW_PERMIT2(), nonce, deadline)
         );
         bytes32 digest = keccak256(
             abi.encodePacked("\x19\x01", vault.domainSeparator(), structHash)
@@ -108,6 +110,7 @@ contract PaymentVaultPermit2Test is Test {
             amount: amount,
             productId: "p",
             customerId: "c",
+            maxFeeBps: MAX_FEE_BPS,
             permit2Nonce: p2nonce,
             permit2Deadline: deadline,
             permit2Signature: hex"00",

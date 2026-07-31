@@ -12,8 +12,8 @@ import "../src/interfaces/IPermit2.sol";
  * Permit2's EIP-712 signature verification — that's Uniswap's problem.
  */
 contract StubPermit2Allowance {
-    mapping(address => mapping(address => mapping(address => uint160))) public allowance;
-    mapping(address => mapping(address => mapping(address => uint48))) public expiration;
+    mapping(address => mapping(address => mapping(address => uint160))) public allowed;
+    mapping(address => mapping(address => mapping(address => uint48))) public expiry;
 
     function permit(
         address owner,
@@ -21,8 +21,18 @@ contract StubPermit2Allowance {
         bytes calldata /* signature */
     ) external {
         require(block.timestamp <= p.sigDeadline, "Permit2: sig expired");
-        allowance[owner][p.details.token][p.spender] = p.details.amount;
-        expiration[owner][p.details.token][p.spender] = p.details.expiration;
+        allowed[owner][p.details.token][p.spender] = p.details.amount;
+        expiry[owner][p.details.token][p.spender] = p.details.expiration;
+    }
+
+    /// Mirrors Permit2's AllowanceTransfer view; the manager reads this to
+    /// decide payability before writing state.
+    function allowance(address user, address token, address spender)
+        external
+        view
+        returns (uint160, uint48, uint48)
+    {
+        return (allowed[user][token][spender], expiry[user][token][spender], 0);
     }
 
     function transferFrom(
@@ -32,12 +42,12 @@ contract StubPermit2Allowance {
         address token
     ) external {
         require(
-            block.timestamp <= expiration[from][token][msg.sender],
+            block.timestamp <= expiry[from][token][msg.sender],
             "Permit2: allowance expired"
         );
-        uint160 current = allowance[from][token][msg.sender];
+        uint160 current = allowed[from][token][msg.sender];
         require(current >= amount, "Permit2: insufficient allowance");
-        allowance[from][token][msg.sender] = current - amount;
+        allowed[from][token][msg.sender] = current - amount;
         IERC20(token).transferFrom(from, to, amount);
     }
 }
@@ -62,8 +72,10 @@ contract SubscriptionManagerPermit2Test is Test {
     uint256 public constant MONTHLY = 30 days;
     uint256 public constant AMOUNT = 10e6;
 
+    uint256 constant MAX_FEE_BPS = 50;
+
     bytes32 constant SUBSCRIPTION_INTENT_TYPEHASH = keccak256(
-        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
+        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -98,6 +110,7 @@ contract SubscriptionManagerPermit2Test is Test {
             interval: MONTHLY,
             productId: productId,
             customerId: customerId,
+            maxFeeBps: MAX_FEE_BPS,
             deadline: deadline
         });
         ps = IPermit2.PermitSingle({
@@ -117,20 +130,25 @@ contract SubscriptionManagerPermit2Test is Test {
         view
         returns (bytes memory)
     {
-        uint256 nonce = subs.getIntentNonce(p.buyer);
         bytes32 structHash = keccak256(
-            abi.encode(
-                SUBSCRIPTION_INTENT_TYPEHASH,
-                p.buyer,
-                p.token,
-                p.merchant,
-                p.amount,
-                p.interval,
-                p.productId,
-                p.customerId,
-                uint256(permitValue),
-                nonce,
-                p.deadline
+            bytes.concat(
+                abi.encode(
+                    SUBSCRIPTION_INTENT_TYPEHASH,
+                    p.buyer,
+                    p.token,
+                    p.merchant,
+                    p.amount,
+                    p.interval,
+                    p.productId
+                ),
+                abi.encode(
+                    p.customerId,
+                    uint256(permitValue),
+                    p.maxFeeBps,
+                    subs.FLOW_PERMIT2(),
+                    subs.getIntentNonce(p.buyer),
+                    p.deadline
+                )
             )
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", subs.domainSeparator(), structHash));

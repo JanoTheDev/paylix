@@ -1,7 +1,7 @@
 {
   "filter_paths": "lib/|test/",
-  "exclude_low": true,
-  "exclude_informational": true,
+  "exclude_low": false,
+  "exclude_informational": false,
   "exclude_optimization": true,
   "solc_remaps": ["@openzeppelin/=lib/openzeppelin-contracts/"]
 }

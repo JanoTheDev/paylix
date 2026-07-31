@@ -24,8 +24,12 @@ contract PaymentVaultPermitTest is Test {
     bytes32 public productId = keccak256("prod_123");
     bytes32 public customerId = keccak256("cust_456");
 
+    /// Fee ceiling the buyer signs. Equals the deployed platformFee, so any
+    /// owner-side raise voids outstanding signatures (SC-03).
+    uint256 public constant MAX_FEE_BPS = 50;
+
     bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
-        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -44,15 +48,12 @@ contract PaymentVaultPermitTest is Test {
     function test_createPaymentWithPermit_success() public {
         uint256 amount = 1000e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
 
         uint256 fee = (amount * 50) / 10000;
         assertEq(usdc.balanceOf(merchant), amount - fee, "merchant received amount - fee");
@@ -64,10 +65,9 @@ contract PaymentVaultPermitTest is Test {
     function test_createPaymentWithPermit_emits_event_with_buyer_as_payer() public {
         uint256 amount = 500e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         uint256 fee = (amount * 50) / 10000;
 
@@ -77,9 +77,7 @@ contract PaymentVaultPermitTest is Test {
         );
 
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     // ----- Authorization -----
@@ -87,75 +85,62 @@ contract PaymentVaultPermitTest is Test {
     function test_reverts_when_not_relayer() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(makeAddr("random"));
         vm.expectRevert("Only relayer");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_reverts_when_buyer_calls_directly() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(buyer);
         vm.expectRevert("Only relayer");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     // ----- Validation -----
 
     function test_reverts_on_zero_amount() public {
-        uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
-        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, 0, productId, customerId, deadline, buyerPrivateKey
-        );
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, 0, deadline);
+        PaymentVault.PermitSig memory permitSig = _signPermit(100e6, deadline);
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
         vm.expectRevert("Amount must be > 0");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, 0, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_reverts_on_zero_merchant() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), address(0), amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), address(0), amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
         vm.expectRevert("Invalid merchant");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, address(0), amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_reverts_on_zero_buyer() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
+        d.buyer = address(0);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
 
         vm.prank(relayer);
         vm.expectRevert("Invalid buyer");
-        vault.createPaymentWithPermit(
-            address(usdc), address(0), merchant, amount, productId, customerId, permitSig, ""
-        );
+        vault.createPaymentWithPermit(d, permitSig, "");
     }
 
     function test_reverts_on_unaccepted_token() public {
@@ -163,16 +148,26 @@ contract PaymentVaultPermitTest is Test {
         otherToken.mint(buyer, 1000e6);
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(otherToken), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermitForToken(otherToken, amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(otherToken), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
         vm.expectRevert("Token not accepted");
-        vault.createPaymentWithPermit(
-            address(otherToken), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
+    }
+
+    function test_reverts_when_intent_deadline_differs_from_permit_deadline() public {
+        uint256 amount = 100e6;
+        uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
+        // Permit signed for a different deadline than the intent commits to.
+        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline + 1);
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
+
+        vm.prank(relayer);
+        vm.expectRevert("Deadline mismatch");
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     // ----- PaymentIntent: the whole point of this file -----
@@ -182,16 +177,15 @@ contract PaymentVaultPermitTest is Test {
         // This is the vulnerability the PaymentIntent binding fixes.
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
+
+        d.merchant = attacker;
 
         vm.prank(relayer);
         vm.expectRevert("Invalid intent signature");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, attacker, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
 
         assertEq(usdc.balanceOf(attacker), 0, "attacker received nothing");
     }
@@ -200,72 +194,76 @@ contract PaymentVaultPermitTest is Test {
         uint256 signedAmount = 100e6;
         uint256 tamperedAmount = 9999e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, signedAmount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(tamperedAmount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, signedAmount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
+
+        d.amount = tamperedAmount;
 
         vm.prank(relayer);
         vm.expectRevert("Invalid intent signature");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, tamperedAmount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
+    }
+
+    function test_reverts_if_relayer_lowers_signed_fee_ceiling() public {
+        // maxFeeBps is part of the digest — the relayer cannot present a
+        // different ceiling than the buyer signed.
+        uint256 amount = 100e6;
+        uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
+        PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
+
+        d.maxFeeBps = 1000;
+
+        vm.prank(relayer);
+        vm.expectRevert("Invalid intent signature");
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_reverts_on_signature_by_non_buyer() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
         // Signed by someone other than buyer
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, otherPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, otherPrivateKey);
 
         vm.prank(relayer);
         vm.expectRevert("Invalid intent signature");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_reverts_on_replayed_intent() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
 
         // Same signature used a second time — nonce has already been incremented,
         // so recovery now evaluates against a different digest and fails.
         PaymentVault.PermitSig memory permitSig2 = _signPermit(amount, deadline);
         vm.prank(relayer);
         vm.expectRevert("Invalid intent signature");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig2, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig2, intentSig);
     }
 
     function test_reverts_on_expired_deadline() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.warp(deadline + 1);
 
         vm.prank(relayer);
         vm.expectRevert("Intent expired");
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     function test_nonce_increments_across_payments() public {
@@ -273,25 +271,18 @@ contract PaymentVaultPermitTest is Test {
         // sequential nonces.
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
 
         PaymentVault.PermitSig memory p1 = _signPermit(amount, deadline);
-        bytes memory i1 = _signIntentWithNonce(
-            address(usdc), merchant, amount, productId, customerId, 0, deadline, buyerPrivateKey
-        );
+        bytes memory i1 = _signIntentWithNonce(d, 0, buyerPrivateKey);
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, p1, i1
-        );
+        vault.createPaymentWithPermit(d, p1, i1);
         assertEq(vault.getIntentNonce(buyer), 1);
 
         PaymentVault.PermitSig memory p2 = _signPermit(amount, deadline);
-        bytes memory i2 = _signIntentWithNonce(
-            address(usdc), merchant, amount, productId, customerId, 1, deadline, buyerPrivateKey
-        );
+        bytes memory i2 = _signIntentWithNonce(d, 1, buyerPrivateKey);
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, p2, i2
-        );
+        vault.createPaymentWithPermit(d, p2, i2);
         assertEq(vault.getIntentNonce(buyer), 2);
     }
 
@@ -300,21 +291,35 @@ contract PaymentVaultPermitTest is Test {
     function test_tampered_permit_signature_reverts() public {
         uint256 amount = 100e6;
         uint256 deadline = block.timestamp + 1 hours;
+        PaymentVault.PaymentIntentData memory d = _data(address(usdc), merchant, amount, deadline);
         PaymentVault.PermitSig memory permitSig = _signPermit(amount, deadline);
         permitSig.r = bytes32(uint256(permitSig.r) + 1);
 
-        bytes memory intentSig = _signIntent(
-            address(usdc), merchant, amount, productId, customerId, deadline, buyerPrivateKey
-        );
+        bytes memory intentSig = _signIntent(d, buyerPrivateKey);
 
         vm.prank(relayer);
         vm.expectRevert();
-        vault.createPaymentWithPermit(
-            address(usdc), buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(d, permitSig, intentSig);
     }
 
     // ----- Helpers -----
+
+    function _data(address token, address merchant_, uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (PaymentVault.PaymentIntentData memory)
+    {
+        return PaymentVault.PaymentIntentData({
+            buyer: buyer,
+            token: token,
+            merchant: merchant_,
+            amount: amount,
+            productId: productId,
+            customerId: customerId,
+            maxFeeBps: MAX_FEE_BPS,
+            deadline: deadline
+        });
+    }
 
     function _signPermit(uint256 value, uint256 deadline)
         internal
@@ -343,41 +348,32 @@ contract PaymentVaultPermitTest is Test {
         sig = PaymentVault.PermitSig({deadline: deadline, v: v, r: r, s: s});
     }
 
-    function _signIntent(
-        address token,
-        address merchant_,
-        uint256 amount,
-        bytes32 productId_,
-        bytes32 customerId_,
-        uint256 deadline,
-        uint256 signerKey
-    ) internal view returns (bytes memory) {
-        return _signIntentWithNonce(
-            token, merchant_, amount, productId_, customerId_, vault.getIntentNonce(buyer), deadline, signerKey
-        );
+    function _signIntent(PaymentVault.PaymentIntentData memory d, uint256 signerKey)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _signIntentWithNonce(d, vault.getIntentNonce(buyer), signerKey);
     }
 
     function _signIntentWithNonce(
-        address token,
-        address merchant_,
-        uint256 amount,
-        bytes32 productId_,
-        bytes32 customerId_,
+        PaymentVault.PaymentIntentData memory d,
         uint256 nonce,
-        uint256 deadline,
         uint256 signerKey
     ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
             abi.encode(
                 PAYMENT_INTENT_TYPEHASH,
-                buyer,
-                token,
-                merchant_,
-                amount,
-                productId_,
-                customerId_,
+                d.buyer,
+                d.token,
+                d.merchant,
+                d.amount,
+                d.productId,
+                d.customerId,
+                d.maxFeeBps,
+                vault.FLOW_EIP2612(),
                 nonce,
-                deadline
+                d.deadline
             )
         );
         bytes32 digest = keccak256(

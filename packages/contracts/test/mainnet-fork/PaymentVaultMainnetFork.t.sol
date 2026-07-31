@@ -51,8 +51,10 @@ contract PaymentVaultMainnetForkTest is Test {
     bytes32 public productId = keccak256("prod_fork");
     bytes32 public customerId = keccak256("cust_fork");
 
+    uint256 public constant MAX_FEE_BPS = 50;
+
     bytes32 private constant PAYMENT_INTENT_TYPEHASH = keccak256(
-        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 nonce,uint256 deadline)"
+        "PaymentIntent(address buyer,address token,address merchant,uint256 amount,bytes32 productId,bytes32 customerId,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -108,6 +110,23 @@ contract PaymentVaultMainnetForkTest is Test {
         sig = PaymentVault.PermitSig({deadline: deadline, v: v, r: r, s: s});
     }
 
+    function _data(uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (PaymentVault.PaymentIntentData memory)
+    {
+        return PaymentVault.PaymentIntentData({
+            buyer: buyer,
+            token: USDC,
+            merchant: merchant,
+            amount: amount,
+            productId: productId,
+            customerId: customerId,
+            maxFeeBps: MAX_FEE_BPS,
+            deadline: deadline
+        });
+    }
+
     function _signIntent(uint256 amount, uint256 deadline)
         internal
         view
@@ -122,6 +141,8 @@ contract PaymentVaultMainnetForkTest is Test {
                 amount,
                 productId,
                 customerId,
+                MAX_FEE_BPS,
+                vault.FLOW_EIP2612(),
                 vault.getIntentNonce(buyer),
                 deadline
             )
@@ -144,9 +165,7 @@ contract PaymentVaultMainnetForkTest is Test {
         uint256 platformBefore = IUSDC(USDC).balanceOf(platformWallet);
 
         vm.prank(relayer);
-        vault.createPaymentWithPermit(
-            USDC, buyer, merchant, amount, productId, customerId, permitSig, intentSig
-        );
+        vault.createPaymentWithPermit(_data(amount, deadline), permitSig, intentSig);
 
         uint256 fee = (amount * 50) / 10000;
         assertEq(IUSDC(USDC).balanceOf(merchant) - merchantBefore, amount - fee);

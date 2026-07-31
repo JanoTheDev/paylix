@@ -24,9 +24,22 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     // Binds the subscriber's signature to the exact merchant/token/amount/interval/
     // etc. so a compromised relayer cannot redirect a signed permit to a different
     // subscription merchant. nonce is per-buyer and strictly increments.
+    //
+    // `maxFeeBps` is the highest platform fee the subscriber agreed to. It is
+    // stored per subscription and clamps the fee on every future charge, so an
+    // owner fee raise can never reprice a live subscription (SC-03).
+    //
+    // `flow` binds the intent to the settlement mechanism the buyer's wallet
+    // actually presented (SC-23). Without it a relayer holding an intent signed
+    // for the Permit2 flow could settle it through the EIP-2612 flow against a
+    // residual allowance.
     bytes32 private constant SUBSCRIPTION_INTENT_TYPEHASH = keccak256(
-        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
+        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
+
+    /// @notice Settlement flow identifiers bound into every signed intent.
+    uint8 public constant FLOW_EIP2612 = 1;
+    uint8 public constant FLOW_PERMIT2 = 2;
 
     // Extended intent used by createSubscriptionWithPermitDiscount. Adds the
     // discount amount and cycle count so "once" / "repeating" coupon shapes
@@ -35,16 +48,27 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     // `amount - discountAmount` for the first `discountCyclesRemaining`
     // charges, then `amount` every cycle after.
     bytes32 private constant SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH = keccak256(
-        "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 nonce,uint256 deadline)"
+        "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     // BackupPayerAuth is signed by the primary subscriber to authorize a
-    // specific address as a fallback payer for their subscription. The
-    // backup wallet separately signs an EIP-2612 permit granting the
-    // contract USDC allowance so the keeper can draw from it.
+    // specific address as a fallback payer for their subscription.
     bytes32 private constant BACKUP_PAYER_AUTH_TYPEHASH = keccak256(
         "BackupPayerAuth(uint256 subscriptionId,address backup,uint256 nonce,uint256 deadline)"
     );
+
+    // BackupPayerConsent is signed by the *backup wallet itself*. Without it an
+    // EIP-2612 permit was the only thing standing between an attacker-authored
+    // subscription and any wallet with a standing allowance — and the permit was
+    // swallowed by a try/catch, so it stood for nothing (SC-01). An allowance is
+    // not consent to fund subscription N; this signature is. It binds the
+    // subscription id, the primary subscriber, the token, and a per-charge cap.
+    bytes32 private constant BACKUP_PAYER_CONSENT_TYPEHASH = keccak256(
+        "BackupPayerConsent(uint256 subscriptionId,address subscriber,address token,uint256 maxAmount,uint256 nonce,uint256 deadline)"
+    );
+
+    /// @notice Hard ceiling on the platform fee, in basis points (10%).
+    uint256 public constant MAX_PLATFORM_FEE_BPS = 1000;
 
     /// @notice Per-subscription discount state set at creation and
     ///         decremented on each charge. Declared as a side struct so the
@@ -56,7 +80,14 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
 
     mapping(address => uint256) public intentNonces;
 
-    enum Status { Active, PastDue, Cancelled, Expired }
+    /// @dev `None` MUST stay the zero value. Any unwritten `subscriptions[id]`
+    /// slot decodes as `status = None`, so a nonexistent id can never pass an
+    /// `== Status.Active` check (SC-05).
+    ///
+    /// There is deliberately no `Expired` member: nothing in this contract ever
+    /// assigned it, and a declared-but-unreachable state misleads off-chain
+    /// decoders into modelling an expiry mechanism that does not exist (SC-21).
+    enum Status { None, Active, PastDue, Cancelled }
 
     struct Subscription {
         address subscriber;
@@ -103,27 +134,56 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// to `_chargePermit2` for these instead of the ERC20-allowance path.
     mapping(uint256 => bool) public isPermit2Subscription;
 
+    /// @dev Fee ceiling (bps) the subscriber signed at creation. Every charge
+    /// clamps `platformFee` to this value.
+    mapping(uint256 => uint256) public subscriptionMaxFeeBps;
+
+    /// @dev Per-charge cap the backup wallet consented to, keyed by
+    /// (subscriptionId, backup). Zero means "not an authorized backup".
+    mapping(uint256 => mapping(address => uint256)) public backupPayerMaxAmount;
+
+    /// @dev Nonce counter for BackupPayerConsent signatures. Kept separate from
+    /// `intentNonces` so consenting to be someone's backup does not invalidate
+    /// the backup wallet's own outstanding subscription intents.
+    mapping(address => uint256) public backupConsentNonces;
+
+    /// @dev Nonce counter for BackupPayerAuth signatures, separate from
+    /// `intentNonces` for the same reason (SC-10): authorizing a backup payer
+    /// must not silently void the subscriber's pending checkout intent.
+    mapping(address => uint256) public backupAuthNonces;
+
     event SubscriptionCreated(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 interval, bytes32 productId, bytes32 customerId);
+    event SubscriptionTermsSet(uint256 indexed subscriptionId, uint256 discountAmount, uint256 discountCycles, bool isPermit2, uint256 maxFeeBps);
+    event SubscriptionDiscountConsumed(uint256 indexed subscriptionId, uint256 remaining);
     event PaymentReceived(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant, address token, uint256 amount, uint256 fee, uint256 timestamp);
+    /// @dev Emitted in addition to PaymentReceived when a backup wallet, not the
+    /// subscriber, funded the cycle. PaymentReceived always carries the
+    /// subscription's subscriber in its indexed slot so address filters stay
+    /// correct (SC-11); this event exposes the actual funding wallet.
+    event SubscriptionPaymentFunded(uint256 indexed subscriptionId, address indexed payer, uint256 amount);
     event SubscriptionPastDue(uint256 indexed subscriptionId, address indexed subscriber, address indexed merchant);
     event SubscriptionCancelled(uint256 indexed subscriptionId);
     event SubscriptionWalletUpdateRequested(uint256 indexed subscriptionId, address indexed oldSubscriber, address indexed newSubscriber);
     event SubscriptionWalletUpdated(uint256 indexed subscriptionId, address indexed oldSubscriber, address indexed newSubscriber);
     event AcceptedTokenUpdated(address indexed token, bool accepted);
-    event PlatformFeeUpdated(uint256 newFee);
-    event PlatformWalletUpdated(address newWallet);
+    event PlatformFeeUpdated(uint256 oldFee, uint256 newFee);
+    event PlatformWalletUpdated(address oldWallet, address newWallet);
     event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
     event GaslessPausedUpdated(bool paused);
-    event SubscriptionBackupPayerAdded(uint256 indexed subscriptionId, address indexed backup);
+    event SubscriptionBackupPayerAdded(uint256 indexed subscriptionId, address indexed backup, uint256 maxAmount);
     event SubscriptionBackupPayerRemoved(uint256 indexed subscriptionId, address indexed backup);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
 
     constructor(address _platformWallet, uint256 _platformFee)
         Ownable(msg.sender)
         EIP712("Paylix SubscriptionManager", "1")
     {
-        require(_platformFee <= 1000, "Fee too high");
+        require(_platformFee <= MAX_PLATFORM_FEE_BPS, "Fee too high");
+        require(_platformWallet != address(0), "Invalid wallet");
         platformWallet = _platformWallet;
         platformFee = _platformFee;
+        emit PlatformWalletUpdated(address(0), _platformWallet);
+        emit PlatformFeeUpdated(0, _platformFee);
     }
 
     /// @notice EIP-712 domain separator — exposed for off-chain signers.
@@ -136,6 +196,22 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         return intentNonces[buyer];
     }
 
+    /// @notice Current BackupPayerConsent nonce for a wallet.
+    function getBackupConsentNonce(address backup) external view returns (uint256) {
+        return backupConsentNonces[backup];
+    }
+
+    /// @notice Current BackupPayerAuth nonce for a subscriber.
+    function getBackupAuthNonce(address subscriber) external view returns (uint256) {
+        return backupAuthNonces[subscriber];
+    }
+
+    /// @dev Reverts for ids that were never issued. Belt-and-braces alongside
+    /// `Status.None` (SC-05).
+    function _requireExists(uint256 subscriptionId) internal view {
+        require(subscriptionId < nextSubscriptionId, "No such subscription");
+    }
+
     struct SubIntentParams {
         address buyer;
         address token;
@@ -145,17 +221,21 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         bytes32 productId;
         bytes32 customerId;
         uint256 permitValue;
+        uint256 maxFeeBps;
+        /// Settlement mechanism this entry point implements. Set by the
+        /// contract, never by the relayer.
+        uint8 flow;
         uint256 deadline;
     }
 
-    /// @dev Verifies the buyer signed an EIP-712 SubscriptionIntent and
-    /// consumes the nonce. Reverts on bad signature.
-    function _consumeSubscriptionIntent(
-        SubIntentParams memory p,
-        bytes calldata intentSignature
-    ) internal {
-        uint256 nonce = intentNonces[p.buyer];
-        bytes32 structHash = keccak256(
+    /// @dev Split out of _consumeSubscriptionIntent purely to keep the
+    /// 13-field abi.encode off the caller's stack.
+    function _hashSubIntent(SubIntentParams memory p, uint256 nonce)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(
             abi.encode(
                 SUBSCRIPTION_INTENT_TYPEHASH,
                 p.buyer,
@@ -166,12 +246,30 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
                 p.productId,
                 p.customerId,
                 p.permitValue,
+                p.maxFeeBps,
+                p.flow,
                 nonce,
                 p.deadline
             )
         );
-        bytes32 digest = _hashTypedDataV4(structHash);
+    }
+
+    /// @dev Verifies the buyer signed an EIP-712 SubscriptionIntent and
+    /// consumes the nonce. Reverts on bad signature, expired deadline, or a
+    /// platform fee above the ceiling the buyer signed.
+    function _consumeSubscriptionIntent(
+        SubIntentParams memory p,
+        bytes calldata intentSignature
+    ) internal {
+        // Deadline enforcement lives here, not only at the call sites, so a
+        // future entry point cannot forget it (SC-19).
+        require(block.timestamp <= p.deadline, "Intent expired");
+        require(p.maxFeeBps <= MAX_PLATFORM_FEE_BPS, "maxFeeBps too high");
+        require(platformFee <= p.maxFeeBps, "Fee above signed max");
+        uint256 nonce = intentNonces[p.buyer];
+        bytes32 digest = _hashTypedDataV4(_hashSubIntent(p, nonce));
         address recovered = ECDSA.recover(digest, intentSignature);
+        require(recovered != address(0), "Invalid signer");
         require(recovered == p.buyer, "Invalid intent signature");
         unchecked { intentNonces[p.buyer] = nonce + 1; }
     }
@@ -198,9 +296,13 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             productId: productId, customerId: customerId, createdAt: block.timestamp,
             status: Status.Active, totalCharged: 0
         });
+        // Direct creation carries no signature, so there is no signed ceiling —
+        // the contract-wide cap applies.
+        subscriptionMaxFeeBps[subId] = MAX_PLATFORM_FEE_BPS;
 
         _processPayment(subId);
         _emitSubscriptionCreated(subId, subscriptions[subId]);
+        emit SubscriptionTermsSet(subId, 0, 0, false, MAX_PLATFORM_FEE_BPS);
         return subId;
     }
 
@@ -213,6 +315,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         bytes32 productId;
         bytes32 customerId;
         uint256 permitValue;
+        uint256 maxFeeBps;
         uint256 deadline;
         uint8 v;
         bytes32 r;
@@ -241,8 +344,8 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(block.timestamp <= p.deadline, "Intent expired");
 
         // Verify the buyer signed an EIP-712 SubscriptionIntent committing
-        // to this exact merchant/amount/interval/permitValue. A compromised
-        // relayer cannot swap any of these fields.
+        // to this exact merchant/amount/interval/permitValue/fee ceiling. A
+        // compromised relayer cannot swap any of these fields.
         _consumeSubscriptionIntent(
             SubIntentParams({
                 buyer: p.buyer,
@@ -253,6 +356,8 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
                 productId: p.productId,
                 customerId: p.customerId,
                 permitValue: p.permitValue,
+                maxFeeBps: p.maxFeeBps,
+                flow: FLOW_EIP2612,
                 deadline: p.deadline
             }),
             intentSignature
@@ -285,9 +390,11 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             status: Status.Active,
             totalCharged: 0
         });
+        subscriptionMaxFeeBps[subId] = p.maxFeeBps;
 
         _processPayment(subId);
         _emitSubscriptionCreated(subId, subscriptions[subId]);
+        emit SubscriptionTermsSet(subId, 0, 0, false, p.maxFeeBps);
         return subId;
     }
 
@@ -302,6 +409,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 permitValue;
         uint256 discountAmount;
         uint256 discountCycles;
+        uint256 maxFeeBps;
         uint256 deadline;
         uint8 v;
         bytes32 r;
@@ -312,21 +420,30 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         CreateSubPermitDiscountParams calldata p,
         uint256 nonce
     ) internal pure returns (bytes32) {
+        // Split across two abi.encode calls to stay under the stack limit.
+        // Every field is a value type, so each encodes to exactly one 32-byte
+        // word and the concatenation is byte-identical to a single encode.
         return keccak256(
-            abi.encode(
-                SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH,
-                p.buyer,
-                p.token,
-                p.merchant,
-                p.amount,
-                p.interval,
-                p.productId,
-                p.customerId,
-                p.permitValue,
-                p.discountAmount,
-                p.discountCycles,
-                nonce,
-                p.deadline
+            bytes.concat(
+                abi.encode(
+                    SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH,
+                    p.buyer,
+                    p.token,
+                    p.merchant,
+                    p.amount,
+                    p.interval,
+                    p.productId
+                ),
+                abi.encode(
+                    p.customerId,
+                    p.permitValue,
+                    p.discountAmount,
+                    p.discountCycles,
+                    p.maxFeeBps,
+                    FLOW_EIP2612,
+                    nonce,
+                    p.deadline
+                )
             )
         );
     }
@@ -335,9 +452,13 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         CreateSubPermitDiscountParams calldata p,
         bytes calldata intentSignature
     ) internal {
+        require(block.timestamp <= p.deadline, "Intent expired");
+        require(p.maxFeeBps <= MAX_PLATFORM_FEE_BPS, "maxFeeBps too high");
+        require(platformFee <= p.maxFeeBps, "Fee above signed max");
         uint256 nonce = intentNonces[p.buyer];
         bytes32 digest = _hashTypedDataV4(_hashDiscountIntent(p, nonce));
         address recovered = ECDSA.recover(digest, intentSignature);
+        require(recovered != address(0), "Invalid signer");
         require(recovered == p.buyer, "Invalid intent signature");
         unchecked { intentNonces[p.buyer] = nonce + 1; }
     }
@@ -384,6 +505,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             discountAmount: p.discountAmount,
             discountCyclesRemaining: p.discountCycles
         });
+        subscriptionMaxFeeBps[subId] = p.maxFeeBps;
     }
 
     function createSubscriptionWithPermitDiscount(
@@ -404,6 +526,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 subId = _storeDiscountSubscription(p);
         _processPayment(subId);
         _emitSubscriptionCreated(subId, subscriptions[subId]);
+        emit SubscriptionTermsSet(subId, p.discountAmount, p.discountCycles, false, p.maxFeeBps);
         return subId;
     }
 
@@ -430,8 +553,9 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 interval;
         bytes32 productId;
         bytes32 customerId;
-        /// Expected to match permit2Permit.sigDeadline so one deadline value
-        /// gates the intent as well as the Permit2 signature.
+        uint256 maxFeeBps;
+        /// Must equal permit2Permit.sigDeadline so one deadline value gates the
+        /// intent as well as the Permit2 signature.
         uint256 deadline;
     }
 
@@ -452,12 +576,23 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(!gaslessPaused, "Gasless paused");
         require(acceptedTokens[p.token], "Token not accepted");
         require(p.amount > 0, "Amount must be > 0");
+        // Permit2 transfer amounts are uint160; refuse anything that would be
+        // silently truncated (SC-20).
+        require(p.amount <= type(uint160).max, "Amount too large for Permit2");
         require(p.merchant != address(0), "Invalid merchant");
         require(p.buyer != address(0), "Invalid buyer");
         require(p.interval > 0, "Invalid interval");
         require(block.timestamp <= p.deadline, "Intent expired");
         require(permit2Permit.spender == address(this), "Permit2 spender mismatch");
         require(permit2Permit.details.token == p.token, "Permit2 token mismatch");
+        // Without these the subscription is created and then dies on cycle 2,
+        // deep inside Permit2, with no clear cause (SC-09).
+        require(permit2Permit.sigDeadline == p.deadline, "Permit2 deadline mismatch");
+        require(permit2Permit.details.amount >= p.amount, "Permit2 allowance < amount");
+        require(
+            uint256(permit2Permit.details.expiration) >= block.timestamp + p.interval,
+            "Permit2 expiration too short"
+        );
 
         _consumeSubscriptionIntent(
             SubIntentParams({
@@ -472,6 +607,8 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
                 // typehash; for Permit2 subs we reuse the allowance amount so the
                 // intent signature still binds the buyer to a concrete number.
                 permitValue: permit2Permit.details.amount,
+                maxFeeBps: p.maxFeeBps,
+                flow: FLOW_PERMIT2,
                 deadline: p.deadline
             }),
             intentSignature
@@ -484,6 +621,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 subId = _storePermit2Subscription(p);
         _chargePermit2(subId, p.amount);
         _emitSubscriptionCreated(subId, subscriptions[subId]);
+        emit SubscriptionTermsSet(subId, 0, 0, true, p.maxFeeBps);
         return subId;
     }
 
@@ -503,7 +641,25 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             totalCharged: 0
         });
         isPermit2Subscription[subId] = true;
+        subscriptionMaxFeeBps[subId] = p.maxFeeBps;
         return subId;
+    }
+
+    /// @dev Effective fee in bps for a subscription: the current platform fee,
+    /// clamped to the ceiling the subscriber signed at creation (SC-03).
+    function _feeBpsFor(uint256 subscriptionId) internal view returns (uint256) {
+        uint256 cap = subscriptionMaxFeeBps[subscriptionId];
+        uint256 bps = platformFee;
+        return bps <= cap ? bps : cap;
+    }
+
+    /// @dev Platform fee owed on `amount`. Rounds down, i.e. in the merchant's
+    /// favour, so `fee + merchantAmount == amount` exactly.
+    function _feeFor(uint256 subscriptionId, uint256 amount) internal view returns (uint256) {
+        if (platformWallet == address(0)) return 0;
+        uint256 bps = _feeBpsFor(subscriptionId);
+        if (bps == 0) return 0;
+        return (amount * bps) / 10000;
     }
 
     /// @dev Charges via Permit2.transferFrom against the allowance granted at
@@ -511,55 +667,74 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// Reverts on failure (used for sub creation where revert is correct).
     function _chargePermit2(uint256 subscriptionId, uint256 amount) internal {
         Subscription storage sub = subscriptions[subscriptionId];
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
+        uint256 fee = _feeFor(subscriptionId, amount);
         uint256 merchantAmount = amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
+        require(amount <= type(uint160).max, "Amount too large for Permit2");
+
+        sub.totalCharged += amount;
+        emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
 
         PERMIT2.transferFrom(sub.subscriber, sub.merchant, uint160(merchantAmount), sub.token);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             PERMIT2.transferFrom(sub.subscriber, platformWallet, uint160(fee), sub.token);
         }
-        sub.totalCharged += amount;
-        emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
     }
 
-    /// @dev Non-reverting Permit2 charge for the keeper path. Returns true on
-    /// success, false if the Permit2 pull reverts (expired allowance, funds
-    /// gone, etc.) so caller can transition to PastDue.
-    function _tryChargePermit2(uint256 subscriptionId, uint256 amount) internal returns (bool) {
+    /// @dev Can the Permit2 allowance granted at creation cover `amount` right
+    /// now? Read-only, so the keeper path can decide payability *before* it
+    /// writes any state — the same shape as the ERC-20 path's `_selectPayer`.
+    /// This also removes the old partial-charge hazard: previously the merchant
+    /// leg could land and the fee leg fail, leaving state claiming a full
+    /// payment with zero fee (SC-07). One allowance check now covers both legs,
+    /// so they either both happen or the transaction reverts.
+    function _permit2CanPay(uint256 subscriptionId, uint256 amount)
+        internal
+        view
+        returns (bool)
+    {
+        if (amount == 0 || amount > type(uint160).max) return false;
         Subscription storage sub = subscriptions[subscriptionId];
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
-        uint256 merchantAmount = amount - fee;
-        if (merchantAmount == 0) return false;
-
-        try PERMIT2.transferFrom(sub.subscriber, sub.merchant, uint160(merchantAmount), sub.token) {
-            if (fee > 0 && platformWallet != address(0)) {
-                try PERMIT2.transferFrom(sub.subscriber, platformWallet, uint160(fee), sub.token) {} catch {
-                    // Merchant leg succeeded but fee leg failed. Count the cycle
-                    // paid (subscriber's intent honored) and skip the fee this cycle.
-                    fee = 0;
-                }
-            }
-            sub.totalCharged += amount;
-            emit PaymentReceived(subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp);
-            return true;
-        } catch {
-            return false;
-        }
+        (uint160 allowed, uint48 expiration, ) =
+            PERMIT2.allowance(sub.subscriber, sub.token, address(this));
+        if (uint256(expiration) < block.timestamp) return false;
+        if (uint256(allowed) < amount) return false;
+        if (IERC20(sub.token).balanceOf(sub.subscriber) < amount) return false;
+        return true;
     }
 
     /// @notice Charge a subscription that is due. Callable by subscriber, merchant,
-    ///         or relayer. Moves subscription to PastDue on payment failure instead
-    ///         of reverting, so the keeper stays healthy.
+    ///         or relayer.
+    ///
+    /// @dev Strict checks-effects-interactions: payability is decided with view
+    ///      calls only, then every state write happens, then the transfers.
+    ///
+    ///      Failure handling is therefore split, and callers must handle both:
+    ///
+    ///      1. **Pre-checkable failures flip the subscription to PastDue and
+    ///         return normally** — insufficient balance, insufficient ERC-20 or
+    ///         Permit2 allowance, an expired Permit2 allowance, and a charge
+    ///         amount that rounds to nothing. `_selectPayer` / `_permit2CanPay`
+    ///         detect all of these before any transfer is attempted, so the
+    ///         keeper sees a successful transaction and a `SubscriptionPastDue`
+    ///         event.
+    ///
+    ///      2. **Token-level failures revert the whole transaction.** Once
+    ///         payability is established the settlement legs are called without
+    ///         a try/catch — that is what makes partial charges impossible, but
+    ///         it means anything the views cannot see surfaces as a revert:
+    ///         a blacklisted subscriber (USDC on Base implements this), a paused
+    ///         or upgraded token, or a token that reverts on transfer for its
+    ///         own reasons. The subscription stays `Active` with an unchanged
+    ///         `nextChargeDate`, so a naive keeper will retry it forever.
+    ///         **The keeper must treat a reverting charge as a dunning signal,
+    ///         not a transient error**, and escalate off-chain rather than
+    ///         retrying indefinitely. Cancellation still works in this state;
+    ///         no funds are at risk.
+    ///
     /// @param subscriptionId The subscription to charge
     function chargeSubscription(uint256 subscriptionId) external nonReentrant whenNotPaused {
+        _requireExists(subscriptionId);
         Subscription storage sub = subscriptions[subscriptionId];
         require(
             msg.sender == sub.subscriber ||
@@ -570,36 +745,76 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         require(sub.status == Status.Active, "Not active");
         require(block.timestamp >= sub.nextChargeDate, "Not due yet");
 
-        if (isPermit2Subscription[subscriptionId]) {
-            // Permit2 path: pull via Permit2.transferFrom inside try/catch so
-            // expired allowance or insufficient balance flips status to
-            // PastDue instead of reverting — the keeper stays healthy and the
-            // subscription becomes cancelable through the normal PastDue flow.
-            uint256 amount = _resolveChargeAmount(subscriptionId);
-            require(amount > 0, "Charge amount is zero");
-            bool paid = _tryChargePermit2(subscriptionId, amount);
-            if (paid) {
-                require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
-                sub.nextChargeDate = sub.nextChargeDate + sub.interval;
-            } else {
-                sub.status = Status.PastDue;
-                emit SubscriptionPastDue(subscriptionId, sub.subscriber, sub.merchant);
-            }
+        // ---- checks ----
+        // The discount cycle is previewed, never consumed, until the pull is
+        // committed — a failed charge must not burn a discounted cycle (SC-22).
+        bool viaPermit2 = isPermit2Subscription[subscriptionId];
+        uint256 amount = _previewChargeAmount(subscriptionId);
+        uint256 fee = _feeFor(subscriptionId, amount);
+        address payer;
+        if (amount > 0 && amount - fee > 0) {
+            payer = viaPermit2
+                ? (_permit2CanPay(subscriptionId, amount) ? sub.subscriber : address(0))
+                : _selectPayer(subscriptionId, IERC20(sub.token), amount);
+        }
+
+        if (payer == address(0)) {
+            sub.status = Status.PastDue;
+            emit SubscriptionPastDue(subscriptionId, sub.subscriber, sub.merchant);
             return;
         }
 
-        bool success = _tryProcessPayment(subscriptionId);
-        if (success) {
-            require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
-            sub.nextChargeDate = sub.nextChargeDate + sub.interval;
+        // ---- effects ----
+        _consumeDiscountCycle(subscriptionId);
+        sub.totalCharged += amount;
+        require(sub.nextChargeDate <= type(uint256).max - sub.interval, "Interval overflow");
+        sub.nextChargeDate = sub.nextChargeDate + sub.interval;
+        // PaymentReceived always reports the subscription's subscriber in the
+        // indexed slot; the funding wallet rides on SubscriptionPaymentFunded.
+        emit PaymentReceived(
+            subscriptionId, sub.subscriber, sub.merchant, sub.token, amount, fee, block.timestamp
+        );
+        if (payer != sub.subscriber) {
+            emit SubscriptionPaymentFunded(subscriptionId, payer, amount);
+        }
+
+        // ---- interactions ----
+        if (viaPermit2) {
+            _settleViaPermit2(sub, amount - fee, fee);
         } else {
-            sub.status = Status.PastDue;
-            emit SubscriptionPastDue(subscriptionId, sub.subscriber, sub.merchant);
+            _settleViaAllowance(sub, payer, amount - fee, fee);
+        }
+    }
+
+    function _settleViaPermit2(
+        Subscription storage sub,
+        uint256 merchantAmount,
+        uint256 fee
+    ) internal {
+        PERMIT2.transferFrom(sub.subscriber, sub.merchant, uint160(merchantAmount), sub.token);
+        if (fee > 0) {
+            PERMIT2.transferFrom(sub.subscriber, platformWallet, uint160(fee), sub.token);
+        }
+    }
+
+    function _settleViaAllowance(
+        Subscription storage sub,
+        address payer,
+        uint256 merchantAmount,
+        uint256 fee
+    ) internal {
+        IERC20 token = IERC20(sub.token);
+        // slither-disable-next-line arbitrary-send-erc20
+        token.safeTransferFrom(payer, sub.merchant, merchantAmount);
+        if (fee > 0) {
+            // slither-disable-next-line arbitrary-send-erc20
+            token.safeTransferFrom(payer, platformWallet, fee);
         }
     }
 
     /// @notice Cancel a subscription. Callable by subscriber or merchant.
     function cancelSubscription(uint256 subscriptionId) external nonReentrant {
+        _requireExists(subscriptionId);
         Subscription storage sub = subscriptions[subscriptionId];
         require(msg.sender == sub.subscriber || msg.sender == sub.merchant, "Not authorized");
         require(sub.status == Status.Active || sub.status == Status.PastDue, "Already inactive");
@@ -614,7 +829,9 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         address subscriber
     ) external nonReentrant {
         require(msg.sender == relayer, "Only relayer");
+        _requireExists(subscriptionId);
         Subscription storage sub = subscriptions[subscriptionId];
+        require(subscriber != address(0), "Invalid subscriber");
         require(sub.subscriber == subscriber, "Not the subscriber");
         require(
             sub.status == Status.Active || sub.status == Status.PastDue,
@@ -631,7 +848,9 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         address merchant
     ) external nonReentrant {
         require(msg.sender == relayer, "Only relayer");
+        _requireExists(subscriptionId);
         Subscription storage sub = subscriptions[subscriptionId];
+        require(merchant != address(0), "Invalid merchant");
         require(sub.merchant == merchant, "Not the merchant");
         require(
             sub.status == Status.Active || sub.status == Status.PastDue,
@@ -645,6 +864,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     /// @notice Request migrating a subscription to a new wallet. The new wallet
     ///         must call acceptSubscriptionWalletUpdate to complete the transfer.
     function requestSubscriptionWalletUpdate(uint256 subscriptionId, address newSubscriber) external nonReentrant {
+        _requireExists(subscriptionId);
         Subscription storage sub = subscriptions[subscriptionId];
         require(msg.sender == sub.subscriber, "Not subscriber");
         require(newSubscriber != address(0), "Invalid address");
@@ -664,9 +884,24 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             revert("Subscription no longer active");
         }
 
+        // A Permit2 allowance is keyed on the old owner inside Permit2 and
+        // cannot be re-granted from here, so migration would silently guarantee
+        // failure one interval later (SC-16).
+        require(!isPermit2Subscription[subscriptionId], "Migrate unsupported for Permit2 subs");
+        require(
+            IERC20(sub.token).allowance(msg.sender, address(this)) >= sub.amount,
+            "New wallet has no allowance"
+        );
+
         address oldSubscriber = sub.subscriber;
         sub.subscriber = msg.sender;
         delete pendingWalletUpdates[subscriptionId];
+
+        // Every BackupPayerConsent named the *old* subscriber. Migrating the
+        // subscription would silently repoint that consent at a wallet the
+        // backup never agreed to back, so the list is cleared and the backups
+        // must re-consent under the new owner.
+        _clearBackupPayers(subscriptionId);
 
         emit SubscriptionWalletUpdated(subscriptionId, oldSubscriber, msg.sender);
     }
@@ -677,18 +912,22 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         emit AcceptedTokenUpdated(token, accepted);
     }
 
-    /// @notice Update the platform fee. Max 1000 bps (10%).
+    /// @notice Update the platform fee. Max 1000 bps (10%). Live subscriptions
+    ///         clamp to the ceiling their subscriber signed, so a raise only
+    ///         affects subscriptions that signed for at least this much.
     function setPlatformFee(uint256 _fee) external onlyOwner {
-        require(_fee <= 1000, "Fee too high");
+        require(_fee <= MAX_PLATFORM_FEE_BPS, "Fee too high");
+        uint256 old = platformFee;
         platformFee = _fee;
-        emit PlatformFeeUpdated(_fee);
+        emit PlatformFeeUpdated(old, _fee);
     }
 
     /// @notice Update the wallet that receives platform fees.
     function setPlatformWallet(address _wallet) external onlyOwner {
         require(_wallet != address(0), "Invalid wallet");
+        address old = platformWallet;
         platformWallet = _wallet;
-        emit PlatformWalletUpdated(_wallet);
+        emit PlatformWalletUpdated(old, _wallet);
     }
 
     /// @notice Set the authorized relayer address for gasless operations.
@@ -705,8 +944,21 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         emit GaslessPausedUpdated(_paused);
     }
 
+    /// @notice Sweep tokens sent here directly. The manager holds no user
+    ///         balances between transactions.
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+        emit TokenRescued(token, to, amount);
+        IERC20(token).safeTransfer(to, amount);
+    }
+
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
+
+    /// @notice Disabled — see PaymentVault.renounceOwnership (SC-14).
+    function renounceOwnership() public pure override {
+        revert("Renounce disabled");
+    }
 
     // Both _processPayment and _tryProcessPayment read sub.subscriber and
     // sub.merchant from storage. Those fields are written exactly once, at
@@ -719,18 +971,35 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
     // amount + interval at creation time. See test_reverts_if_relayer_swaps_*
     // in test/SubscriptionManagerPermit.t.sol.
 
-    /// @dev Resolves the effective charge amount for this cycle. If the sub
-    ///      has remaining discount cycles, applies `discountAmount` and
-    ///      decrements. Returns the charge amount the caller should pull.
-    function _resolveChargeAmount(uint256 subscriptionId) internal returns (uint256) {
+    /// @dev Effective charge amount for this cycle without mutating discount
+    ///      state. Callers that commit to a pull follow up with
+    ///      _consumeDiscountCycle.
+    function _previewChargeAmount(uint256 subscriptionId) internal view returns (uint256) {
         Subscription storage sub = subscriptions[subscriptionId];
         SubscriptionDiscount storage d = subscriptionDiscounts[subscriptionId];
         if (d.discountCyclesRemaining == 0 || d.discountAmount == 0) {
             return sub.amount;
         }
-        d.discountCyclesRemaining--;
         if (d.discountAmount >= sub.amount) return 0;
         return sub.amount - d.discountAmount;
+    }
+
+    /// @dev Burns one discounted cycle. No-op when no discount is active.
+    function _consumeDiscountCycle(uint256 subscriptionId) internal {
+        SubscriptionDiscount storage d = subscriptionDiscounts[subscriptionId];
+        if (d.discountCyclesRemaining == 0 || d.discountAmount == 0) return;
+        uint256 remaining = d.discountCyclesRemaining - 1;
+        d.discountCyclesRemaining = remaining;
+        emit SubscriptionDiscountConsumed(subscriptionId, remaining);
+    }
+
+    /// @dev Preview + consume in one step. Only for paths that revert on
+    ///      payment failure (subscription creation), where the whole
+    ///      transaction unwinds if the pull fails.
+    function _resolveChargeAmount(uint256 subscriptionId) internal returns (uint256) {
+        uint256 amount = _previewChargeAmount(subscriptionId);
+        _consumeDiscountCycle(subscriptionId);
+        return amount;
     }
 
     function _processPayment(uint256 subscriptionId) internal {
@@ -741,93 +1010,64 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         address subscriber = sub.subscriber;
         address merchant_ = sub.merchant;
 
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
+        uint256 fee = _feeFor(subscriptionId, amount);
         uint256 merchantAmount = amount - fee;
         require(merchantAmount > 0, "Amount too small for fee");
+
+        sub.totalCharged += amount;
+        emit PaymentReceived(subscriptionId, subscriber, merchant_, token, amount, fee, block.timestamp);
+
         // slither-disable-next-line arbitrary-send-erc20
         IERC20(token).safeTransferFrom(subscriber, merchant_, merchantAmount);
         if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(token).safeTransferFrom(subscriber, platformWallet, fee);
         }
-        sub.totalCharged += amount;
-        emit PaymentReceived(subscriptionId, subscriber, merchant_, token, amount, fee, block.timestamp);
     }
 
-    function _tryProcessPayment(uint256 subscriptionId) internal returns (bool) {
-        Subscription storage sub = subscriptions[subscriptionId];
-        SubscriptionDiscount storage d = subscriptionDiscounts[subscriptionId];
-
-        // Preview the charge WITHOUT decrementing — if balance/allowance is
-        // insufficient we must leave the discount state intact so the retry
-        // gets the same discounted amount.
-        uint256 amount = sub.amount;
-        if (d.discountCyclesRemaining > 0 && d.discountAmount > 0) {
-            amount = d.discountAmount >= sub.amount ? 0 : sub.amount - d.discountAmount;
-        }
-        address tokenAddr = sub.token;
-        address merchant_ = sub.merchant;
-
-        uint256 fee = 0;
-        if (platformFee > 0 && platformWallet != address(0)) {
-            fee = (amount * platformFee) / 10000;
-        }
-        uint256 merchantAmount = amount - fee;
-        if (merchantAmount == 0) return false;
-        IERC20 token = IERC20(tokenAddr);
-
-        // Pick the first wallet (primary, then each backup in order) that
-        // can cover the full charge. Backups were pre-authorized by the
-        // primary subscriber via BackupPayerAuth; they signed their own
-        // EIP-2612 permit at the time they were added.
-        address payer = sub.subscriber;
+    /// @dev Picks the funding wallet for this cycle: the primary subscriber if
+    /// it can cover, else the first consented backup that can. Returns
+    /// address(0) when nobody can pay.
+    function _selectPayer(uint256 subscriptionId, IERC20 token, uint256 amount)
+        internal
+        view
+        returns (address)
+    {
+        address primary = subscriptions[subscriptionId].subscriber;
         if (
-            token.allowance(payer, address(this)) < amount ||
-            token.balanceOf(payer) < amount
+            token.allowance(primary, address(this)) >= amount &&
+            token.balanceOf(primary) >= amount
         ) {
-            address[] storage backups = subscriptionBackups[subscriptionId];
-            payer = address(0);
-            uint256 n = backups.length;
-            for (uint256 i = 0; i < n; i++) {
-                address b = backups[i];
-                if (
-                    token.allowance(b, address(this)) >= amount &&
-                    token.balanceOf(b) >= amount
-                ) {
-                    payer = b;
-                    break;
-                }
+            return primary;
+        }
+
+        address[] storage backups = subscriptionBackups[subscriptionId];
+        uint256 n = backups.length;
+        for (uint256 i = 0; i < n; i++) {
+            address b = backups[i];
+            // backupPayerMaxAmount is written only from a BackupPayerConsent
+            // signature by `b` itself, and caps what this subscription may pull
+            // from that wallet per cycle. A wallet may consent to less than the
+            // full charge — it is then simply skipped, rather than the whole
+            // authorization being refused up front.
+            if (
+                backupPayerMaxAmount[subscriptionId][b] >= amount &&
+                token.allowance(b, address(this)) >= amount &&
+                token.balanceOf(b) >= amount
+            ) {
+                return b;
             }
-            if (payer == address(0)) return false;
         }
-
-        // Committed to pulling — decrement discount state now.
-        if (d.discountCyclesRemaining > 0 && d.discountAmount > 0) {
-            d.discountCyclesRemaining--;
-        }
-
-        // slither-disable-next-line arbitrary-send-erc20
-        token.safeTransferFrom(payer, merchant_, merchantAmount);
-        if (fee > 0) {
-            require(platformWallet != address(0), "Invalid platform wallet");
-            // slither-disable-next-line arbitrary-send-erc20
-            token.safeTransferFrom(payer, platformWallet, fee);
-        }
-        sub.totalCharged += amount;
-        emit PaymentReceived(subscriptionId, payer, merchant_, tokenAddr, amount, fee, block.timestamp);
-        return true;
+        return address(0);
     }
 
     // -------------------------------------------------------------------
-    // Backup payers (wallet-walk). The primary subscriber authorizes a
-    // backup via an EIP-712 BackupPayerAuth signature; the backup wallet
-    // signs its own EIP-2612 permit so the contract can pull USDC from
-    // it. When the primary runs out of funds, chargeSubscription walks
-    // this list and pulls from the first backup that can cover.
+    // Backup payers (wallet-walk). Both sides must sign: the primary
+    // subscriber authorizes the wallet via BackupPayerAuth, and the backup
+    // wallet consents via BackupPayerConsent, which binds the subscription
+    // id, the primary, the token and a per-charge cap. When the primary
+    // runs out of funds, chargeSubscription walks this list and pulls from
+    // the first backup that consented to at least this cycle's amount.
     // -------------------------------------------------------------------
 
     /// @notice View list of backup payer addresses for a subscription.
@@ -843,6 +1083,8 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 subscriptionId;
         address backup;
         uint256 authDeadline;
+        uint256 maxAmount;
+        uint256 consentDeadline;
         uint256 permitValue;
         uint256 permitDeadline;
         uint8 v;
@@ -857,7 +1099,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
         uint256 authDeadline,
         bytes calldata subscriberAuthSig
     ) internal {
-        uint256 nonce = intentNonces[subscriber];
+        uint256 nonce = backupAuthNonces[subscriber];
         bytes32 digest = _hashTypedDataV4(
             keccak256(
                 abi.encode(
@@ -869,35 +1111,70 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
                 )
             )
         );
-        require(
-            ECDSA.recover(digest, subscriberAuthSig) == subscriber,
-            "Bad subscriber auth"
+        address recovered = ECDSA.recover(digest, subscriberAuthSig);
+        require(recovered != address(0), "Invalid signer");
+        require(recovered == subscriber, "Bad subscriber auth");
+        unchecked { backupAuthNonces[subscriber] = nonce + 1; }
+    }
+
+    /// @dev Verifies the backup wallet's own EIP-712 consent. This is what makes
+    /// the wallet-walk safe: an ERC-20 allowance grants spending power, it does
+    /// not express agreement to bankroll a specific subscription (SC-01).
+    function _verifyBackupConsent(
+        BackupPayerParams calldata p,
+        address subscriber,
+        address token,
+        bytes calldata backupConsentSig
+    ) internal {
+        uint256 nonce = backupConsentNonces[p.backup];
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    BACKUP_PAYER_CONSENT_TYPEHASH,
+                    p.subscriptionId,
+                    subscriber,
+                    token,
+                    p.maxAmount,
+                    nonce,
+                    p.consentDeadline
+                )
+            )
         );
-        intentNonces[subscriber] = nonce + 1;
+        address recovered = ECDSA.recover(digest, backupConsentSig);
+        require(recovered != address(0), "Invalid signer");
+        require(recovered == p.backup, "Bad backup consent");
+        unchecked { backupConsentNonces[p.backup] = nonce + 1; }
     }
 
     /// @notice Add a backup payer. Relayer-submitted, gasless for both
     ///         the primary subscriber and the backup wallet. The primary
-    ///         signs a BackupPayerAuth EIP-712 message; the backup signs
-    ///         an EIP-2612 permit granting the contract standing
-    ///         allowance on their USDC.
+    ///         signs a BackupPayerAuth EIP-712 message; the backup signs a
+    ///         BackupPayerConsent EIP-712 message *and* an EIP-2612 permit
+    ///         granting the contract allowance on their token.
     function addSubscriptionBackupPayer(
         BackupPayerParams calldata p,
-        bytes calldata subscriberAuthSig
+        bytes calldata subscriberAuthSig,
+        bytes calldata backupConsentSig
     ) external nonReentrant whenNotPaused {
         require(msg.sender == relayer, "Only relayer");
         require(!gaslessPaused, "Gasless paused");
         require(block.timestamp <= p.authDeadline, "Auth expired");
+        require(block.timestamp <= p.consentDeadline, "Consent expired");
+        _requireExists(p.subscriptionId);
 
         Subscription storage sub = subscriptions[p.subscriptionId];
-        require(
-            sub.status == Status.Active || sub.status == Status.PastDue,
-            "Not active"
-        );
+        // PastDue subscriptions can never be charged, so a backup added to one
+        // would do nothing but burn a nonce (SC-17).
+        require(sub.status == Status.Active, "Not active");
         require(
             p.backup != address(0) && p.backup != sub.subscriber,
             "Invalid backup"
         );
+        // A backup names its own per-charge ceiling. It may be below
+        // `sub.amount` — that wallet is then skipped at charge time instead of
+        // funding a cycle it never agreed to cover.
+        require(p.maxAmount > 0, "Zero backup cap");
+        require(p.permitValue >= p.maxAmount, "Permit < backup cap");
 
         address[] storage backups = subscriptionBackups[p.subscriptionId];
         require(backups.length < MAX_BACKUP_PAYERS, "Too many backups");
@@ -912,10 +1189,17 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             p.authDeadline,
             subscriberAuthSig
         );
+        _verifyBackupConsent(p, sub.subscriber, sub.token, backupConsentSig);
 
-        // Submit backup's permit. Caught permit failure is non-fatal —
-        // the backup may already have a standing allowance that covers
-        // charges without needing a permit this call.
+        // Effects before interactions: the permit call below is the only
+        // external call, and a failure reverts the whole transaction.
+        backups.push(p.backup);
+        backupPayerMaxAmount[p.subscriptionId][p.backup] = p.maxAmount;
+        emit SubscriptionBackupPayerAdded(p.subscriptionId, p.backup, p.maxAmount);
+
+        // Submit the backup's permit. A failure is only tolerable if the wallet
+        // already has standing allowance — swallowing it unconditionally is what
+        // let garbage permit components through (SC-01).
         try
             IERC20Permit(sub.token).permit(
                 p.backup,
@@ -926,21 +1210,39 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
                 p.r,
                 p.s
             )
-        {} catch {}
-
-        backups.push(p.backup);
-        emit SubscriptionBackupPayerAdded(p.subscriptionId, p.backup);
+        {} catch {
+            require(
+                IERC20(sub.token).allowance(p.backup, address(this)) >= p.permitValue,
+                "Backup permit failed"
+            );
+        }
     }
 
-    /// @notice Remove a backup payer. Callable by the primary subscriber only.
-    ///         Not relayer-gated — the subscriber already holds gas on a
-    ///         wallet they control (the primary).
+    /// @dev Drops every backup payer and its cap, emitting one removal event
+    /// each so the indexer can follow.
+    function _clearBackupPayers(uint256 subscriptionId) internal {
+        address[] storage backups = subscriptionBackups[subscriptionId];
+        uint256 n = backups.length;
+        for (uint256 i = 0; i < n; i++) {
+            address b = backups[i];
+            delete backupPayerMaxAmount[subscriptionId][b];
+            emit SubscriptionBackupPayerRemoved(subscriptionId, b);
+        }
+        delete subscriptionBackups[subscriptionId];
+    }
+
+    /// @notice Remove a backup payer. Callable by the primary subscriber or by
+    ///         the backup wallet itself — the party whose funds are at risk must
+    ///         always be able to walk away unilaterally (SC-02).
     function removeSubscriptionBackupPayer(uint256 subscriptionId, address backup)
         external
         nonReentrant
     {
         Subscription storage sub = subscriptions[subscriptionId];
-        require(msg.sender == sub.subscriber, "Not subscriber");
+        require(
+            msg.sender == sub.subscriber || msg.sender == backup,
+            "Not subscriber or backup"
+        );
 
         address[] storage backups = subscriptionBackups[subscriptionId];
         uint256 n = backups.length;
@@ -948,6 +1250,7 @@ contract SubscriptionManager is Ownable2Step, ReentrancyGuard, Pausable, EIP712 
             if (backups[i] == backup) {
                 if (i != n - 1) backups[i] = backups[n - 1];
                 backups.pop();
+                delete backupPayerMaxAmount[subscriptionId][backup];
                 emit SubscriptionBackupPayerRemoved(subscriptionId, backup);
                 return;
             }

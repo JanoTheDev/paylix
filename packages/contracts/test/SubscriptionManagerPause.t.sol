@@ -23,8 +23,10 @@ contract SubscriptionManagerPauseTest is Test {
     uint256 public constant MONTHLY = 30 days;
     uint256 public constant AMOUNT = 10e6;
 
+    uint256 public constant MAX_FEE_BPS = 50;
+
     bytes32 private constant SUBSCRIPTION_INTENT_TYPEHASH = keccak256(
-        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 nonce,uint256 deadline)"
+        "SubscriptionIntent(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -178,6 +180,7 @@ contract SubscriptionManagerPauseTest is Test {
             productId: productId,
             customerId: customerId,
             permitValue: AMOUNT * 1000,
+            maxFeeBps: MAX_FEE_BPS,
             deadline: deadline,
             v: 0,
             r: bytes32(0),
@@ -234,6 +237,8 @@ contract SubscriptionManagerPauseTest is Test {
                 p.productId,
                 p.customerId,
                 p.permitValue,
+                p.maxFeeBps,
+                subs.FLOW_EIP2612(),
                 subs.getIntentNonce(buyer),
                 p.deadline
             )

@@ -26,8 +26,10 @@ contract SubscriptionManagerDiscountTest is Test {
     uint256 public constant AMOUNT = 10e6;
     uint256 public constant DISCOUNT = 2_500_000; // 25%
 
+    uint256 public constant MAX_FEE_BPS = 50;
+
     bytes32 private constant SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH = keccak256(
-        "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 nonce,uint256 deadline)"
+        "SubscriptionIntentDiscount(address buyer,address token,address merchant,uint256 amount,uint256 interval,bytes32 productId,bytes32 customerId,uint256 permitValue,uint256 discountAmount,uint256 discountCycles,uint256 maxFeeBps,uint8 flow,uint256 nonce,uint256 deadline)"
     );
 
     function setUp() public {
@@ -148,6 +150,7 @@ contract SubscriptionManagerDiscountTest is Test {
             permitValue: AMOUNT * 1000,
             discountAmount: discount,
             discountCycles: cycles,
+            maxFeeBps: MAX_FEE_BPS,
             deadline: block.timestamp + 1 hours,
             v: 0,
             r: bytes32(0),
@@ -177,26 +180,40 @@ contract SubscriptionManagerDiscountTest is Test {
         return p;
     }
 
+    /// Split like the contract's own `_hashDiscountIntent` — every field is a
+    /// value type, so two encodes concatenated are byte-identical to one.
+    function _discountStructHash(
+        SubscriptionManager.CreateSubPermitDiscountParams memory p
+    ) internal view returns (bytes32) {
+        return keccak256(
+            bytes.concat(
+                abi.encode(
+                    SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH,
+                    p.buyer,
+                    p.token,
+                    p.merchant,
+                    p.amount,
+                    p.interval,
+                    p.productId
+                ),
+                abi.encode(
+                    p.customerId,
+                    p.permitValue,
+                    p.discountAmount,
+                    p.discountCycles,
+                    p.maxFeeBps,
+                    subs.FLOW_EIP2612(),
+                    subs.getIntentNonce(buyer),
+                    p.deadline
+                )
+            )
+        );
+    }
+
     function _signIntent(
         SubscriptionManager.CreateSubPermitDiscountParams memory p
     ) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(
-            abi.encode(
-                SUBSCRIPTION_INTENT_DISCOUNT_TYPEHASH,
-                p.buyer,
-                p.token,
-                p.merchant,
-                p.amount,
-                p.interval,
-                p.productId,
-                p.customerId,
-                p.permitValue,
-                p.discountAmount,
-                p.discountCycles,
-                subs.getIntentNonce(buyer),
-                p.deadline
-            )
-        );
+        bytes32 structHash = _discountStructHash(p);
         bytes32 digest = keccak256(
             abi.encodePacked("\x19\x01", subs.domainSeparator(), structHash)
         );
