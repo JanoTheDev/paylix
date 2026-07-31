@@ -91,7 +91,16 @@ const transactionFn = vi.fn();
 
 function makeSelectChain() {
   const chain: Record<string, unknown> = {};
-  const methods = ["from", "where", "orderBy", "limit", "innerJoin", "leftJoin", "groupBy"];
+  const methods = [
+    "from",
+    "where",
+    "orderBy",
+    "limit",
+    "offset",
+    "innerJoin",
+    "leftJoin",
+    "groupBy",
+  ];
   for (const m of methods) chain[m] = () => chain;
   // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (r: (v: QueryResult) => void) => void }).then = (resolve) => {
@@ -144,6 +153,10 @@ const mockDb = {
   insert: vi.fn(() => makeInsertChain()),
   transaction: transactionFn,
 };
+
+// The trial branch runs its writes inside db.transaction — hand the callback the
+// same chainable mock so the recorded calls stay observable.
+transactionFn.mockImplementation(async (cb: (tx: typeof mockDb) => unknown) => cb(mockDb));
 
 vi.mock("@paylix/db/client", () => ({
   createDb: () => mockDb,
@@ -293,8 +306,9 @@ describe("handleSubscriptionCreated trial activation", () => {
       expect.anything(),
       expect.anything(),
     );
-    // Three selects ran (idempotency + trial-match + checkout candidates).
-    expect(mockDb.select.mock.calls.length).toBe(3);
+    // Four selects ran (idempotency + trial-match + checkout candidates +
+    // the dedup lookup recordUnmatched does before retaining the event).
+    expect(mockDb.select.mock.calls.length).toBe(4);
     // An unmatched event insert was issued (recordUnmatched).
     expect(mockDb.insert).toHaveBeenCalled();
   });

@@ -71,6 +71,7 @@ function normalizeReason(reason: string): TrialConversionFailureReason {
     case "allowance_revoked":
     case "permit_expired":
     case "nonce_drift":
+    case "intent_schema_outdated":
       return reason;
     default:
       return "unknown";

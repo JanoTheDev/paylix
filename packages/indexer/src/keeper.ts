@@ -2,8 +2,8 @@ import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createDb } from "@paylix/db/client";
 import { subscriptions } from "@paylix/db/schema";
-import { eq, lte, and } from "drizzle-orm";
-import { config, deployments } from "./config";
+import { eq, lte, and, isNull } from "drizzle-orm";
+import { config, deployments, parsePositiveIntEnv } from "./config";
 import type { Deployment } from "@paylix/config/deployments";
 import {
   classifyDunningOutcome,
@@ -13,8 +13,20 @@ import {
 } from "./dunning";
 import { sendSubscriptionEmail } from "./emails/send-subscription-email";
 import { dispatchWebhooks } from "./webhook-dispatch";
+import { classifyChargeFailure } from "./charge-error";
 
 const DEFAULT_INTERVAL_SECONDS = 30 * 24 * 60 * 60; // 30 days fallback
+
+// Per-transaction receipt wait. Anything longer and one hung RPC call starves
+// the rest of the batch and every other keeper-scheduled job.
+export const RECEIPT_TIMEOUT_MS = parsePositiveIntEnv(
+  "KEEPER_RECEIPT_TIMEOUT_MS",
+  120_000,
+);
+// Cap the rows one tick will attempt; the remainder is picked up next tick.
+const KEEPER_BATCH_SIZE = parsePositiveIntEnv("KEEPER_BATCH_SIZE", 100);
+// Re-attempt delay for failures on our side (manager paused, RPC trouble).
+const TRANSIENT_RETRY_MS = 15 * 60 * 1000;
 
 const chargeSubscriptionAbi = [{
   name: "chargeSubscription",
@@ -69,7 +81,8 @@ export async function runKeeper() {
         eq(subscriptions.status, "active"),
         lte(subscriptions.nextChargeDate, now)
       )
-    );
+    )
+    .limit(KEEPER_BATCH_SIZE);
 
   console.log(`[Keeper] Found ${dueSubscriptions.length} subscriptions due for charge`);
 
@@ -85,7 +98,6 @@ export async function runKeeper() {
             .update(subscriptions)
             .set({ status: "cancelled", nextChargeDate: null })
             .where(eq(subscriptions.id, sub.id));
-          const { dispatchWebhooks } = await import("./webhook-dispatch");
           await dispatchWebhooks(
             sub.organizationId,
             "subscription.cancelled",
@@ -125,7 +137,6 @@ export async function runKeeper() {
             nextChargeDate: null,
           })
           .where(eq(subscriptions.id, sub.id));
-        const { dispatchWebhooks } = await import("./webhook-dispatch");
         await dispatchWebhooks(
           sub.organizationId,
           "subscription.cancelled",
@@ -152,9 +163,12 @@ export async function runKeeper() {
       continue;
     }
 
-    // Optimistically bump nextChargeDate BEFORE sending the tx to prevent the
-    // next keeper tick from reselecting this subscription if the current
-    // attempt is still in-flight. Roll back on failure.
+    // Claim the row by bumping nextChargeDate BEFORE sending the tx, so the
+    // next tick can't reselect a subscription whose charge is still in flight.
+    // The bump is conditional on next_charge_date still holding the value we
+    // read: if another keeper instance (or an overlapping tick) claimed it
+    // first, the UPDATE matches nothing and we skip the row rather than
+    // double-charging the subscriber. Rolled back on failure.
     const originalNextChargeDate = sub.nextChargeDate;
     const intervalSeconds =
       (sub.intervalSeconds && sub.intervalSeconds > 0
@@ -167,10 +181,24 @@ export async function runKeeper() {
     const tentativeNext = new Date(baseTime + intervalMs);
 
     try {
-      await db
+      const claimed = await db
         .update(subscriptions)
         .set({ nextChargeDate: tentativeNext })
-        .where(eq(subscriptions.id, sub.id));
+        .where(
+          and(
+            eq(subscriptions.id, sub.id),
+            originalNextChargeDate
+              ? eq(subscriptions.nextChargeDate, originalNextChargeDate)
+              : isNull(subscriptions.nextChargeDate),
+          ),
+        )
+        .returning({ id: subscriptions.id });
+      if (claimed.length === 0) {
+        console.warn(
+          `[Keeper] Subscription ${sub.id} was claimed by another keeper pass, skipping`,
+        );
+        continue;
+      }
     } catch (err) {
       console.error(
         `[Keeper] Failed to bump nextChargeDate for ${sub.id}, skipping:`,
@@ -223,9 +251,24 @@ export async function runKeeper() {
 
       console.log(`[Keeper] Transaction sent: ${txHash}`);
 
-      const receipt = await route.publicClient.waitForTransactionReceipt({ hash: txHash });
+      // Bounded wait: an unbounded one blocks every remaining subscription in
+      // the batch — and, via the keeperRunning guard, the whole background
+      // pipeline — on a single stuck transaction.
+      const receipt = await route.publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: RECEIPT_TIMEOUT_MS,
+      });
 
       console.log(`[Keeper] Transaction ${receipt.status}: ${txHash} (block ${receipt.blockNumber})`);
+
+      // waitForTransactionReceipt resolves for reverted transactions too.
+      // Treating "landed" as "succeeded" would reset the dunning ladder and
+      // hand the subscriber a free billing period.
+      if (receipt.status !== "success") {
+        throw new Error(
+          `chargeSubscription reverted on-chain (tx ${txHash}, block ${receipt.blockNumber})`,
+        );
+      }
 
       await db
         .update(subscriptions)
@@ -239,14 +282,46 @@ export async function runKeeper() {
     } catch (error) {
       console.error(`[Keeper] Failed to charge subscription ${sub.id}:`, error);
 
-      const newFailureCount = (sub.chargeFailureCount ?? 0) + 1;
       const now = new Date();
       const errMsg = error instanceof Error ? error.message : String(error);
+      const failureKind = classifyChargeFailure(error);
 
-      const outcome = classifyDunningOutcome({
+      // A pause on OUR contract, an RPC timeout or a relayer gas problem is not
+      // the subscriber's fault — it must not walk them toward past_due.
+      const newFailureCount =
+        failureKind === "transient"
+          ? (sub.chargeFailureCount ?? 0)
+          : (sub.chargeFailureCount ?? 0) + 1;
+
+      // Real hours-past-due, not a hardcoded 0 — otherwise the "cancel" arm of
+      // the ladder is structurally unreachable and a subscription can only ever
+      // leave the retry loop via sweepLongPastDue.
+      const hoursPastDue = sub.pastDueSince
+        ? Math.max(0, (now.getTime() - sub.pastDueSince.getTime()) / (60 * 60 * 1000))
+        : 0;
+
+      let outcome = classifyDunningOutcome({
         failureCount: newFailureCount,
-        hoursPastDue: 0,
+        hoursPastDue,
       });
+
+      if (failureKind === "token_blocked" && outcome === "retry") {
+        // The token itself refuses the transfer (blacklisted subscriber, paused
+        // or freezing token). Payability is pre-checked on-chain now, so the
+        // call reverts inside transferFrom and the contract's own PastDue write
+        // is rolled back with it — the keeper is the only escalation path left.
+        // Retrying is provably useless and each attempt costs gas plus a receipt
+        // wait in this sequential loop, so skip the ladder.
+        console.warn(
+          `[Keeper] Subscription ${sub.id} failed at the token level; escalating straight to past_due: ${errMsg}`,
+        );
+        outcome = "past_due";
+      } else if (failureKind === "transient") {
+        console.warn(
+          `[Keeper] Subscription ${sub.id} hit a transient failure; not counting it against the subscriber: ${errMsg}`,
+        );
+        outcome = "retry";
+      }
 
       const update: Partial<typeof subscriptions.$inferInsert> = {
         chargeFailureCount: newFailureCount,
@@ -256,7 +331,12 @@ export async function runKeeper() {
 
       switch (outcome) {
         case "retry":
-          update.nextChargeDate = computeNextRetryAt(newFailureCount, now);
+          update.nextChargeDate =
+            failureKind === "transient"
+              ? // Come back shortly — the condition is on our side and is
+                // usually cleared in minutes, not the 24h ladder step.
+                new Date(now.getTime() + TRANSIENT_RETRY_MS)
+              : computeNextRetryAt(newFailureCount, now);
           break;
         case "past_due":
           update.status = "past_due";
@@ -264,9 +344,14 @@ export async function runKeeper() {
           update.nextChargeDate = computeNextRetryAt(RETRY_SCHEDULE_HOURS.length, now);
           break;
         case "cancel":
-          // Unreachable with hoursPastDue=0 — Task 11's sweep handles long-past-due auto-cancel.
-          console.error(`[Keeper] Unexpected 'cancel' outcome for ${sub.id} with hoursPastDue=0`);
-          update.nextChargeDate = computeNextRetryAt(newFailureCount, now);
+          // Past due beyond MAX_PAST_DUE_DAYS — same terminal state
+          // sweepLongPastDue applies, reached here first because we already
+          // know this charge failed.
+          update.status = "cancelled";
+          update.nextChargeDate = null;
+          console.log(
+            `[Keeper] Subscription ${sub.id} past due for ${Math.round(hoursPastDue)}h, cancelling`,
+          );
           break;
         default: {
           const _exhaustive: never = outcome;
@@ -286,6 +371,41 @@ export async function runKeeper() {
         sendSubscriptionEmail({ kind: "past-due-reminder", subscriptionId: sub.id }).catch(
           (emailErr) =>
             console.error(`[Keeper] Failed to send past-due email for ${sub.id}:`, emailErr),
+        );
+        // The contract can no longer be relied on to emit SubscriptionPastDue
+        // for this: a token-level revert rolls that write back. Dispatch the
+        // webhook from here so the merchant still learns about it.
+        await dispatchWebhooks(
+          sub.organizationId,
+          "subscription.past_due",
+          {
+            subscriptionId: sub.id,
+            onChainId: sub.onChainId,
+            status: "past_due",
+            reason: failureKind === "token_blocked" ? "token_blocked" : "charge_failed",
+            lastChargeError: errMsg,
+            metadata: sub.metadata ?? {},
+          },
+          sub.livemode,
+        ).catch((webhookErr) =>
+          console.error(`[Keeper] past_due webhook failed for ${sub.id}:`, webhookErr),
+        );
+      }
+
+      if (dbWriteOk && outcome === "cancel") {
+        await dispatchWebhooks(
+          sub.organizationId,
+          "subscription.cancelled",
+          {
+            subscriptionId: sub.id,
+            onChainId: sub.onChainId,
+            status: "cancelled",
+            reason: "past_due_dunning",
+            metadata: sub.metadata ?? {},
+          },
+          sub.livemode,
+        ).catch((webhookErr) =>
+          console.error(`[Keeper] dunning-cancel webhook failed for ${sub.id}:`, webhookErr),
         );
       }
     }

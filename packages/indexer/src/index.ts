@@ -1,17 +1,27 @@
-import { startListener } from "./listener";
-import { runKeeper, sweepLongPastDue } from "./keeper";
+import {
+  startListener,
+  stopListener,
+  waitForListenerDrain,
+  getListenerHealth,
+} from "./listener";
+import { runKeeper, sweepLongPastDue, RECEIPT_TIMEOUT_MS } from "./keeper";
 import {
   runTrialConverterTick,
   runTrialReminderTick,
   runTrialStartedEmailTick,
 } from "./trial-converter";
 import { runCheckoutRecoveryTick } from "./abandonment";
-import { config, deployments } from "./config";
+import { config, deployments, parsePositiveIntEnv } from "./config";
 import { createDb } from "@paylix/db/client";
 import { systemStatus } from "@paylix/db/schema";
 import { retryFailedWebhooks } from "./webhook-dispatch";
 import { retryUnmatchedEvents } from "./handlers";
 import { startAlertsLoop } from "./alerts";
+
+// Shutdown state lives at module scope so the signal handlers can be installed
+// before the (potentially long) startup backfill finishes.
+let shuttingDown = false;
+let keeperTick: Promise<void> | null = null;
 
 async function main() {
   console.log("=================================");
@@ -28,21 +38,29 @@ async function main() {
   // "online" for the entire duration the process is alive and working.
   const db = createDb(config.databaseUrl);
 
-  // Indexer lifecycle has two states:
+  // Indexer lifecycle has three states:
   //   "starting" — process alive and backfilling; can't yet receive new events
   //   "ok"       — listener watchers installed; ready for live events
+  //   "degraded" — process alive but the listener poll loop is failing or a
+  //                block range was skipped; events are NOT flowing
   // The sidebar distinguishes these so users don't try to pay through a
-  // still-warming-up indexer.
+  // still-warming-up (or stalled) indexer.
   let indexerStatus: "starting" | "ok" = "starting";
 
   async function sendHeartbeat() {
+    // Never report "ok" while the listener isn't actually indexing — the
+    // dashboard would show green with no events flowing.
+    const value =
+      indexerStatus === "ok" && getListenerHealth() === "degraded"
+        ? "degraded"
+        : indexerStatus;
     try {
       await db
         .insert(systemStatus)
-        .values({ key: "indexer_heartbeat", value: indexerStatus })
+        .values({ key: "indexer_heartbeat", value })
         .onConflictDoUpdate({
           target: systemStatus.key,
-          set: { value: indexerStatus, updatedAt: new Date() },
+          set: { value, updatedAt: new Date() },
         });
     } catch (err) {
       console.error("[Heartbeat] Failed:", err);
@@ -52,6 +70,44 @@ async function main() {
   await sendHeartbeat();
   setInterval(sendHeartbeat, 30 * 1000);
   console.log("[Heartbeat] Sending every 30 seconds (status: starting).");
+
+  // Graceful shutdown: a container stop must not kill the process mid-charge or
+  // mid-chunk. Stop the poll loops, let the in-flight keeper tick and poll pass
+  // finish, then exit. The hard timeout bounds how long we wait. Installed
+  // before the backfill so a stop during startup is honoured too.
+  // Must outlast a keeper charge that is waiting on a receipt: cutting that
+  // short exits with nextChargeDate already bumped and no dunning write, which
+  // hands the subscriber a free billing period.
+  const SHUTDOWN_TIMEOUT_MS = RECEIPT_TIMEOUT_MS + 30_000;
+  async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Indexer] ${signal} received, draining...`);
+    stopListener();
+    const drain = (async () => {
+      await waitForListenerDrain();
+      if (keeperTick) {
+        console.log("[Indexer] Waiting for the in-flight keeper tick...");
+        await keeperTick.catch(() => {});
+      }
+    })();
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), SHUTDOWN_TIMEOUT_MS),
+    );
+    const outcome = await Promise.race([drain.then(() => "drained" as const), timeout]);
+    if (outcome === "timeout") {
+      console.error(
+        `[Indexer] Drain did not finish within ${SHUTDOWN_TIMEOUT_MS}ms, exiting anyway`,
+      );
+    }
+    indexerStatus = "starting";
+    await sendHeartbeat();
+    console.log("[Indexer] Shutdown complete.");
+    process.exit(0);
+  }
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 
   await startListener();
   await runKeeper();
@@ -65,10 +121,7 @@ async function main() {
   // Keeper interval: prefer KEEPER_INTERVAL_MS (millisecond override) for
   // short intervals (e.g. testing with the "minutely" billing interval),
   // otherwise fall back to KEEPER_INTERVAL_MINUTES.
-  const keeperIntervalMs = parseInt(
-    process.env.KEEPER_INTERVAL_MS ?? "30000",
-    10
-  );
+  const keeperIntervalMs = parsePositiveIntEnv("KEEPER_INTERVAL_MS", 30000);
 
   // Recursive setTimeout + running flag prevents overlapping keeper runs
   // from double-charging subscriptions when a run takes longer than the
@@ -76,34 +129,39 @@ async function main() {
   let keeperRunning = false;
 
   async function scheduleKeeper() {
+    if (shuttingDown) return;
     if (keeperRunning) {
       setTimeout(scheduleKeeper, keeperIntervalMs);
       return;
     }
     keeperRunning = true;
-    try {
-      await runKeeper();
-      await sweepLongPastDue().catch((err) => {
-        console.error("[Indexer] sweepLongPastDue failed:", err);
-      });
-      await runTrialConverterTick().catch((err) => {
-        console.error("[Indexer] trial converter failed:", err);
-      });
-      await runTrialReminderTick().catch((err) => {
-        console.error("[Indexer] trial reminder failed:", err);
-      });
-      await runTrialStartedEmailTick().catch((err) => {
-        console.error("[Indexer] trial started email failed:", err);
-      });
-      await runCheckoutRecoveryTick().catch((err) => {
-        console.error("[Indexer] checkout recovery failed:", err);
-      });
-    } catch (err) {
-      console.error("[Keeper] Unhandled error:", err);
-    } finally {
-      keeperRunning = false;
-      setTimeout(scheduleKeeper, keeperIntervalMs);
-    }
+    keeperTick = (async () => {
+      try {
+        await runKeeper();
+        await sweepLongPastDue().catch((err) => {
+          console.error("[Indexer] sweepLongPastDue failed:", err);
+        });
+        await runTrialConverterTick().catch((err) => {
+          console.error("[Indexer] trial converter failed:", err);
+        });
+        await runTrialReminderTick().catch((err) => {
+          console.error("[Indexer] trial reminder failed:", err);
+        });
+        await runTrialStartedEmailTick().catch((err) => {
+          console.error("[Indexer] trial started email failed:", err);
+        });
+        await runCheckoutRecoveryTick().catch((err) => {
+          console.error("[Indexer] checkout recovery failed:", err);
+        });
+      } catch (err) {
+        console.error("[Keeper] Unhandled error:", err);
+      } finally {
+        keeperRunning = false;
+        keeperTick = null;
+        if (!shuttingDown) setTimeout(scheduleKeeper, keeperIntervalMs);
+      }
+    })();
+    await keeperTick;
   }
 
   setTimeout(scheduleKeeper, keeperIntervalMs);

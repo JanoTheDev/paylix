@@ -6,6 +6,7 @@ export type TrialConversionFailureReason =
   | "allowance_revoked"
   | "permit_expired"
   | "nonce_drift"
+  | "intent_schema_outdated"
   | "unknown";
 
 export interface TrialConversionFailedEmailProps {
@@ -24,6 +25,8 @@ const REASON_COPY: Record<TrialConversionFailureReason, string> = {
     "the authorization signature expired before we could process the first charge",
   nonce_drift:
     "another transaction on your wallet invalidated the trial's signature",
+  intent_schema_outdated:
+    "the subscription authorization you signed is no longer valid and has to be signed again",
   unknown: "an unexpected error occurred processing the first charge",
 };
 

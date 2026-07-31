@@ -5,15 +5,28 @@ import {
   type Log,
   type PublicClient,
 } from "viem";
-import { config, deployments } from "./config";
+import {
+  deployments,
+  parseNonNegativeIntEnv,
+  parsePositiveIntEnv,
+} from "./config";
 import type { Deployment } from "@paylix/config/deployments";
-import { getLastBlock, setLastBlock } from "./cursor";
+import { getLastBlock, setLastBlock, recordBackfillGap } from "./cursor";
+import {
+  resolveHeadBlock,
+  VALID_BLOCK_TAGS,
+  type BlockTag,
+  type HeadBlockClient,
+} from "./head-block";
+import { processWindow } from "./process-window";
+import { sleep, withRateLimitRetry } from "./rpc-retry";
 import {
   handlePaymentReceived,
   handleSubscriptionCreated,
   handleSubscriptionPaymentReceived,
   handleSubscriptionPastDue,
   handleSubscriptionCancelled,
+  retainFailedEvent,
   type HandlerContext,
 } from "./handlers";
 
@@ -31,30 +44,38 @@ import {
 // L1 finality semantics: set INDEXER_BLOCK_TAG=finalized (~12min lag on Base)
 // or INDEXER_BLOCK_TAG=safe (~6min lag). When set, the tag takes precedence
 // over INDEXER_CONFIRMATIONS.
-type BlockTag = "finalized" | "safe" | "latest";
-const BLOCK_TAG: BlockTag | undefined = process.env.INDEXER_BLOCK_TAG as
-  | BlockTag
-  | undefined;
+const rawBlockTag = process.env.INDEXER_BLOCK_TAG?.trim();
+if (rawBlockTag && !VALID_BLOCK_TAGS.includes(rawBlockTag as BlockTag)) {
+  throw new Error(
+    `[Listener] INDEXER_BLOCK_TAG must be one of ${VALID_BLOCK_TAGS.join("|")}, got "${rawBlockTag}"`
+  );
+}
+const BLOCK_TAG: BlockTag | undefined = rawBlockTag
+  ? (rawBlockTag as BlockTag)
+  : undefined;
+const DEFAULT_CONFIRMATIONS = 5;
 const CONFIRMATIONS = BigInt(
-  parseInt(process.env.INDEXER_CONFIRMATIONS || "5", 10)
+  parseNonNegativeIntEnv("INDEXER_CONFIRMATIONS", DEFAULT_CONFIRMATIONS)
 );
+// Used when the block-tag RPC call fails. Never fall back to the bare head:
+// a flaky RPC response must not turn the most conservative configuration into
+// the least safe one. If the operator explicitly set 0 confirmations we still
+// hold back the default here, because they opted into a *tag*, not into the tip.
+const FALLBACK_CONFIRMATIONS =
+  CONFIRMATIONS > 0n ? CONFIRMATIONS : BigInt(DEFAULT_CONFIRMATIONS);
 
-async function getHeadBlock(client: PublicClient): Promise<bigint> {
-  // Explicit tag override path
-  if (BLOCK_TAG) {
-    if (BLOCK_TAG === "latest") return client.getBlockNumber();
-    try {
-      const block = await client.getBlock({ blockTag: BLOCK_TAG });
-      return block.number ?? (await client.getBlockNumber());
-    } catch {
-      return client.getBlockNumber();
-    }
-  }
+if (BLOCK_TAG === "latest") {
+  console.warn(
+    "[Listener] INDEXER_BLOCK_TAG=latest — reading the unconfirmed head. Reorged payments can be recorded as confirmed."
+  );
+}
 
-  // Default path: latest minus N confirmations
-  const latest = await client.getBlockNumber();
-  if (CONFIRMATIONS <= 0n) return latest;
-  return latest > CONFIRMATIONS ? latest - CONFIRMATIONS : 0n;
+function getHeadBlock(client: PublicClient): Promise<bigint> {
+  return resolveHeadBlock(client as unknown as HeadBlockClient, {
+    blockTag: BLOCK_TAG,
+    confirmations: CONFIRMATIONS,
+    fallbackConfirmations: FALLBACK_CONFIRMATIONS,
+  });
 }
 
 // Human-readable description for the startup log
@@ -82,38 +103,11 @@ const subscriptionCancelledEvent = parseAbiItem(
   "event SubscriptionCancelled(uint256 indexed subscriptionId)"
 );
 
-function isRateLimitError(err: unknown): boolean {
-  if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
-  return /429|rate limit|too many requests|exceeded|throttle/i.test(msg);
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Wraps an RPC call with exponential backoff on rate-limit errors. Non-rate-limit
- * errors are thrown immediately so they can be handled as genuine failures.
- */
-async function withRateLimitRetry<T>(
-  fn: () => Promise<T>,
-  label: string,
-  maxAttempts = 6
-): Promise<T> {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (err) {
-      attempt += 1;
-      if (!isRateLimitError(err) || attempt >= maxAttempts) throw err;
-      const delayMs = Math.min(30_000, 500 * 2 ** (attempt - 1));
-      console.warn(
-        `[Listener] ${label}: rate-limited, backing off ${delayMs}ms (attempt ${attempt}/${maxAttempts})`
-      );
-      await sleep(delayMs);
-    }
+/** Sleeps in short slices so a shutdown doesn't wait out a full poll interval. */
+async function sleepUntilStopped(ms: number) {
+  const deadline = Date.now() + ms;
+  while (!stopped && Date.now() < deadline) {
+    await sleep(Math.min(250, deadline - Date.now()));
   }
 }
 
@@ -122,8 +116,50 @@ type ContractSpec = {
   address: `0x${string}`;
   event: ReturnType<typeof parseAbiItem>;
   eventName: string;
+  /**
+   * The `unmatched_events.event_type` this log is replayed as when its handler
+   * throws. `null` means the event has no replay path in retryUnmatchedEvents —
+   * for those we stop the window instead of retaining, so the chunk is re-read
+   * from the chain on the next poll.
+   */
+  unmatchedType: string | null;
   handle: (log: Log, args: any) => Promise<void>;
 };
+
+// ---- Lifecycle ----
+//
+// A container stop must not kill the process mid-chunk. `stopListener()` flips
+// the flag every poll loop checks; `waitForListenerDrain()` resolves once the
+// in-flight poll passes have finished.
+let stopped = false;
+const inFlightPolls = new Set<Promise<void>>();
+
+// Poll-loop health. The heartbeat in index.ts reads this so the dashboard can't
+// report green while no events are being indexed.
+let listenerHealth: "ok" | "degraded" = "ok";
+// Latched conditions survive a subsequent successful poll: a skipped block range
+// or a cursor that can't move is still a problem after the next tick succeeds,
+// and clearing it 12 seconds later would hide it from the dashboard entirely.
+let listenerDegradedLatched = false;
+// Consecutive processWindow aborts per cursor. A handler that throws every time
+// (e.g. SubscriptionCancelled with a permanently failing DB write) stops that
+// cursor advancing; without this the loop would look healthy forever.
+const consecutiveAborts = new Map<string, number>();
+const ABORT_DEGRADE_THRESHOLD = 3;
+
+export function getListenerHealth(): "ok" | "degraded" {
+  return listenerDegradedLatched || listenerHealth === "degraded"
+    ? "degraded"
+    : "ok";
+}
+
+export function stopListener() {
+  stopped = true;
+}
+
+export async function waitForListenerDrain(): Promise<void> {
+  await Promise.allSettled(Array.from(inFlightPolls));
+}
 
 export async function startListener() {
   if (deployments.length === 0) {
@@ -141,7 +177,7 @@ export async function startListener() {
 
 async function startDeploymentListener(deployment: Deployment) {
   const chain = deployment.chain;
-  const livePollMs = parseInt(process.env.RPC_POLL_INTERVAL_MS || "12000", 10);
+  const livePollMs = parsePositiveIntEnv("RPC_POLL_INTERVAL_MS", 12000);
 
   const client = createPublicClient({
     chain,
@@ -173,6 +209,7 @@ async function startDeploymentListener(deployment: Deployment) {
       address: deployment.paymentVault,
       event: paymentReceivedEvent,
       eventName: "PaymentReceived",
+      unmatchedType: "PaymentReceived",
       handle: (log, args) => handlePaymentReceived(log, args, ctx),
     },
     {
@@ -180,6 +217,7 @@ async function startDeploymentListener(deployment: Deployment) {
       address: deployment.subscriptionManager,
       event: subscriptionCreatedEvent,
       eventName: "SubscriptionCreated",
+      unmatchedType: "SubscriptionCreated",
       handle: (log, args) => handleSubscriptionCreated(log, args, ctx),
     },
     {
@@ -187,6 +225,7 @@ async function startDeploymentListener(deployment: Deployment) {
       address: deployment.subscriptionManager,
       event: subscriptionPaymentReceivedEvent,
       eventName: "PaymentReceived",
+      unmatchedType: "SubscriptionPaymentReceived",
       handle: (log, args) => handleSubscriptionPaymentReceived(log, args, ctx),
     },
     {
@@ -194,6 +233,7 @@ async function startDeploymentListener(deployment: Deployment) {
       address: deployment.subscriptionManager,
       event: subscriptionPastDueEvent,
       eventName: "SubscriptionPastDue",
+      unmatchedType: null,
       handle: (log, args) => handleSubscriptionPastDue(log, args, ctx),
     },
     {
@@ -201,6 +241,7 @@ async function startDeploymentListener(deployment: Deployment) {
       address: deployment.subscriptionManager,
       event: subscriptionCancelledEvent,
       eventName: "SubscriptionCancelled",
+      unmatchedType: null,
       handle: (log, args) => handleSubscriptionCancelled(log, args, ctx),
     },
   ];
@@ -210,84 +251,53 @@ async function startDeploymentListener(deployment: Deployment) {
 
   // Chunk size for backfill — Alchemy free tier limits eth_getLogs to 10 blocks.
   // Tunable via env for paid plans.
-  const BACKFILL_CHUNK = BigInt(
-    parseInt(process.env.BACKFILL_CHUNK_SIZE || "10", 10)
-  );
+  const BACKFILL_CHUNK = BigInt(parsePositiveIntEnv("BACKFILL_CHUNK_SIZE", 10));
   // Cap total blocks to backfill on cold start (avoid hammering RPC after long downtime).
   const MAX_BACKFILL_BLOCKS = BigInt(
-    parseInt(process.env.MAX_BACKFILL_BLOCKS || "5000", 10)
+    parsePositiveIntEnv("MAX_BACKFILL_BLOCKS", 5000)
   );
   // Delay between backfill chunks to stay under free-tier CU/sec budgets.
-  const BACKFILL_DELAY_MS = parseInt(
-    process.env.BACKFILL_DELAY_MS || "250",
-    10
-  );
+  const BACKFILL_DELAY_MS = parseNonNegativeIntEnv("BACKFILL_DELAY_MS", 250);
 
-  // Process a [fromBlock, toBlock] window for one contract in chunks. Used by
-  // both the cold-start backfill and the live polling loop. Returns the last
-  // block successfully processed (so the cursor lands on a confirmed point).
-  async function processWindow(
-    spec: ContractSpec,
-    fromBlock: bigint,
-    toBlock: bigint,
-    label: string
-  ): Promise<{ totalLogs: number; lastProcessed: bigint }> {
-    let totalLogs = 0;
-    let cursor = fromBlock;
-    let lastProcessed = fromBlock - 1n;
-
-    while (cursor <= toBlock) {
-      const chunkEnd =
-        cursor + BACKFILL_CHUNK - 1n > toBlock ? toBlock : cursor + BACKFILL_CHUNK - 1n;
-
-      try {
-        const logs = await withRateLimitRetry(
-          () =>
-            client.getLogs({
-              address: spec.address,
-              event: spec.event as any,
-              fromBlock: cursor,
-              toBlock: chunkEnd,
-            }),
-          `${spec.key} ${cursor}-${chunkEnd}`
-        );
-
-        totalLogs += logs.length;
-
-        for (const log of logs) {
-          try {
-            await spec.handle(log as Log, (log as any).args);
-          } catch (err) {
-            console.error(
-              `[Listener] Error handling ${label} ${spec.eventName}:`,
-              err
-            );
-          }
-        }
-
-        await setLastBlock(spec.key, chunkEnd);
-        lastProcessed = chunkEnd;
-      } catch (err) {
-        if (isRateLimitError(err)) {
-          console.error(
-            `[Listener] Chunk ${cursor}-${chunkEnd} for ${spec.key} still rate-limited after retries, stopping ${label} for this contract`
-          );
-          break;
-        }
-        console.error(
-          `[Listener] Chunk ${cursor}-${chunkEnd} failed for ${spec.key}, skipping:`,
-          err instanceof Error ? err.message : err
-        );
-        // Genuine poisoned chunk — advance so we don't get stuck on it.
-        await setLastBlock(spec.key, chunkEnd);
-        lastProcessed = chunkEnd;
-      }
-
-      cursor = chunkEnd + 1n;
-      if (BACKFILL_DELAY_MS > 0) await sleep(BACKFILL_DELAY_MS);
-    }
-
-    return { totalLogs, lastProcessed };
+  // Runs one [fromBlock, toBlock] window for a contract. The cursor-advancement
+  // rules live in ./process-window (unit-tested there); this only wires the
+  // deployment's RPC client, handler and retention path into it.
+  function runWindow(spec: ContractSpec, fromBlock: bigint, toBlock: bigint, label: string) {
+    return processWindow<Log>(
+      {
+        key: spec.key,
+        label,
+        eventName: spec.eventName,
+        chunkSize: BACKFILL_CHUNK,
+        delayMs: BACKFILL_DELAY_MS,
+        isStopped: () => stopped,
+        getLogs: (from, to) =>
+          withRateLimitRetry(
+            () =>
+              client.getLogs({
+                address: spec.address,
+                event: spec.event as any,
+                fromBlock: from,
+                toBlock: to,
+              }) as Promise<Log[]>,
+            `${spec.key} ${from}-${to}`
+          ),
+        handle: (log) => spec.handle(log, (log as any).args),
+        retain: (log) =>
+          spec.unmatchedType
+            ? retainFailedEvent(
+                spec.unmatchedType,
+                log,
+                ((log as any).args ?? {}) as Record<string, unknown>,
+                ctx
+              )
+            : Promise.resolve(false),
+        setLastBlock: (block) => setLastBlock(spec.key, block),
+        describeLog: (log) => `tx ${log.transactionHash}`,
+      },
+      fromBlock,
+      toBlock,
+    );
   }
 
   // Backfill each contract up to the current finalized block. The five
@@ -297,12 +307,39 @@ async function startDeploymentListener(deployment: Deployment) {
       const lastBlock = await getLastBlock(spec.key);
       let fromBlock = lastBlock !== null ? lastBlock + 1n : currentBlock;
 
-      // Cap how far back we go on first run / after long downtime.
+      // Cap how far back we go on first run / after long downtime. Everything
+      // between the stored cursor and the new fromBlock is skipped, so on a
+      // warm start (cursor exists) that gap is a data-loss event: record it
+      // and alert rather than logging it as routine capping.
       if (currentBlock - fromBlock > MAX_BACKFILL_BLOCKS) {
-        fromBlock = currentBlock - MAX_BACKFILL_BLOCKS;
-        console.log(
-          `[Listener] ${spec.key}: capped backfill window to last ${MAX_BACKFILL_BLOCKS} blocks`
-        );
+        const cappedFrom = currentBlock - MAX_BACKFILL_BLOCKS;
+        if (lastBlock !== null) {
+          console.error(
+            `[Listener] ${spec.key}: SKIPPING blocks ${fromBlock}-${cappedFrom - 1n} — ` +
+              `cursor is further than MAX_BACKFILL_BLOCKS (${MAX_BACKFILL_BLOCKS}) behind head ${currentBlock}. ` +
+              `Events in that range were never indexed; run a manual backfill.`
+          );
+          await recordBackfillGap(spec.key, fromBlock, cappedFrom - 1n).catch((err) =>
+            console.error(`[Listener] Failed to record backfill gap for ${spec.key}:`, err)
+          );
+          // Latched: a successful poll 12 seconds later does not un-skip blocks.
+          listenerDegradedLatched = true;
+          const { dispatchSystemWebhook } = await import("./webhook-dispatch");
+          await dispatchSystemWebhook("system.backfill_gap", {
+            cursorKey: spec.key,
+            fromBlock: fromBlock.toString(),
+            toBlock: (cappedFrom - 1n).toString(),
+            headBlock: currentBlock.toString(),
+            maxBackfillBlocks: MAX_BACKFILL_BLOCKS.toString(),
+          }).catch((err) =>
+            console.error(`[Listener] Failed to dispatch backfill-gap webhook:`, err)
+          );
+        } else {
+          console.log(
+            `[Listener] ${spec.key}: cold start, capped backfill window to last ${MAX_BACKFILL_BLOCKS} blocks`
+          );
+        }
+        fromBlock = cappedFrom;
       }
 
       if (fromBlock > currentBlock) {
@@ -317,7 +354,7 @@ async function startDeploymentListener(deployment: Deployment) {
         `[Listener] ${spec.key}: backfilling ${fromBlock} -> ${currentBlock} (chunk size ${BACKFILL_CHUNK})`
       );
 
-      const { totalLogs } = await processWindow(spec, fromBlock, currentBlock, "backfill");
+      const { totalLogs } = await runWindow(spec, fromBlock, currentBlock, "backfill");
       console.log(`[Listener] ${spec.key}: backfill complete (${totalLogs} events)`);
     } catch (err) {
       console.error(`[Listener] Backfill failed for ${spec.key}:`, err);
@@ -327,15 +364,8 @@ async function startDeploymentListener(deployment: Deployment) {
   // Live polling loop. On each tick we re-read the finalized head and process
   // any new finalized blocks. Because we only ever advance to a finalized
   // block, the indexer never records an event from a reorgable tip.
-  let stopped = false;
   const pollOnce = async () => {
-    let head: bigint;
-    try {
-      head = await getHeadBlock(client);
-    } catch (err) {
-      console.error(`[Listener] Failed to read head block:`, err);
-      return;
-    }
+    const head = await getHeadBlock(client);
 
     await Promise.all(contracts.map(async (spec) => {
       const lastBlock = await getLastBlock(spec.key);
@@ -343,20 +373,70 @@ async function startDeploymentListener(deployment: Deployment) {
       if (fromBlock > head) return;
 
       try {
-        await processWindow(spec, fromBlock, head, "live");
+        const { aborted } = await runWindow(spec, fromBlock, head, "live");
+        // A cursor that keeps aborting is a cursor that isn't advancing. Track
+        // it per contract so a permanently throwing handler (or an RPC that
+        // never returns a chunk) surfaces instead of looking healthy.
+        const priorAborts = consecutiveAborts.get(spec.key) ?? 0;
+        if (aborted) {
+          const aborts = priorAborts + 1;
+          consecutiveAborts.set(spec.key, aborts);
+          if (aborts === ABORT_DEGRADE_THRESHOLD) {
+            console.error(
+              `[Listener] ${spec.key}: ${aborts} consecutive aborted windows — cursor is stalled at ${fromBlock - 1n}`
+            );
+          }
+        } else if (priorAborts > 0) {
+          console.log(`[Listener] ${spec.key}: window completed, cursor advancing again`);
+          consecutiveAborts.set(spec.key, 0);
+        }
       } catch (err) {
         console.error(`[Listener] Live poll failed for ${spec.key}:`, err);
       }
     }));
   };
 
+  const anyCursorStalled = () =>
+    Array.from(consecutiveAborts.values()).some((n) => n >= ABORT_DEGRADE_THRESHOLD);
+
+  // The loop must survive a failing pass: a thrown error here used to leave the
+  // process alive with no listener while the heartbeat kept reporting "ok".
+  // Consecutive failures back off and flip the health flag the heartbeat reads.
   const poll = async () => {
+    let consecutiveFailures = 0;
     while (!stopped) {
-      await pollOnce();
-      await sleep(livePollMs);
+      try {
+        await pollOnce();
+        if (consecutiveFailures > 0) {
+          console.log(`[Listener ${tag}] Poll loop recovered.`);
+        }
+        consecutiveFailures = 0;
+        listenerHealth = anyCursorStalled() ? "degraded" : "ok";
+      } catch (err) {
+        consecutiveFailures += 1;
+        console.error(
+          `[Listener ${tag}] Poll pass failed (${consecutiveFailures} consecutive):`,
+          err
+        );
+        if (consecutiveFailures >= 3) listenerHealth = "degraded";
+      }
+      const backoffMs =
+        consecutiveFailures > 0
+          ? Math.min(60_000, livePollMs * 2 ** Math.min(consecutiveFailures, 4))
+          : livePollMs;
+      await sleepUntilStopped(backoffMs);
     }
+    console.log(`[Listener ${tag}] Poll loop stopped.`);
   };
-  poll().catch((err) => console.error(`[Listener ${tag}] Live loop crashed:`, err));
+
+  const pollPromise = poll().catch((err) => {
+    // Should be unreachable — the loop catches per-pass errors — but if the
+    // loop itself dies the dashboard must not keep reporting healthy.
+    listenerHealth = "degraded";
+    console.error(`[Listener ${tag}] Live loop crashed:`, err);
+  });
+  inFlightPolls.add(pollPromise);
+  void pollPromise.finally(() => inFlightPolls.delete(pollPromise));
 
   console.log(`[Listener ${tag}] Live polling loop started.`);
 }

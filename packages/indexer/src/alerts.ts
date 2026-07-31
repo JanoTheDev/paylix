@@ -158,7 +158,7 @@ async function maybeClear(key: AlertKey): Promise<void> {
 
 async function checkKeeperFailureRate(): Promise<void> {
   const { payments } = await import("@paylix/db/schema");
-  const { and, gte, eq: eqOp, sql } = await import("drizzle-orm");
+  const { and, gte, sql } = await import("drizzle-orm");
   const since = new Date(Date.now() - 15 * 60 * 1000);
   const [{ failed, total }] = await db
     .select({
@@ -172,7 +172,6 @@ async function checkKeeperFailureRate(): Promise<void> {
         sql`${payments.status} in ('failed', 'confirmed')`,
       ),
     );
-  void eqOp;
   if (total < 5) {
     await maybeClear("keeper_failure_rate_high_fired");
     return;

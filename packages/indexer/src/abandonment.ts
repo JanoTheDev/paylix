@@ -6,37 +6,10 @@
 
 import { createElement } from "react";
 
-// Disposable-email blocklist is shared with the checkout path via
-// apps/web/lib/email-normalize — the indexer keeps its own copy to
-// avoid cross-package import. Small duplication, low drift risk.
-const DISPOSABLE_DOMAINS = new Set<string>([
-  "mailinator.com",
-  "guerrillamail.com",
-  "tempmail.com",
-  "10minutemail.com",
-  "trashmail.com",
-  "yopmail.com",
-]);
-
-function normalizeEmail(input: string): string {
-  const trimmed = input.trim().toLowerCase();
-  const at = trimmed.indexOf("@");
-  if (at <= 0) return trimmed;
-  const local = trimmed.slice(0, at);
-  const domain = trimmed.slice(at + 1);
-  if (domain === "gmail.com" || domain === "googlemail.com") {
-    const noPlus = local.split("+", 1)[0];
-    const noDots = noPlus.replace(/\./g, "");
-    return `${noDots}@gmail.com`;
-  }
-  return trimmed;
-}
-
-function isDisposableEmail(email: string): boolean {
-  const at = email.indexOf("@");
-  if (at <= 0) return false;
-  return DISPOSABLE_DOMAINS.has(email.slice(at + 1));
-}
+// Same normalization + blocklist the checkout path enforces. The local copy
+// here had drifted to 6 domains against checkout's 148, so this mailer was
+// emailing disposable addresses that checkout itself refuses.
+import { normalizeEmail, isDisposableEmail } from "./email-normalize";
 
 export async function runCheckoutRecoveryTick(): Promise<{ scanned: number }> {
   const { createDb } = await import("@paylix/db/client");

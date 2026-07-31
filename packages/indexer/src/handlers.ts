@@ -10,8 +10,8 @@ import {
   invoices,
   invoiceLineItems,
 } from "@paylix/db/schema";
-import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
-import { keccak256, stringToBytes, type Log } from "viem";
+import { eq, and, or, asc, desc, lt, sql, isNull } from "drizzle-orm";
+import type { Log } from "viem";
 import { NETWORKS, getToken } from "@paylix/config/networks";
 import type { NetworkKey } from "@paylix/config/networks";
 import { config } from "./config";
@@ -21,6 +21,9 @@ import { sendInvoiceEmail } from "./invoices/send-email";
 import { sendSubscriptionEmail } from "./emails/send-subscription-email";
 import { recordAudit } from "./audit";
 import { summarizeRetryPass, shouldWarn } from "./unmatched-metrics";
+import { toCents } from "./amounts";
+import { normalizeEmailOrNull } from "./email-normalize";
+import { findSessionByCustomerId } from "./session-match";
 
 export interface HandlerContext {
   livemode: boolean;
@@ -33,32 +36,6 @@ export interface HandlerContext {
 
 function subscriptionManagerAddressFromCtx(ctx: HandlerContext): string {
   return ctx.subscriptionManager.toLowerCase();
-}
-
-/**
- * Inline copy of apps/web/lib/email-normalize.ts:normalizeEmail.
- * Kept inline because the indexer package can't import from apps/web.
- * If you change one, change the other.
- */
-function normalizeEmail(input: string): string {
-  const trimmed = input.trim().toLowerCase();
-  const at = trimmed.indexOf("@");
-  if (at <= 0) return trimmed;
-  const local = trimmed.slice(0, at);
-  const domain = trimmed.slice(at + 1);
-  if (domain === "gmail.com" || domain === "googlemail.com") {
-    const noPlus = local.split("+", 1)[0];
-    const noDots = noPlus.replace(/\./g, "");
-    return `${noDots}@gmail.com`;
-  }
-  return trimmed;
-}
-
-function normalizeEmailOrNull(email: string | null | undefined): string | null {
-  if (!email) return null;
-  const trimmed = email.trim();
-  if (!trimmed) return null;
-  return normalizeEmail(trimmed);
 }
 
 /**
@@ -83,28 +60,103 @@ function symbolForTokenAddress(
   );
 }
 
+/**
+ * Retried rows are left in place while their handler runs (see
+ * retryUnmatchedEvents). This map lets a handler that re-records the same event
+ * flag the in-flight replay instead of inserting a duplicate row.
+ */
+const replayInFlight = new Map<string, { rerecorded: boolean }>();
+
+function unmatchedKey(
+  eventType: string,
+  txHash: string,
+  logIndex: number | null,
+): string {
+  return `${eventType}:${txHash}:${logIndex ?? "null"}`;
+}
+
+/**
+ * Retains an event we could not process so the retry sweep can replay it.
+ * Returns false only when the event could NOT be retained — the caller must
+ * then treat the event as unprocessed (e.g. leave the listener cursor behind
+ * it), because otherwise the payment is lost.
+ */
 async function recordUnmatched(
   eventType: string,
   log: Log,
   payload: Record<string, unknown>,
   ctx: HandlerContext,
-) {
-  if (!log.transactionHash) return;
+): Promise<boolean> {
+  if (!log.transactionHash) return false;
+  const logIndex = typeof log.logIndex === "number" ? log.logIndex : null;
+  const key = unmatchedKey(eventType, log.transactionHash, logIndex);
+
+  const inFlight = replayInFlight.get(key);
+  if (inFlight) {
+    // This IS the retained row being replayed — it is still in the table, so
+    // re-inserting would duplicate it. Tell the retry pass to keep it.
+    inFlight.rerecorded = true;
+    return true;
+  }
+
   try {
-    await db.insert(unmatchedEvents).values({
-      eventType,
-      txHash: log.transactionHash,
-      blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
-      logIndex: typeof log.logIndex === "number" ? log.logIndex : null,
-      payload: { ...payload, _ctx: ctx },
-      livemode: ctx.livemode,
-    });
+    // Dedup on (tx_hash, log_index, event_type) so a replayed log doesn't add a
+    // row on every pass. The pre-check keeps the log line meaningful; the
+    // onConflictDoNothing below is the real guard (unique index
+    // unmatched_events_dedup_idx) and covers the concurrent case.
+    const [existing] = await db
+      .select({ id: unmatchedEvents.id })
+      .from(unmatchedEvents)
+      .where(
+        and(
+          eq(unmatchedEvents.eventType, eventType),
+          eq(unmatchedEvents.txHash, log.transactionHash),
+          logIndex === null
+            ? isNull(unmatchedEvents.logIndex)
+            : eq(unmatchedEvents.logIndex, logIndex),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      console.warn(
+        `[Handler] Unmatched ${eventType} event tx=${log.transactionHash} already retained, not duplicating`
+      );
+      return true;
+    }
+
+    await db
+      .insert(unmatchedEvents)
+      .values({
+        eventType,
+        txHash: log.transactionHash,
+        blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+        logIndex,
+        payload: { ...payload, _ctx: ctx },
+        livemode: ctx.livemode,
+      })
+      .onConflictDoNothing();
     console.warn(
       `[Handler] Recorded unmatched ${eventType} event tx=${log.transactionHash} for retry`
     );
+    return true;
   } catch (err) {
     console.error("[Handler] Failed to record unmatched event:", err);
+    return false;
   }
+}
+
+/**
+ * Listener entry point: retain a log whose handler threw so the retry sweep
+ * can replay it. Returns false when retention failed, in which case the caller
+ * must not advance its cursor past the log.
+ */
+export async function retainFailedEvent(
+  eventType: string,
+  log: Log,
+  args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<boolean> {
+  return recordUnmatched(eventType, log, serializeArgs(args), ctx);
 }
 
 function serializeArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -140,48 +192,55 @@ export async function handlePaymentReceived(log: Log, args: {
     return;
   }
 
-  // Idempotency: skip if we already have a payment for this tx hash
+  // Idempotency: skip if we already have a payment for this (chain, tx hash).
+  // The predicate mirrors the payments_chain_tx_idx unique index — checking
+  // txHash alone would skip a legitimate same-hash payment on another chain.
   const [existingPayment] = await db
     .select()
     .from(payments)
-    .where(eq(payments.txHash, log.transactionHash))
+    .where(
+      and(
+        eq(payments.txHash, log.transactionHash),
+        eq(payments.chain, ctx.networkKey),
+      ),
+    )
     .limit(1);
   if (existingPayment) {
     console.log(
-      `[Handler] Payment for tx ${log.transactionHash} already exists, skipping`
+      `[Handler] Payment for tx ${log.transactionHash} on ${ctx.networkKey} already exists, skipping`
     );
     return;
   }
 
-  // Convert on-chain amount back to cents using registry decimals.
-  // Formula: cents = on_chain / 10^(decimals - 2)
-  // For USDC (decimals=6): 10^4 = 10,000 → 1,000,000 units = 100 cents.
+  // Convert on-chain amount back to cents using registry decimals (see toCents:
+  // the result must be an integer, the columns are `integer`).
   const paymentToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
-  const amountCents = Number(args.amount) / 10 ** (paymentToken.decimals - 2);
+  const amountCents = toCents(args.amount, paymentToken.decimals);
 
   // Match by reversing the customerId hash: the checkout-client encodes
   // keccak256(stringToBytes(session.id)) as the on-chain customerId to avoid
-  // collisions on (merchant, amount). Scan recent open sessions for this
-  // merchant and find the one whose id hashes to the provided customerId.
-  const candidates = await db
-    .select()
-    .from(checkoutSessions)
-    .where(
-      and(
-        sql`lower(${checkoutSessions.merchantWallet}) = lower(${args.merchant})`,
-        or(
-          eq(checkoutSessions.status, "viewed"),
-          eq(checkoutSessions.status, "active")
+  // collisions on (merchant, amount). Page through this merchant's open
+  // sessions, newest first, rather than truncating at one page.
+  const session = await findSessionByCustomerId({
+    targetCustomerId: args.customerId,
+    label: `PaymentReceived merchant=${args.merchant}`,
+    fetchPage: (limit, offset) =>
+      db
+        .select()
+        .from(checkoutSessions)
+        .where(
+          and(
+            sql`lower(${checkoutSessions.merchantWallet}) = lower(${args.merchant})`,
+            or(
+              eq(checkoutSessions.status, "viewed"),
+              eq(checkoutSessions.status, "active")
+            )
+          )
         )
-      )
-    )
-    .orderBy(desc(checkoutSessions.createdAt))
-    .limit(200);
-
-  const targetCustomerId = args.customerId.toLowerCase();
-  const session = candidates.find(
-    (s) => keccak256(stringToBytes(s.id)).toLowerCase() === targetCustomerId
-  );
+        .orderBy(desc(checkoutSessions.createdAt))
+        .limit(limit)
+        .offset(offset),
+  });
 
   if (!session) {
     console.log(
@@ -249,15 +308,19 @@ export async function handlePaymentReceived(log: Log, args: {
       }
     }
 
-    // Create payment record
-    const sessionNetworkKey = session.networkKey ?? ctx.networkKey;
+    // Create payment record.
+    // `chain` MUST be the value the idempotency pre-check above queried with,
+    // otherwise a duplicate event slips past the pre-check and then violates
+    // payments_chain_tx_idx — which throws, retains the event, and burns the
+    // retry ceiling. The deployment that emitted the log is authoritative for
+    // which chain the payment happened on.
+    const sessionNetworkKey = ctx.networkKey;
     const sessionTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
-    const centsDivisor = 10 ** (paymentToken.decimals - 2);
     const sessionSubtotalCents = session.subtotalAmount
-      ? Number(session.subtotalAmount) / centsDivisor
+      ? toCents(session.subtotalAmount, paymentToken.decimals)
       : null;
     const sessionTaxCents = session.taxAmount
-      ? Number(session.taxAmount) / centsDivisor
+      ? toCents(session.taxAmount, paymentToken.decimals)
       : 0;
     const [payment] = await tx
       .insert(payments)
@@ -266,7 +329,7 @@ export async function handlePaymentReceived(log: Log, args: {
         organizationId: session.organizationId,
         customerId: customer.id,
         amount: amountCents,
-        fee: Number(args.fee) / 10_000,
+        fee: toCents(args.fee, paymentToken.decimals),
         status: "confirmed",
         txHash: log.transactionHash,
         chain: sessionNetworkKey,
@@ -389,6 +452,11 @@ export async function handlePaymentReceived(log: Log, args: {
 
   // Dispatch webhook AFTER the tx commits — webhook HTTP calls can be slow
   // and must not hold a DB transaction open.
+  //
+  // A throw here must not escape: the payment is already committed, so a retry
+  // of this handler short-circuits on the idempotency pre-check and the event
+  // would be dropped with the webhook never dispatched and no delivery row.
+  // Log instead; dispatchWebhooks persists its own per-delivery retry state.
   await dispatchWebhooks(session.organizationId, "payment.confirmed", {
     paymentId: result.payment.id,
     checkoutId: session.id,
@@ -402,7 +470,9 @@ export async function handlePaymentReceived(log: Log, args: {
     fromAddress: args.payer,
     toAddress: args.merchant,
     metadata: session.metadata ?? {},
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] payment.confirmed webhook dispatch failed:", err),
+  );
   void recordAudit({
     organizationId: session.organizationId,
     action: "payment.confirmed",
@@ -418,7 +488,9 @@ export async function handlePaymentReceived(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] invoice.issued webhook dispatch failed:", err),
+  );
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -499,168 +571,174 @@ export async function handleSubscriptionCreated(log: Log, args: {
     const now = new Date();
     const nextCharge = new Date(now.getTime() + trialIntervalSeconds * 1000);
 
-    await db
-      .update(subscriptions)
-      .set({
-        status: "active",
-        onChainId,
-        currentPeriodStart: now,
-        currentPeriodEnd: nextCharge,
-        nextChargeDate: nextCharge,
-        pendingPermitSignature: null,
-        trialConversionLastError: null,
-        intervalSeconds: trialIntervalSeconds,
-      })
-      .where(eq(subscriptions.id, trialRow.id));
-
-    console.log(`[Handler] Activated trial subscription ${trialRow.id} (onChainId: ${onChainId})`);
-
     const trialSubToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
-    const trialAmountCents = Number(args.amount) / 10 ** (trialSubToken.decimals - 2);
+    const trialAmountCents = toCents(args.amount, trialSubToken.decimals);
 
-    const [trialPayment] = await db
-      .insert(payments)
-      .values({
-        productId: trialRow.productId,
-        organizationId: trialRow.organizationId,
-        customerId: trialRow.customerId,
-        amount: trialAmountCents,
-        fee: 0,
-        status: "confirmed",
-        txHash: log.transactionHash,
-        chain: trialRow.networkKey,
-        token: trialRow.tokenSymbol,
-        fromAddress: args.subscriber,
-        toAddress: args.merchant,
-        blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
-        livemode: ctx.livemode,
-      })
-      .returning();
+    // Activation, payment, payment link and invoice are one unit of work, the
+    // same as the non-trial branch below. Partial state here is unrecoverable:
+    // the onChainId short-circuit at the top of this handler means the event is
+    // never reprocessed to repair it. Webhooks and emails stay OUTSIDE the tx.
+    const trialResult = await db.transaction(async (tx) => {
+      await tx
+        .update(subscriptions)
+        .set({
+          status: "active",
+          onChainId,
+          currentPeriodStart: now,
+          currentPeriodEnd: nextCharge,
+          nextChargeDate: nextCharge,
+          pendingPermitSignature: null,
+          trialConversionLastError: null,
+          intervalSeconds: trialIntervalSeconds,
+        })
+        .where(eq(subscriptions.id, trialRow.id));
 
-    await db
-      .update(subscriptions)
-      .set({ lastPaymentId: trialPayment.id })
-      .where(eq(subscriptions.id, trialRow.id));
+      const [trialPayment] = await tx
+        .insert(payments)
+        .values({
+          productId: trialRow.productId,
+          organizationId: trialRow.organizationId,
+          customerId: trialRow.customerId,
+          amount: trialAmountCents,
+          fee: 0,
+          status: "confirmed",
+          txHash: log.transactionHash,
+          chain: trialRow.networkKey,
+          token: trialRow.tokenSymbol,
+          fromAddress: args.subscriber,
+          toAddress: args.merchant,
+          blockNumber: log.blockNumber ? Number(log.blockNumber) : null,
+          livemode: ctx.livemode,
+        })
+        .returning();
 
-    console.log(`[Handler] Created trial conversion payment ${trialPayment.id}`);
+      await tx
+        .update(subscriptions)
+        .set({ lastPaymentId: trialPayment.id })
+        .where(eq(subscriptions.id, trialRow.id));
 
-    try {
-      const [trialProduct] = await db
+      const [trialProduct] = await tx
         .select()
         .from(products)
         .where(eq(products.id, trialRow.productId))
         .limit(1);
+      if (!trialProduct) throw new Error(`Product ${trialRow.productId} not found`);
 
-      if (trialProduct) {
-        await db
-          .insert(merchantProfiles)
-          .values({ organizationId: trialRow.organizationId })
-          .onConflictDoNothing({ target: merchantProfiles.organizationId });
+      await tx
+        .insert(merchantProfiles)
+        .values({ organizationId: trialRow.organizationId })
+        .onConflictDoNothing({ target: merchantProfiles.organizationId });
 
-        const [trialProfile] = await db
-          .select()
-          .from(merchantProfiles)
-          .where(eq(merchantProfiles.organizationId, trialRow.organizationId))
-          .limit(1);
+      const [trialProfile] = await tx
+        .select()
+        .from(merchantProfiles)
+        .where(eq(merchantProfiles.organizationId, trialRow.organizationId))
+        .limit(1);
+      if (!trialProfile) throw new Error("merchant_profiles row missing after upsert");
 
-        if (trialProfile) {
-          const [trialCustomer] = await db
-            .select()
-            .from(customers)
-            .where(eq(customers.id, trialRow.customerId))
-            .limit(1);
+      const [trialCustomer] = await tx
+        .select()
+        .from(customers)
+        .where(eq(customers.id, trialRow.customerId))
+        .limit(1);
+      if (!trialCustomer) throw new Error(`Customer ${trialRow.customerId} not found`);
 
-          if (trialCustomer) {
-            const trialBuilt = buildInvoice({
-              profile: {
-                organizationId: trialProfile.organizationId,
-                legalName: trialProfile.legalName,
-                addressLine1: trialProfile.addressLine1,
-                addressLine2: trialProfile.addressLine2,
-                city: trialProfile.city,
-                postalCode: trialProfile.postalCode,
-                country: trialProfile.country,
-                taxId: trialProfile.taxId,
-                supportEmail: trialProfile.supportEmail,
-                logoUrl: trialProfile.logoUrl,
-                invoicePrefix: trialProfile.invoicePrefix,
-                invoiceFooter: trialProfile.invoiceFooter,
-                invoiceSequence: trialProfile.invoiceSequence,
-              },
-              product: {
-                id: trialProduct.id,
-                name: trialProduct.name,
-                taxRateBps: trialProduct.taxRateBps,
-                taxLabel: trialProduct.taxLabel,
-                reverseChargeEligible: trialProduct.reverseChargeEligible,
-              },
-              customer: {
-                id: trialCustomer.id,
-                firstName: trialCustomer.firstName,
-                lastName: trialCustomer.lastName,
-                email: trialCustomer.email,
-                country: trialCustomer.country,
-                taxId: trialCustomer.taxId,
-              },
-              payment: { id: trialPayment.id, amount: trialPayment.amount },
-            });
+      const trialBuilt = buildInvoice({
+        profile: {
+          organizationId: trialProfile.organizationId,
+          legalName: trialProfile.legalName,
+          addressLine1: trialProfile.addressLine1,
+          addressLine2: trialProfile.addressLine2,
+          city: trialProfile.city,
+          postalCode: trialProfile.postalCode,
+          country: trialProfile.country,
+          taxId: trialProfile.taxId,
+          supportEmail: trialProfile.supportEmail,
+          logoUrl: trialProfile.logoUrl,
+          invoicePrefix: trialProfile.invoicePrefix,
+          invoiceFooter: trialProfile.invoiceFooter,
+          invoiceSequence: trialProfile.invoiceSequence,
+        },
+        product: {
+          id: trialProduct.id,
+          name: trialProduct.name,
+          taxRateBps: trialProduct.taxRateBps,
+          taxLabel: trialProduct.taxLabel,
+          reverseChargeEligible: trialProduct.reverseChargeEligible,
+        },
+        customer: {
+          id: trialCustomer.id,
+          firstName: trialCustomer.firstName,
+          lastName: trialCustomer.lastName,
+          email: trialCustomer.email,
+          country: trialCustomer.country,
+          taxId: trialCustomer.taxId,
+        },
+        payment: { id: trialPayment.id, amount: trialPayment.amount },
+      });
 
-            await db
-              .update(merchantProfiles)
-              .set({ invoiceSequence: trialBuilt.nextSequence })
-              .where(eq(merchantProfiles.organizationId, trialRow.organizationId));
+      await tx
+        .update(merchantProfiles)
+        .set({ invoiceSequence: trialBuilt.nextSequence })
+        .where(eq(merchantProfiles.organizationId, trialRow.organizationId));
 
-            const trialHasProfile =
-              trialProfile.legalName.trim().length > 0 &&
-              trialProfile.supportEmail.trim().length > 0;
+      const trialHasProfile =
+        trialProfile.legalName.trim().length > 0 &&
+        trialProfile.supportEmail.trim().length > 0;
 
-            const [trialInvoice] = await db
-              .insert(invoices)
-              .values({
-                ...trialBuilt.invoice,
-                emailStatus: trialHasProfile ? "pending" : "skipped",
-                livemode: ctx.livemode,
-              })
-              .returning();
+      const [trialInvoice] = await tx
+        .insert(invoices)
+        .values({
+          ...trialBuilt.invoice,
+          emailStatus: trialHasProfile ? "pending" : "skipped",
+          livemode: ctx.livemode,
+        })
+        .returning();
 
-            await db.insert(invoiceLineItems).values(
-              trialBuilt.lineItems.map((li) => ({
-                invoiceId: trialInvoice.id,
-                description: li.description,
-                quantity: li.quantity,
-                unitAmountCents: li.unitAmountCents,
-                amountCents: li.amountCents,
-                livemode: ctx.livemode,
-              })),
-            );
+      await tx.insert(invoiceLineItems).values(
+        trialBuilt.lineItems.map((li) => ({
+          invoiceId: trialInvoice.id,
+          description: li.description,
+          quantity: li.quantity,
+          unitAmountCents: li.unitAmountCents,
+          amountCents: li.amountCents,
+          livemode: ctx.livemode,
+        })),
+      );
 
-            console.log(`[Handler] Created trial conversion invoice ${trialInvoice.id}`);
+      return {
+        payment: trialPayment,
+        invoice: trialInvoice,
+        customer: trialCustomer,
+        emailable: trialHasProfile,
+      };
+    });
 
-            await dispatchWebhooks(trialRow.organizationId, "invoice.issued", {
-              invoiceId: trialInvoice.id,
-              number: trialInvoice.number,
-              paymentId: trialPayment.id,
-              subscriptionId: trialRow.id,
-              customerId: trialCustomer.customerId,
-              totalCents: trialInvoice.totalCents,
-              currency: trialInvoice.currency,
-              hostedUrl: `/i/${trialInvoice.hostedToken}`,
-            }, ctx.livemode);
+    console.log(`[Handler] Activated trial subscription ${trialRow.id} (onChainId: ${onChainId})`);
+    console.log(`[Handler] Created trial conversion payment ${trialResult.payment.id}`);
+    console.log(`[Handler] Created trial conversion invoice ${trialResult.invoice.id}`);
 
-            if (trialHasProfile) {
-              await sendInvoiceEmail({
-                invoiceId: trialInvoice.id,
-                organizationId: trialRow.organizationId,
-                livemode: ctx.livemode,
-              }).catch((err) => {
-                console.error("[Handler] sendInvoiceEmail (trial conversion) failed:", err);
-              });
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[Handler] Trial conversion invoice creation failed:", err);
+    await dispatchWebhooks(trialRow.organizationId, "invoice.issued", {
+      invoiceId: trialResult.invoice.id,
+      number: trialResult.invoice.number,
+      paymentId: trialResult.payment.id,
+      subscriptionId: trialRow.id,
+      customerId: trialResult.customer.customerId,
+      totalCents: trialResult.invoice.totalCents,
+      currency: trialResult.invoice.currency,
+      hostedUrl: `/i/${trialResult.invoice.hostedToken}`,
+    }, ctx.livemode).catch((err) =>
+      console.error("[Handler] invoice.issued webhook dispatch failed:", err),
+    );
+
+    if (trialResult.emailable) {
+      await sendInvoiceEmail({
+        invoiceId: trialResult.invoice.id,
+        organizationId: trialRow.organizationId,
+        livemode: ctx.livemode,
+      }).catch((err) => {
+        console.error("[Handler] sendInvoiceEmail (trial conversion) failed:", err);
+      });
     }
 
     await dispatchWebhooks(trialRow.organizationId, "subscription.trial_converted", {
@@ -669,7 +747,9 @@ export async function handleSubscriptionCreated(log: Log, args: {
       subscriberAddress: args.subscriber,
       merchantAddress: args.merchant,
       txHash: log.transactionHash,
-    }, ctx.livemode);
+    }, ctx.livemode).catch((err) =>
+      console.error("[Handler] subscription.trial_converted webhook dispatch failed:", err),
+    );
     void recordAudit({
       organizationId: trialRow.organizationId,
       action: "subscription.trial_converted",
@@ -691,37 +771,40 @@ export async function handleSubscriptionCreated(log: Log, args: {
       merchantAddress: args.merchant,
       txHash: log.transactionHash,
       metadata: trialRow.metadata ?? {},
-    }, ctx.livemode);
+    }, ctx.livemode).catch((err) =>
+      console.error("[Handler] subscription.created webhook dispatch failed:", err),
+    );
 
     return;
   }
 
   const subToken = getToken(ctx.networkKey as NetworkKey, symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token));
-  const amountCents = Number(args.amount) / 10 ** (subToken.decimals - 2);
+  const amountCents = toCents(args.amount, subToken.decimals);
   const intervalSeconds = Number(args.interval);
 
   // Match the checkout session by reversing the session.id hash encoded as
-  // the on-chain customerId.
-  const candidates = await db
-    .select()
-    .from(checkoutSessions)
-    .where(
-      and(
-        sql`lower(${checkoutSessions.merchantWallet}) = lower(${args.merchant})`,
-        eq(checkoutSessions.type, "subscription"),
-        or(
-          eq(checkoutSessions.status, "viewed"),
-          eq(checkoutSessions.status, "active")
+  // the on-chain customerId. Paged for the same reason as the one-time path.
+  const session = await findSessionByCustomerId({
+    targetCustomerId: args.customerId,
+    label: `SubscriptionCreated merchant=${args.merchant}`,
+    fetchPage: (limit, offset) =>
+      db
+        .select()
+        .from(checkoutSessions)
+        .where(
+          and(
+            sql`lower(${checkoutSessions.merchantWallet}) = lower(${args.merchant})`,
+            eq(checkoutSessions.type, "subscription"),
+            or(
+              eq(checkoutSessions.status, "viewed"),
+              eq(checkoutSessions.status, "active")
+            )
+          )
         )
-      )
-    )
-    .orderBy(desc(checkoutSessions.createdAt))
-    .limit(200);
-
-  const targetCustomerId = args.customerId.toLowerCase();
-  const session = candidates.find(
-    (s) => keccak256(stringToBytes(s.id)).toLowerCase() === targetCustomerId
-  );
+        .orderBy(desc(checkoutSessions.createdAt))
+        .limit(limit)
+        .offset(offset),
+  });
 
   if (!session) {
     console.log(
@@ -789,14 +872,17 @@ export async function handleSubscriptionCreated(log: Log, args: {
     }
 
     // Create first payment (the initial charge happens atomically with createSubscription)
-    const subNetworkKey = session.networkKey ?? ctx.networkKey;
+    // Same rule as the one-time path: the chain written on the payment (and on
+    // the subscription row the recurring handler later reads back) is the
+    // deployment that emitted the event, so it always matches the (chain,
+    // tx_hash) idempotency predicate.
+    const subNetworkKey = ctx.networkKey;
     const subTokenSymbol = session.tokenSymbol ?? symbolForTokenAddress(ctx.networkKey as NetworkKey, args.token);
-    const subCentsDivisor = 10 ** (subToken.decimals - 2);
     const subSubtotalCents = session.subtotalAmount
-      ? Number(session.subtotalAmount) / subCentsDivisor
+      ? toCents(session.subtotalAmount, subToken.decimals)
       : null;
     const subTaxCents = session.taxAmount
-      ? Number(session.taxAmount) / subCentsDivisor
+      ? toCents(session.taxAmount, subToken.decimals)
       : 0;
     const [payment] = await tx
       .insert(payments)
@@ -966,7 +1052,9 @@ export async function handleSubscriptionCreated(log: Log, args: {
     merchantAddress: args.merchant,
     txHash: log.transactionHash,
     metadata: result.subscription.metadata ?? {},
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] subscription.created webhook dispatch failed:", err),
+  );
   void recordAudit({
     organizationId: session.organizationId,
     action: "subscription.created",
@@ -983,7 +1071,9 @@ export async function handleSubscriptionCreated(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] invoice.issued webhook dispatch failed:", err),
+  );
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -1041,22 +1131,29 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     return;
   }
 
-  // Idempotency: if we already have a payment with this txHash linked to this
-  // subscription's customer, skip.
+  // Idempotency: if we already have a payment for this (chain, txHash), skip.
+  // Predicate mirrors the payments_chain_tx_idx unique index.
   const [existingPayment] = await db
     .select()
     .from(payments)
-    .where(eq(payments.txHash, log.transactionHash))
+    .where(
+      and(
+        eq(payments.txHash, log.transactionHash),
+        eq(payments.chain, subscription.networkKey),
+      ),
+    )
     .limit(1);
 
   if (existingPayment) {
-    console.log(`[Handler] Payment for tx ${log.transactionHash} already exists, skipping`);
+    console.log(
+      `[Handler] Payment for tx ${log.transactionHash} on ${subscription.networkKey} already exists, skipping`
+    );
     return;
   }
 
   const recurringToken = getToken(subscription.networkKey as NetworkKey, subscription.tokenSymbol);
-  const amountCents = Number(args.amount) / 10 ** (recurringToken.decimals - 2);
-  const feeCents = Number(args.fee) / 10 ** (recurringToken.decimals - 2);
+  const amountCents = toCents(args.amount, recurringToken.decimals);
+  const feeCents = toCents(args.fee, recurringToken.decimals);
 
   // Atomic: insert recurring payment + advance subscription period.
   // Webhook dispatch stays OUTSIDE the transaction.
@@ -1196,6 +1293,14 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
         ? new Date(base.getTime() + periodMs)
         : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
+    // A confirmed on-chain charge is the authoritative "this subscriber paid"
+    // signal, so it must clear the dunning state as well as advance the period.
+    // The keeper's own success path can miss it: a charge that confirms after
+    // KEEPER_RECEIPT_TIMEOUT_MS throws into the dunning branch and increments
+    // chargeFailureCount even though the money moved. Without this reset those
+    // increments accumulate for the lifetime of the subscription and eventually
+    // flip a subscriber who paid every invoice into past_due — which the keeper
+    // never retries and sweepLongPastDue then cancels.
     await tx
       .update(subscriptions)
       .set({
@@ -1204,6 +1309,9 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
         currentPeriodEnd: nextCharge,
         nextChargeDate: nextCharge,
         lastPaymentId: payment.id,
+        chargeFailureCount: 0,
+        lastChargeError: null,
+        pastDueSince: null,
       })
       .where(eq(subscriptions.id, subscription.id));
 
@@ -1223,7 +1331,9 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     txHash: log.transactionHash,
     nextChargeDate: result.nextCharge.toISOString(),
     metadata: subscription.metadata ?? {},
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] subscription.charged webhook dispatch failed:", err),
+  );
   void recordAudit({
     organizationId: subscription.organizationId,
     action: "subscription.renewed",
@@ -1240,7 +1350,9 @@ export async function handleSubscriptionPaymentReceived(log: Log, args: {
     totalCents: result.invoice.totalCents,
     currency: result.invoice.currency,
     hostedUrl: `/i/${result.invoice.hostedToken}`,
-  }, ctx.livemode);
+  }, ctx.livemode).catch((err) =>
+    console.error("[Handler] invoice.issued webhook dispatch failed:", err),
+  );
   if (result.emailable) {
     await sendInvoiceEmail({
       invoiceId: result.invoice.id,
@@ -1311,7 +1423,9 @@ export async function handleSubscriptionPastDue(log: Log, args: {
       onChainId,
       status: "past_due",
       metadata: updated.metadata ?? {},
-    }, ctx.livemode);
+    }, ctx.livemode).catch((err) =>
+      console.error("[Handler] subscription.past_due webhook dispatch failed:", err),
+    );
     void sendSubscriptionEmail({
       kind: "past-due-reminder",
       subscriptionId: updated.id,
@@ -1353,7 +1467,9 @@ export async function handleSubscriptionCancelled(log: Log, args: {
       currentPeriodEnd: updated.currentPeriodEnd?.toISOString() ?? null,
       nextChargeDate: updated.nextChargeDate?.toISOString() ?? null,
       metadata: updated.metadata ?? {},
-    }, ctx.livemode);
+    }, ctx.livemode).catch((err) =>
+      console.error("[Handler] subscription.cancelled webhook dispatch failed:", err),
+    );
     void recordAudit({
       organizationId: updated.organizationId,
       action: "subscription.cancelled_onchain",
@@ -1420,21 +1536,64 @@ function rehydrateSubPaymentReceivedArgs(payload: Record<string, unknown>) {
   };
 }
 
+/**
+ * A row that has failed this many replays is left in the table but no longer
+ * retried: it would otherwise occupy the FIFO window forever and starve newer
+ * events. Operators can inspect (and requeue) the rows by hand.
+ *
+ * Reaching the ceiling is never silent — the row that crosses it raises a
+ * `system.unmatched_event_abandoned` webhook and an error log, because "we have
+ * an on-chain event we could not turn into a payment" always needs a human.
+ */
+export const MAX_UNMATCHED_ATTEMPTS = 50;
+
+async function alertAbandonedUnmatched(row: typeof unmatchedEvents.$inferSelect) {
+  console.error(
+    `[Unmatched Retry] Event ${row.id} (${row.eventType} tx=${row.txHash}) reached the ` +
+      `${MAX_UNMATCHED_ATTEMPTS}-attempt ceiling and will no longer be retried. ` +
+      `The row is retained for manual inspection.`,
+  );
+  try {
+    const { dispatchSystemWebhook } = await import("./webhook-dispatch");
+    await dispatchSystemWebhook("system.unmatched_event_abandoned", {
+      id: row.id,
+      eventType: row.eventType,
+      txHash: row.txHash,
+      blockNumber: row.blockNumber,
+      logIndex: row.logIndex,
+      attempts: MAX_UNMATCHED_ATTEMPTS,
+      livemode: row.livemode,
+      createdAt: row.createdAt.toISOString(),
+    });
+  } catch (err) {
+    console.error("[Unmatched Retry] Failed to dispatch abandoned-event alert:", err);
+  }
+}
+
 export async function retryUnmatchedEvents() {
   const [{ count: queueDepthBefore }] = await db
     .select({ count: sql<number>`cast(count(*) as int)` })
     .from(unmatchedEvents);
 
+  // FIFO: the oldest retained events must drain first. Selecting newest-first
+  // meant that once the queue passed the limit, the oldest rows were never
+  // selected again. Rows past the attempt ceiling are excluded so they can't
+  // block the head of the queue.
   const rows = await db
     .select()
     .from(unmatchedEvents)
-    .orderBy(desc(unmatchedEvents.createdAt))
+    .where(lt(unmatchedEvents.attempts, MAX_UNMATCHED_ATTEMPTS))
+    .orderBy(asc(unmatchedEvents.createdAt))
     .limit(50);
 
   if (rows.length === 0) {
     if (queueDepthBefore > 0) {
-      // Rows exist but all slid past our ORDER BY window? Unreachable, but
-      // log a heartbeat anyway so operators can see the queue depth.
+      // Every remaining row is past the attempt ceiling — surface the depth so
+      // operators see the stuck queue instead of silence.
+      console.warn(
+        `[Unmatched Retry] ${queueDepthBefore} retained event(s) all past the ` +
+          `${MAX_UNMATCHED_ATTEMPTS}-attempt ceiling; none retried this pass.`,
+      );
       console.log(
         JSON.stringify({
           event: "unmatched_retry_pass",
@@ -1449,84 +1608,80 @@ export async function retryUnmatchedEvents() {
     return;
   }
 
-  const retriedTxHashes = new Set(rows.map((r) => r.txHash));
   const retryResults: Array<{ createdAt: Date; matched: boolean }> = [];
 
-  for (const row of rows) {
-    let attempted = false;
+  /** Replays one retained row. Returns true only if the row was processed. */
+  async function replayRow(
+    row: typeof unmatchedEvents.$inferSelect,
+  ): Promise<boolean> {
+    const log = rehydrateLog(row);
+    const payload = row.payload as Record<string, unknown>;
+    const storedCtx = payload._ctx as HandlerContext | undefined;
+
+    // Bump attempts BEFORE replaying: an event that can never be matched has
+    // to converge on the ceiling instead of spinning every 30 seconds.
+    await db
+      .update(unmatchedEvents)
+      .set({ attempts: row.attempts + 1 })
+      .where(eq(unmatchedEvents.id, row.id));
+
+    if (!storedCtx) {
+      console.warn(`[Unmatched Retry] Row ${row.id} has no stored ctx; skipping`);
+      return false;
+    }
+
+    // The row stays in the table for the whole replay. If the handler throws
+    // anywhere — DB error, unregistered token, missing product — the event is
+    // still retained. `flag.rerecorded` tells us whether the handler ended up
+    // recording it as unmatched again, i.e. it still has nothing to match.
+    const key = unmatchedKey(row.eventType, row.txHash, row.logIndex ?? null);
+    const flag = { rerecorded: false };
+    replayInFlight.set(key, flag);
     try {
-      const log = rehydrateLog(row);
-      const payload = row.payload as Record<string, unknown>;
-
-      const storedCtx = payload._ctx as HandlerContext | undefined;
-      if (!storedCtx) {
-        console.warn(`[Unmatched Retry] Row ${row.id} has no stored ctx; skipping`);
-        await db
-          .update(unmatchedEvents)
-          .set({ attempts: row.attempts + 1 })
-          .where(eq(unmatchedEvents.id, row.id));
-        retryResults.push({ createdAt: row.createdAt, matched: false });
-        continue;
-      }
-
       if (row.eventType === "PaymentReceived") {
-        // Delete first to avoid the handler re-recording itself as unmatched,
-        // then attempt. On failure, re-record is fine because txHash
-        // idempotency protects us.
-        await db
-          .delete(unmatchedEvents)
-          .where(eq(unmatchedEvents.id, row.id));
-        attempted = true;
         await handlePaymentReceived(log, rehydratePaymentArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionCreated") {
-        await db
-          .delete(unmatchedEvents)
-          .where(eq(unmatchedEvents.id, row.id));
-        attempted = true;
         await handleSubscriptionCreated(log, rehydrateSubCreatedArgs(payload), storedCtx);
       } else if (row.eventType === "SubscriptionPaymentReceived") {
-        await db
-          .delete(unmatchedEvents)
-          .where(eq(unmatchedEvents.id, row.id));
-        attempted = true;
         await handleSubscriptionPaymentReceived(
           log,
           rehydrateSubPaymentReceivedArgs(payload),
           storedCtx,
         );
       } else {
-        // Unknown type: just bump attempts
-        await db
-          .update(unmatchedEvents)
-          .set({ attempts: row.attempts + 1 })
-          .where(eq(unmatchedEvents.id, row.id));
+        console.warn(
+          `[Unmatched Retry] Row ${row.id} has unknown event type ${row.eventType}; leaving retained`,
+        );
+        return false;
       }
+
+      if (flag.rerecorded) return false;
+
+      // Handler completed without re-recording — the event is processed.
+      // Only now is it safe to drop the retained row.
+      await db.delete(unmatchedEvents).where(eq(unmatchedEvents.id, row.id));
+      return true;
+    } finally {
+      replayInFlight.delete(key);
+    }
+  }
+
+  for (const row of rows) {
+    let matched = false;
+    try {
+      matched = await replayRow(row);
     } catch (err) {
       console.error(
-        `[Handler] Failed retrying unmatched event ${row.id}:`,
+        `[Handler] Failed retrying unmatched event ${row.id} (attempt ${row.attempts + 1}), row retained:`,
         err
       );
     }
-    // `matched` is finalized below by checking whether a row with the same
-    // txHash is still unmatched post-pass. Push a provisional entry now so
-    // the order matches rows[].
-    retryResults.push({ createdAt: row.createdAt, matched: attempted });
-  }
+    retryResults.push({ createdAt: row.createdAt, matched });
 
-  // Recompute matched: a retried event is "matched" only if no row with the
-  // same txHash remains in unmatched_events (handlers re-record on miss).
-  const remaining =
-    retriedTxHashes.size === 0
-      ? []
-      : await db
-          .select({ txHash: unmatchedEvents.txHash })
-          .from(unmatchedEvents)
-          .where(inArray(unmatchedEvents.txHash, Array.from(retriedTxHashes)));
-  const stillUnmatched = new Set(remaining.map((r) => r.txHash));
-
-  for (let i = 0; i < rows.length; i++) {
-    if (stillUnmatched.has(rows[i].txHash)) {
-      retryResults[i].matched = false;
+    // This pass was the row's last: alert loudly rather than letting an
+    // unconverted on-chain event drop out of the queue silently.
+    if (!matched && row.attempts + 1 >= MAX_UNMATCHED_ATTEMPTS) {
+      await alertAbandonedUnmatched(row);
     }
   }
 

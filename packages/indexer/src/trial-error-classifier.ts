@@ -3,6 +3,14 @@ export type TrialConversionError =
   | "allowance_revoked"
   | "permit_expired"
   | "nonce_drift"
+  /**
+   * The stored SubscriptionIntent signature predates the current typehash (it
+   * has no `maxFeeBps`/`flow`, or names a retired SubscriptionManager). It can
+   * never verify and re-signing needs the buyer, so the subscription must be
+   * re-authorised from checkout. Detected before submission, never from a
+   * revert — see checkIntentCompatibility in trial-converter.ts.
+   */
+  | "intent_schema_outdated"
   | "unknown";
 
 export function classifyTrialConversionError(err: unknown): TrialConversionError {
@@ -23,5 +31,10 @@ export function classifyTrialConversionError(err: unknown): TrialConversionError
 }
 
 export function isTerminal(category: TrialConversionError): boolean {
-  return category === "permit_expired" || category === "nonce_drift" || category === "allowance_revoked";
+  return (
+    category === "permit_expired" ||
+    category === "nonce_drift" ||
+    category === "allowance_revoked" ||
+    category === "intent_schema_outdated"
+  );
 }
