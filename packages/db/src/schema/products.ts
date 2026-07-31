@@ -7,6 +7,7 @@ import {
   timestamp,
   jsonb,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 import { organization } from "./auth";
 
@@ -60,7 +61,10 @@ export const products = pgTable("products", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (table) => [
+  // Product list (dashboard + API) is org-scoped and ordered by created_at.
+  index("products_org_created_idx").on(table.organizationId, table.createdAt),
+]);
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;

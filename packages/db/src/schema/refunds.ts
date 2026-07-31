@@ -40,6 +40,13 @@ export const refunds = pgTable(
     amount: integer("amount").notNull(),
     reason: text("reason"),
     txHash: text("tx_hash").notNull(),
+    // A tx hash is only unique *per chain*. `payments` already carries `chain`
+    // and dedups on (chain, tx_hash); refunds had neither, so a legitimate
+    // refund on chain B could be rejected for colliding with one on chain A,
+    // and the dashboard could not tell which chain a refund settled on.
+    // Backfilled from the parent payment's `chain` by the migration; the
+    // default matches payments.chain so existing insert sites keep working.
+    networkKey: text("network_key").notNull().default("base"),
     status: refundStatusEnum("status").notNull().default("pending"),
     createdBy: text("created_by"),
     livemode: boolean("livemode").notNull().default(false),
@@ -48,11 +55,12 @@ export const refunds = pgTable(
       .defaultNow(),
   },
   (table) => [
-    // txHash is unique per chain in practice; for our single-chain setup
-    // it's globally unique. Unique index prevents a merchant from reusing
-    // a transfer tx for multiple refund rows.
-    uniqueIndex("refunds_tx_hash_idx").on(table.txHash),
+    // Unique per (chain, tx hash), mirroring payments_chain_tx_idx. Prevents a
+    // merchant reusing one transfer tx for multiple refund rows without
+    // rejecting an unrelated refund that happens to collide on another chain.
+    uniqueIndex("refunds_network_tx_hash_idx").on(table.networkKey, table.txHash),
     index("refunds_payment_idx").on(table.paymentId),
+    index("refunds_org_created_idx").on(table.organizationId, table.createdAt),
   ],
 );
 

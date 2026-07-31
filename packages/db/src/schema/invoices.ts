@@ -82,9 +82,12 @@ export const invoices = pgTable(
   (table) => [
     uniqueIndex("invoices_payment_idx").on(table.paymentId),
     uniqueIndex("invoices_hosted_token_idx").on(table.hostedToken),
+    // livemode included so the invoice-number sequence does not collide
+    // across test and live mode (DB-10). Not an ON CONFLICT target anywhere.
     uniqueIndex("invoices_org_number_idx").on(
       table.organizationId,
       table.number,
+      table.livemode,
     ),
     index("invoices_org_issued_idx").on(table.organizationId, table.issuedAt),
     index("invoices_customer_issued_idx").on(table.customerId, table.issuedAt),

@@ -51,7 +51,18 @@ export const coupons = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex("coupons_org_code_idx").on(table.organizationId, table.code),
+    // livemode is part of the key so the same code (e.g. WELCOME10) can exist
+    // in both test and live mode — matching blocklist_entries_unique. Every
+    // lookup already filters livemode
+    // (apps/web/app/api/checkout/[id]/apply-coupon/route.ts:51-53), and this
+    // index is not an ON CONFLICT target anywhere, so widening it is safe.
+    uniqueIndex("coupons_org_code_idx").on(
+      table.organizationId,
+      table.code,
+      table.livemode,
+    ),
+    // Dashboard list: org-scoped, newest first.
+    index("coupons_org_created_idx").on(table.organizationId, table.createdAt),
   ],
 );
 

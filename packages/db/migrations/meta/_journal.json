@@ -52,143 +52,192 @@
       "breakpoints": true
     },
     {
-      "idx": 11,
+      "idx": 7,
       "version": "7",
-      "when": 1776026139900,
-      "tag": "0011_add_idempotency_keys",
+      "when": 1775940000000,
+      "tag": "0007_bootstrap_organizations",
       "breakpoints": true
     },
     {
       "idx": 8,
       "version": "7",
-      "when": 1776096000000,
+      "when": 1775950000000,
       "tag": "0009_add_paused_subscription_status",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "7",
-      "when": 1776182400000,
+      "when": 1775960000000,
       "tag": "0010_add_dunning_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1775970000000,
+      "tag": "0011_add_idempotency_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1775980000000,
+      "tag": "0012_add_paused_by_column",
       "breakpoints": true
     },
     {
       "idx": 12,
       "version": "7",
-      "when": 1776355200000,
-      "tag": "0012_add_paused_by_column",
+      "when": 1775990000000,
+      "tag": "0013_add_livemode",
       "breakpoints": true
     },
     {
       "idx": 13,
       "version": "7",
-      "when": 1744416000000,
-      "tag": "0013_add_livemode",
+      "when": 1776000000000,
+      "tag": "0014_add_faucet_mints",
       "breakpoints": true
     },
     {
       "idx": 14,
       "version": "7",
-      "when": 1744416800000,
-      "tag": "0014_add_faucet_mints",
+      "when": 1776010000000,
+      "tag": "0015_idempotency_nullable_response",
       "breakpoints": true
     },
     {
       "idx": 15,
       "version": "7",
-      "when": 1744502400000,
-      "tag": "0015_idempotency_nullable_response",
+      "when": 1776020000000,
+      "tag": "0016_add_api_key_rotation",
       "breakpoints": true
     },
     {
       "idx": 16,
       "version": "7",
-      "when": 1745280000000,
-      "tag": "0016_add_api_key_rotation",
+      "when": 1776030000000,
+      "tag": "0017_add_trial_email_timestamps",
       "breakpoints": true
     },
     {
       "idx": 17,
       "version": "7",
-      "when": 1745366400000,
-      "tag": "0017_add_trial_email_timestamps",
+      "when": 1776040000000,
+      "tag": "0018_add_coupons",
       "breakpoints": true
     },
     {
       "idx": 18,
       "version": "7",
-      "when": 1745452800000,
-      "tag": "0018_add_coupons",
+      "when": 1776050000000,
+      "tag": "0019_add_checkout_recovery",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "7",
-      "when": 1745539200000,
-      "tag": "0019_add_checkout_recovery",
+      "when": 1776060000000,
+      "tag": "0020_add_payment_links",
       "breakpoints": true
     },
     {
       "idx": 20,
       "version": "7",
-      "when": 1745625600000,
-      "tag": "0020_add_payment_links",
+      "when": 1776070000000,
+      "tag": "0021_add_blocklist",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "7",
-      "when": 1745712000000,
-      "tag": "0021_add_blocklist",
+      "when": 1776080000000,
+      "tag": "0022_add_cancel_at_period_end",
       "breakpoints": true
     },
     {
       "idx": 22,
       "version": "7",
-      "when": 1745798400000,
-      "tag": "0022_add_cancel_at_period_end",
+      "when": 1776090000000,
+      "tag": "0023_add_gift_subscriptions",
       "breakpoints": true
     },
     {
       "idx": 23,
       "version": "7",
-      "when": 1745884800000,
-      "tag": "0023_add_gift_subscriptions",
+      "when": 1776100000000,
+      "tag": "0024_add_refunds",
       "breakpoints": true
     },
     {
       "idx": 24,
       "version": "7",
-      "when": 1745971200000,
-      "tag": "0024_add_refunds",
+      "when": 1776110000000,
+      "tag": "0025_add_quantity",
       "breakpoints": true
     },
     {
       "idx": 25,
       "version": "7",
-      "when": 1746057600000,
-      "tag": "0025_add_quantity",
+      "when": 1776120000000,
+      "tag": "0026_add_customer_notification_prefs",
       "breakpoints": true
     },
     {
       "idx": 26,
       "version": "7",
-      "when": 1746144000000,
-      "tag": "0026_add_customer_notification_prefs",
+      "when": 1776130000000,
+      "tag": "0027_add_refund_requests",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "7",
-      "when": 1746230400000,
-      "tag": "0027_add_refund_requests",
+      "when": 1776140000000,
+      "tag": "0028_add_customer_wallets",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "7",
-      "when": 1746316800000,
-      "tag": "0028_add_customer_wallets",
+      "when": 1776150000000,
+      "tag": "0029_add_tax_breakdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1776160000000,
+      "tag": "0030_add_utxo_support",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1776170000000,
+      "tag": "0031_rename_owner_to_organization",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1776180000000,
+      "tag": "0032_reconcile_schema_and_add_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1776190000000,
+      "tag": "0033_indexer_schema_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1776200000000,
+      "tag": "0034_add_max_fee_bps",
       "breakpoints": true
     }
   ]
