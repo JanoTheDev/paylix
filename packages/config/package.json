@@ -11,9 +11,13 @@
     "./deployments": "./src/deployments.ts"
   },
   "scripts": {
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5.5",
     "vitest": "^4.1.4"
   },
   "dependencies": {

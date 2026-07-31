@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --turbopack --port 3001",
+    "predev": "node scripts/build-search-index.mjs",
     "build": "next build",
     "prebuild": "node scripts/build-search-index.mjs",
-    "predev": "node scripts/build-search-index.mjs",
-    "search:index": "node scripts/build-search-index.mjs",
-    "start": "next start"
+    "start": "next start",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "search:index": "node scripts/build-search-index.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",

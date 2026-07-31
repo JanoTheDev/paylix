@@ -1,44 +1,32 @@
-name: Web Test
+name: Monorepo CI
 
-# Runs the TypeScript side of the monorepo: vitest tests, lint, typecheck,
-# and build. Uses the repo's existing top-level turbo commands so CI stays
-# consistent with `pnpm dev` / `pnpm build` / `pnpm test` on local.
+# Runs the whole monorepo through the repo's own top-level turbo commands so
+# CI stays consistent with what a contributor runs locally:
+#   pnpm build · pnpm lint · pnpm typecheck · pnpm test
 #
-# Triggers on any change that could affect compiled output or runtime —
-# contracts-only changes are handled by forge-test.yml and don't need this.
+# There is deliberately NO `paths` filter. The previous enumerated list left
+# packages/mailer, packages/utxo-watcher, packages/utxo-indexer and
+# packages/solana-indexer outside every workflow, so a PR touching only those
+# merged with zero automated verification. The job is cheap relative to that
+# risk. Deep contract fuzzing still lives in forge-test.yml; `pnpm test` here
+# runs the standard `forge test` suite via @paylix/contracts' test script,
+# which is why Foundry is installed below.
 
 on:
   pull_request:
-    paths:
-      - "apps/**"
-      - "packages/sdk/**"
-      - "packages/db/**"
-      - "packages/indexer/**"
-      - "packages/config/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "turbo.json"
-      - ".github/workflows/web-test.yml"
   push:
     branches: [master]
-    paths:
-      - "apps/**"
-      - "packages/sdk/**"
-      - "packages/db/**"
-      - "packages/indexer/**"
-      - "packages/config/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "turbo.json"
-      - ".github/workflows/web-test.yml"
 
 concurrency:
   group: web-test-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: Build · Lint · Test
+    name: Build · Lint · Typecheck · Test
     runs-on: ubuntu-latest
 
     steps:
@@ -54,6 +42,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+
+      - name: Install Foundry
+        # @paylix/contracts' build/test scripts are `forge build` / `forge test`,
+        # so the root turbo tasks need forge on PATH. Pinned to commit SHA.
+        uses: foundry-rs/foundry-toolchain@8789b3e21e6c11b2697f5eb56eddae542f746c10 # v1
+        with:
+          version: v1.5.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -94,6 +89,9 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Test
         run: pnpm test

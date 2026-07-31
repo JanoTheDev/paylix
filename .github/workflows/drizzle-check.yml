@@ -29,6 +29,9 @@ concurrency:
   group: drizzle-check-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Verify migrations are up to date

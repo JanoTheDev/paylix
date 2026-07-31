@@ -1,0 +1,70 @@
+# Docker build context exclusions.
+#
+# The web + indexer images are built with `context: .` (see docker-compose.yml),
+# so without this file every secret and build artifact in the working tree ends
+# up in an intermediate image layer. `.env` in particular is expected to hold
+# MAINNET_DEPLOYER_PRIVATE_KEY / MAINNET_RELAYER_PRIVATE_KEY / MAINNET_KEEPER_PRIVATE_KEY
+# (see .env.example) — it must never reach a layer.
+
+# --- secrets -----------------------------------------------------------------
+# NOTE: dockerignore uses filepath.Match, NOT gitignore semantics — a bare
+# `.env` anchors to the context root only. The `**/` prefix is what catches
+# apps/web/.env.local (which Next reads at build time) and any other nested
+# env file. Do not "simplify" these back to unprefixed patterns.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# --- vcs / tooling -----------------------------------------------------------
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# --- dependencies + build output --------------------------------------------
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/out
+**/build
+**/coverage
+**/*.tsbuildinfo
+.turbo
+**/.turbo
+
+# --- foundry / anchor artifacts ---------------------------------------------
+packages/contracts/out
+packages/contracts/cache
+packages/contracts/broadcast
+packages/solana-program/target
+**/target
+
+# --- audit + planning artifacts ---------------------------------------------
+audit
+graphify-out
+docs/superpowers
+docs/sdd
+docs/plans
+plans
+specs
+.claude
+.cursor
+.superpowers
+CLAUDE.md
+**/CLAUDE.md
+*.plan.md
+PLAN.md
+PLANNING.md
+TODO.local.md
+
+# --- misc --------------------------------------------------------------------
+*.log
+.DS_Store
+Dockerfile
+**/Dockerfile
+.dockerignore
+docker-compose.yml

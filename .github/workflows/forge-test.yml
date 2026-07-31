@@ -20,6 +20,9 @@ concurrency:
   group: forge-test-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Forge Test
@@ -38,7 +41,7 @@ jobs:
         # Pinned to commit SHA to prevent supply-chain attacks via tag force-push.
         uses: foundry-rs/foundry-toolchain@8789b3e21e6c11b2697f5eb56eddae542f746c10 # v1
         with:
-          version: stable
+          version: v1.5.1
 
       - name: Show forge version
         run: forge --version
@@ -48,3 +51,16 @@ jobs:
 
       - name: Test (with deep fuzzing)
         run: forge test --no-match-path 'test/mainnet-fork/*' --fuzz-runs 1000 -vv
+
+      - name: Check ABI freshness
+        # packages/contracts/package.json publishes abi/*.json as export entry
+        # points, but regenerating them is a manual step — they went three
+        # releases stale once already (eight functions and two events missing)
+        # and nothing caught it. This recompiles src/ and fails if the committed
+        # ABIs differ. export-abi.sh shells out to node, which is preinstalled
+        # on ubuntu-latest.
+        #
+        # Invoked via `bash` rather than `./…` on purpose: this repo is authored
+        # on Windows with core.filemode=false, so shell scripts land in the index
+        # as mode 100644 and `./script/...` would be "Permission denied" here.
+        run: bash ./script/check-abi-drift.sh

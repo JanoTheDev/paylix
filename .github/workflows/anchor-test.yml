@@ -25,6 +25,9 @@ concurrency:
   group: anchor-test-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   rust-tests:
     name: Rust unit tests

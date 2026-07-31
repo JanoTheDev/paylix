@@ -5,19 +5,22 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@paylix/utxo-watcher": "workspace:*",
-    "@paylix/db": "workspace:*",
     "@paylix/config": "workspace:*",
+    "@paylix/db": "workspace:*",
+    "@paylix/utxo-watcher": "workspace:*",
     "drizzle-orm": "^0.38.4"
   },
   "devDependencies": {
-    "vitest": "^4.1.4",
+    "@types/node": "^20",
     "tsx": "^4.21.0",
-    "@types/node": "^20"
+    "typescript": "^5.5",
+    "vitest": "^4.1.4"
   }
 }

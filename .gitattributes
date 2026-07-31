@@ -1,0 +1,22 @@
+# Normalize line endings. This repo is developed on Windows and built/tested on
+# Linux CI and under WSL, so a checkout with core.autocrlf=true (the Git for
+# Windows default) would otherwise commit CRLF into the shell scripts that CI
+# executes — bash then fails with `bad interpreter: /bin/bash^M`.
+* text=auto eol=lf
+
+# Executed by CI (forge-test.yml) and by operators under WSL. Must stay LF.
+*.sh text eol=lf
+
+*.sol text eol=lf
+*.sql text eol=lf
+
+# Generated / vendored — keep them out of diffs and language stats.
+pnpm-lock.yaml -diff linguist-generated=true
+packages/contracts/lib/** linguist-vendored=true
+
+# Binary assets: never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

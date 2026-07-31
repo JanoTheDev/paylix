@@ -43,7 +43,7 @@ jobs:
         # Update the SHA when bumping the version; never revert to `@v1`.
         uses: foundry-rs/foundry-toolchain@8789b3e21e6c11b2697f5eb56eddae542f746c10 # v1
         with:
-          version: stable
+          version: v1.5.1
 
       - name: Run Slither
         uses: crytic/slither-action@f197989dea5b53e986d0f88c60a034ddd77ec9a8 # v0.4.0

@@ -8,8 +8,9 @@
     "./abi/MockUSDC": "./abi/MockUSDC.json"
   },
   "scripts": {
-    "build": "echo 'Run via WSL: wsl bash -lc \"cd $(pwd) && ~/.foundry/bin/forge build\"'",
-    "test": "echo 'Run via WSL: wsl bash -lc \"cd $(pwd) && ~/.foundry/bin/forge test\"'",
+    "compile": "forge build",
+    "test": "forge test",
+    "test:fork": "forge test --profile fork -vvv",
     "deploy:testnet": "echo 'Run via WSL with forge script'",
     "deploy:mainnet": "echo 'Run via WSL with forge script'"
   }

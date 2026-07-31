@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # .env is excluded from the build context (.dockerignore) so its private
+      # keys never land in an image layer. next build still needs it, so it is
+      # passed as a BuildKit secret — mounted on tmpfs for one RUN, never stored.
+      secrets:
+        - dotenv
     ports:
       - "3000:3000"
     env_file: .env
@@ -37,3 +42,7 @@ services:
 
 volumes:
   pgdata:
+
+secrets:
+  dotenv:
+    file: ./.env

@@ -1,7 +1,7 @@
 {
   "name": "@paylix/sdk",
-  "version": "0.0.1",
-  "description": "TypeScript SDK for accepting USDC payments and subscriptions via Paylix on Base.",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for accepting crypto payments and subscriptions with Paylix.",
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
@@ -12,12 +12,14 @@
     "crypto",
     "payments",
     "usdc",
+    "stablecoin",
     "base",
     "subscriptions",
     "web3",
     "sdk"
   ],
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,18 +33,37 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
-    }
+    },
+    "./webhooks": {
+      "import": {
+        "types": "./dist/webhooks.d.ts",
+        "default": "./dist/webhooks.js"
+      },
+      "require": {
+        "types": "./dist/webhooks.d.cts",
+        "default": "./dist/webhooks.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "test": "vitest run"
+  "engines": {
+    "node": ">=20"
   },
-  "dependencies": {
-    "viem": "^2"
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@paylix/config": "workspace:*",

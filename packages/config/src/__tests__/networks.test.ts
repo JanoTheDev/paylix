@@ -29,6 +29,21 @@ import {
   sepolia,
 } from "viem/chains";
 
+/**
+ * Optional token lookup across heterogeneous networks.
+ *
+ * `NETWORKS` carries a concrete literal token map per network (Base has
+ * USDC/USDT/DAI/WETH/WBTC, a testnet may have only USDC), so
+ * `someNetwork.tokens.USDT` does not typecheck when `someNetwork` is a union
+ * over every registry entry — the property genuinely is absent from some
+ * members. This mirrors the widening `getToken` already performs internally
+ * (`network-helpers.ts:91`) but returns `undefined` instead of throwing, which
+ * is what these "…on the chains that have it" assertions need.
+ */
+function optionalToken(tokens: object, symbol: string): TokenConfig | undefined {
+  return (tokens as Record<string, TokenConfig>)[symbol];
+}
+
 describe("registry types", () => {
   it("Environment is exactly 'mainnet' | 'testnet'", () => {
     expectTypeOf<Environment>().toEqualTypeOf<"mainnet" | "testnet">();
@@ -68,6 +83,7 @@ describe("registry types", () => {
       name: "USD Coin",
       decimals: 6,
       supportsPermit: true,
+      signatureScheme: "eip2612",
       eip712Version: "2",
       isStable: true,
       address: "0x0000000000000000000000000000000000000000",
@@ -238,10 +254,12 @@ describe("NETWORKS data — signatureScheme invariants", () => {
   });
 
   it("USDT across all supported chains uses permit2", () => {
-    const chainsWithUSDT = Object.values(NETWORKS).filter((n) => n.tokens.USDT);
+    const chainsWithUSDT = Object.values(NETWORKS).filter((n) =>
+      optionalToken(n.tokens, "USDT"),
+    );
     expect(chainsWithUSDT.length).toBeGreaterThan(0);
     for (const n of chainsWithUSDT) {
-      expect(n.tokens.USDT.signatureScheme).toBe("permit2");
+      expect(optionalToken(n.tokens, "USDT")?.signatureScheme).toBe("permit2");
     }
   });
 
@@ -252,7 +270,7 @@ describe("NETWORKS data — signatureScheme invariants", () => {
   it("DAI on L2s uses permit2 (not dai-permit)", () => {
     const l2Keys: NetworkKey[] = ["base", "arbitrum", "optimism", "polygon", "avalanche"];
     for (const k of l2Keys) {
-      const dai = NETWORKS[k].tokens.DAI;
+      const dai = optionalToken(NETWORKS[k].tokens, "DAI");
       if (dai) expect(dai.signatureScheme).toBe("permit2");
     }
   });
@@ -279,7 +297,7 @@ describe("NETWORKS data — signatureScheme invariants", () => {
 
   it("WBTC deployments have 8 decimals", () => {
     for (const n of Object.values(NETWORKS)) {
-      const wbtc = n.tokens.WBTC;
+      const wbtc = optionalToken(n.tokens, "WBTC");
       if (wbtc) expect(wbtc.decimals).toBe(8);
     }
   });
