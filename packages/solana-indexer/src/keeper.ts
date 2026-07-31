@@ -44,6 +44,9 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
   const intervalMs = opts.intervalMs ?? 60_000;
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;
+  // Tracked so stop() can drain a charge that is mid-flight rather than
+  // exiting with a submitted transaction nobody will record — see IDX-44.
+  let inFlight: Promise<number> = Promise.resolve(0);
 
   async function tick(): Promise<number> {
     if (stopped) return 0;
@@ -56,6 +59,8 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
     const due = await opts.dueSubscriptions();
     let charged = 0;
     for (const sub of due) {
+      // Shutdown lands between charges rather than truncating one.
+      if (stopped) break;
       try {
         const signature = await chargeOne(opts.connection, opts.keeper, opts.subscriptionManagerProgramId, sub);
         console.log(`[solana-keeper] charged ${sub.subscriptionPda.toBase58()} sig=${signature}`);
@@ -79,7 +84,8 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
   function schedule(): void {
     if (stopped) return;
     timer = setTimeout(async () => {
-      await tick().catch((err) => console.error("[solana-keeper] tick:", err));
+      inFlight = tick();
+      await inFlight.catch((err) => console.error("[solana-keeper] tick:", err));
       schedule();
     }, intervalMs);
   }
@@ -92,6 +98,9 @@ export async function startKeeper(opts: KeeperOptions): Promise<KeeperHandle> {
     async stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
+      await inFlight.catch((err) =>
+        console.error("[solana-keeper] in-flight tick failed during shutdown:", err),
+      );
     },
   };
 }
@@ -164,6 +173,19 @@ async function chargeOne(
   const tx = new VersionedTransaction(msg);
   tx.sign([keeper]);
   const signature = await connection.sendTransaction(tx);
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+  const confirmation = await connection.confirmTransaction(
+    { signature, blockhash, lastValidBlockHeight },
+    "confirmed",
+  );
+  // A transaction that lands and reverts still resolves here with a non-null
+  // `err`. Treating that as success resets the dunning ladder and hands the
+  // subscriber a free billing period — see IDX-08.
+  if (confirmation?.value?.err) {
+    throw new Error(
+      `charge_subscription reverted on-chain (sig=${signature}): ${JSON.stringify(
+        confirmation.value.err,
+      )}`,
+    );
+  }
   return signature;
 }

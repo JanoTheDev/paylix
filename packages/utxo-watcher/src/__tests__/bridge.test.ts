@@ -8,25 +8,25 @@ const BITCOIN_TEST_XPUB =
 
 function makeFakeClient(): ElectrumClient & {
   _fire: (address: string, hit: AddressPaymentHit) => Promise<void>;
-  _setTxHeight: (txid: string, height: number | null) => void;
+  _setTxBlockHash: (txid: string, blockHash: string | null) => void;
 } {
   const subs = new Map<string, (hit: AddressPaymentHit) => void | Promise<void>>();
-  const txHeights = new Map<string, number | null>();
+  const txBlockHashes = new Map<string, string | null>();
   return {
     async subscribeAddress(address, onHit) {
       subs.set(address, onHit);
       return () => { subs.delete(address); };
     },
     async getTipHeight() { return 1000; },
-    async getTransactionHeight(txid) {
-      return txHeights.has(txid) ? (txHeights.get(txid) ?? null) : null;
+    async getTransactionBlockHash(txid) {
+      return txBlockHashes.has(txid) ? (txBlockHashes.get(txid) ?? null) : null;
     },
     async close() {},
     async _fire(address, hit) {
       const cb = subs.get(address);
       if (cb) await cb(hit);
     },
-    _setTxHeight(txid, height) { txHeights.set(txid, height); },
+    _setTxBlockHash(txid, blockHash) { txBlockHashes.set(txid, blockHash); },
   };
 }
 
@@ -193,17 +193,18 @@ describe("bridge", () => {
       3,
     );
     const txid = "r".repeat(64);
-    // Pretend the tx is initially at height 998; fire the payment.
-    client._setTxHeight(txid, 998);
+    // Pretend the tx is initially in block BLK_998; fire the payment.
+    client._setTxBlockHash(txid, "blk998");
     await client._fire(derived.address, {
       txid,
       blockHeight: 998,
       confirmations: 3,
       vout: 0,
       valueSats: 10_000n,
+      blockHash: "blk998",
     });
     // Now simulate reorg: tx no longer on chain.
-    client._setTxHeight(txid, null);
+    client._setTxBlockHash(txid, null);
     await new Promise((r) => setTimeout(r, 30));
     expect(reorged).toHaveBeenCalledWith("sess-4", txid);
     await handle.stop();

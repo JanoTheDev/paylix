@@ -72,35 +72,51 @@ for (const name of [
   DISCRIMINATORS.set(disc, name);
 }
 
+/**
+ * Raised when a payload is shorter than the schema it matched. A truncated
+ * or version-skewed `Program data:` line whose first 8 bytes collide with a
+ * known discriminator must not throw a raw RangeError out of the listener.
+ */
+export class BorshDecodeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BorshDecodeError";
+  }
+}
+
 /** Borsh reader — only the primitives Paylix events use. */
 export class BorshReader {
   private offset = 0;
   constructor(private buf: Buffer) {}
 
+  /** Bounds-check before every read; short buffers are a decode error, not a crash. */
+  private take(bytes: number): number {
+    const start = this.offset;
+    if (start + bytes > this.buf.length) {
+      throw new BorshDecodeError(
+        `Borsh read out of range: need ${bytes} byte(s) at offset ${start}, buffer is ${this.buf.length}`,
+      );
+    }
+    this.offset = start + bytes;
+    return start;
+  }
+
   pubkey(): string {
-    const slice = this.buf.subarray(this.offset, this.offset + 32);
-    this.offset += 32;
-    return bs58Encode(slice);
+    const at = this.take(32);
+    return bs58Encode(this.buf.subarray(at, at + 32));
   }
   u64(): bigint {
-    const v = this.buf.readBigUInt64LE(this.offset);
-    this.offset += 8;
-    return v;
+    return this.buf.readBigUInt64LE(this.take(8));
   }
   i64(): bigint {
-    const v = this.buf.readBigInt64LE(this.offset);
-    this.offset += 8;
-    return v;
+    return this.buf.readBigInt64LE(this.take(8));
   }
   bytes32(): string {
-    const slice = this.buf.subarray(this.offset, this.offset + 32);
-    this.offset += 32;
-    return "0x" + slice.toString("hex");
+    const at = this.take(32);
+    return "0x" + this.buf.subarray(at, at + 32).toString("hex");
   }
   u8(): number {
-    const v = this.buf.readUInt8(this.offset);
-    this.offset += 1;
-    return v;
+    return this.buf.readUInt8(this.take(1));
   }
 }
 
@@ -142,7 +158,18 @@ export function decodeProgramData(base64Payload: string): DecodedEvent | null {
   const kind = DISCRIMINATORS.get(disc);
   if (!kind) return null;
 
-  const reader = new BorshReader(buf.subarray(8));
+  try {
+    return decodeFields(kind, new BorshReader(buf.subarray(8)));
+  } catch (err) {
+    if (err instanceof BorshDecodeError) {
+      console.warn(`[solana-decoder] discarding malformed ${kind} payload: ${err.message}`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+function decodeFields(kind: EventKind, reader: BorshReader): DecodedEvent {
   switch (kind) {
     case "PaymentReceived":
       return {

@@ -34,14 +34,41 @@ export async function fetchSubscriptionAccount(
 ): Promise<OnChainSubscription | null> {
   const info = await connection.getAccountInfo(pda);
   if (!info) return null;
+  return decodeSubscriptionAccount(info.data);
+}
 
+/** Max accounts per `getMultipleAccountsInfo` call — the RPC limit. */
+const MULTI_ACCOUNT_BATCH = 100;
+
+/**
+ * Batched variant of `fetchSubscriptionAccount`. Returns one entry per input
+ * PDA, in order, so a due-selection pass costs ceil(n/100) RPC round trips
+ * instead of n — see IDX-28.
+ */
+export async function fetchSubscriptionAccounts(
+  connection: Connection,
+  pdas: PublicKey[],
+): Promise<Array<OnChainSubscription | null>> {
+  const out: Array<OnChainSubscription | null> = [];
+  for (let i = 0; i < pdas.length; i += MULTI_ACCOUNT_BATCH) {
+    const infos = await connection.getMultipleAccountsInfo(
+      pdas.slice(i, i + MULTI_ACCOUNT_BATCH),
+    );
+    for (const info of infos) {
+      out.push(info ? decodeSubscriptionAccount(info.data) : null);
+    }
+  }
+  return out;
+}
+
+export function decodeSubscriptionAccount(data: Buffer): OnChainSubscription {
   // 8-byte Anchor discriminator, then the Subscription struct fields in
   // declaration order (see `pub struct Subscription` in lib.rs):
   //   id: u64, subscriber: Pubkey, merchant_ata: Pubkey, mint: Pubkey,
   //   amount: u64, interval_seconds: i64, next_charge_at: i64,
   //   product_id: [u8;32], customer_id: [u8;32], total_charged: u64,
   //   status: u8, bump: u8
-  const reader = new BorshReader(info.data.subarray(8));
+  const reader = new BorshReader(data.subarray(8));
   const id = reader.u64();
   const subscriber = reader.pubkey();
   const merchantAta = reader.pubkey();

@@ -18,6 +18,7 @@ import { startKeeper, configPda } from "./keeper";
 import { makeSolanaDbCallbacks } from "./db-callbacks";
 import { makeSolanaKeeperCallbacks } from "./keeper-callbacks";
 import { makeEventHandler } from "./writer";
+import { makeSlotCursor } from "./cursor";
 import { fetchPlatformWallet } from "./subscription-account";
 
 function requireEnv(key: string): string {
@@ -34,6 +35,34 @@ function requireNetworkKey(): "solana" | "solana-devnet" {
   return v;
 }
 
+/**
+ * 'processed' is deliberately not accepted: it exposes rollback-able state,
+ * the Solana analogue of the "indexer never reads from the unsafe head"
+ * invariant.
+ */
+function requireCommitment(): "finalized" | "confirmed" {
+  const v = process.env.SOLANA_COMMITMENT;
+  if (!v) return "finalized";
+  if (v !== "finalized" && v !== "confirmed") {
+    throw new Error(
+      `SOLANA_COMMITMENT must be "finalized" or "confirmed", got "${v}". ` +
+        `'processed' is not supported — it can index state that is later rolled back.`,
+    );
+  }
+  return v;
+}
+
+/** Parse a numeric env var, rejecting NaN / non-positive rather than trusting it. */
+function positiveIntEnv(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${key} must be a positive integer, got "${raw}"`);
+  }
+  return parsed;
+}
+
 function loadKeeperKeypair(path: string): Keypair {
   const raw = JSON.parse(readFileSync(path, "utf-8"));
   return Keypair.fromSecretKey(Uint8Array.from(raw));
@@ -42,9 +71,11 @@ function loadKeeperKeypair(path: string): Keypair {
 async function main(): Promise<void> {
   const rpcUrl = requireEnv("SOLANA_RPC_URL");
   const networkKey = requireNetworkKey();
-  const commitment =
-    (process.env.SOLANA_COMMITMENT as "finalized" | "confirmed" | undefined) ??
-    "finalized";
+  const commitment = requireCommitment();
+  const catchUpIntervalMs = positiveIntEnv("SOLANA_CATCHUP_INTERVAL_MS", 60_000);
+  const maxCatchUpSignatures = positiveIntEnv("SOLANA_MAX_CATCHUP_SIGNATURES", 10_000);
+  const maxColdStartSlots = positiveIntEnv("SOLANA_MAX_COLD_START_SLOTS", 5_000);
+  const keeperIntervalMs = positiveIntEnv("SOLANA_KEEPER_INTERVAL_MS", 60_000);
   const connection = new Connection(rpcUrl, commitment);
 
   const programIds: PublicKey[] = [];
@@ -67,6 +98,12 @@ async function main(): Promise<void> {
     connection,
     programIds,
     commitment,
+    // Durable slot cursor: backfills on boot and re-scans on an interval so a
+    // restart or a silently-reconnected WebSocket doesn't lose events.
+    cursor: makeSlotCursor(db, networkKey),
+    catchUpIntervalMs,
+    maxCatchUpSignatures,
+    maxColdStartSlots,
     onEvent: async (ev) => {
       console.log(`[solana-listener] ${ev.event.kind} at slot ${ev.slot} sig=${ev.signature}`);
       await onEvent(ev);
@@ -95,19 +132,30 @@ async function main(): Promise<void> {
     connection,
     keeper: keeperKeypair,
     subscriptionManagerProgramId,
+    intervalMs: keeperIntervalMs,
     dueSubscriptions: keeperCallbacks?.dueSubscriptions,
     onChargeSubmitted: keeperCallbacks?.onChargeSubmitted,
     onChargeFailed: keeperCallbacks?.onChargeFailed,
   });
 
+  // Both stops drain in-flight work (a catch-up pass, a submitted charge)
+  // before resolving, so a container stop doesn't truncate either.
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log("[solana-indexer] shutdown");
-    await listener.stop();
     await keeper.stop();
+    await listener.stop();
   };
 
-  process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
-  process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
+  const onSignal = (signal: string): void => {
+    void shutdown()
+      .catch((err) => console.error(`[solana-indexer] ${signal} shutdown failed:`, err))
+      .then(() => process.exit(0));
+  };
+  process.on("SIGINT", () => onSignal("SIGINT"));
+  process.on("SIGTERM", () => onSignal("SIGTERM"));
 }
 
 if (process.env.NODE_ENV !== "test") {

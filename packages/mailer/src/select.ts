@@ -12,9 +12,22 @@ function noopDriver(): MailDriver {
   };
 }
 
+let warnedUnconfigured = false;
+
 export async function selectDriver(): Promise<MailDriver> {
   const driver = process.env.MAIL_DRIVER;
-  if (!driver) return noopDriver();
+  if (!driver) {
+    // Degrading to a silent no-op leaves an operator with zero emails and
+    // zero visible errors — say so once, loudly, at first use (IDX-31).
+    if (!warnedUnconfigured) {
+      warnedUnconfigured = true;
+      console.warn(
+        "[mailer] MAIL_DRIVER is not set — no email will be delivered. " +
+          "Set MAIL_DRIVER=resend or MAIL_DRIVER=smtp.",
+      );
+    }
+    return noopDriver();
+  }
 
   if (driver === "resend") {
     const apiKey = process.env.RESEND_API_KEY;
@@ -35,12 +48,18 @@ export async function selectDriver(): Promise<MailDriver> {
         "MAIL_DRIVER=smtp requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS",
       );
     }
+    const parsedPort = Number(port);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      throw new Error(`SMTP_PORT must be a valid port number, got "${port}"`);
+    }
     const { createSmtpDriver } = await import("./drivers/smtp");
     return createSmtpDriver({
       host,
-      port: Number(port),
+      port: parsedPort,
       user,
       pass,
+      // Escape hatch for operators on a trusted loopback relay.
+      requireTls: process.env.SMTP_REQUIRE_TLS !== "false",
     });
   }
 

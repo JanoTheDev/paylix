@@ -10,7 +10,7 @@ const updateCalls: Array<{ set: Record<string, unknown> }> = [];
 
 function makeSelectChain() {
   const chain: Record<string, unknown> = {};
-  const methods = ["from", "where", "limit"];
+  const methods = ["from", "where", "limit", "orderBy"];
   for (const m of methods) chain[m] = () => chain;
   // biome-ignore lint/suspicious/noThenProperty: deliberate thenable mock for chainable query builder
   (chain as { then: (resolve: (v: QueryResult) => void) => void }).then = (resolve) => {
@@ -71,7 +71,7 @@ function dueRow(overrides: Partial<Record<string, unknown>> = {}) {
 describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
   it("includes a row whose on-chain account confirms active and due", async () => {
     selectResults.push([dueRow()]);
-    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccount").mockResolvedValue({
+    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccounts").mockResolvedValue([{
       id: 42n,
       subscriber: SUBSCRIBER.toBase58(),
       merchantAta: MERCHANT_ATA.toBase58(),
@@ -80,7 +80,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
       intervalSeconds: 2_592_000n,
       nextChargeAt: 0n, // long past due
       status: 0, // Active
-    });
+    }]);
 
     const callbacks = makeSolanaKeeperCallbacks({
       db: mockDb as never,
@@ -98,7 +98,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
 
   it("excludes a row whose DB status is active but the on-chain account says cancelled", async () => {
     selectResults.push([dueRow()]);
-    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccount").mockResolvedValue({
+    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccounts").mockResolvedValue([{
       id: 42n,
       subscriber: SUBSCRIBER.toBase58(),
       merchantAta: MERCHANT_ATA.toBase58(),
@@ -107,7 +107,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
       intervalSeconds: 2_592_000n,
       nextChargeAt: 0n,
       status: 2, // Cancelled
-    });
+    }]);
 
     const callbacks = makeSolanaKeeperCallbacks({
       db: mockDb as never,
@@ -122,7 +122,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
 
   it("excludes a row with no on-chain account (fetchSubscriptionAccount returns null)", async () => {
     selectResults.push([dueRow()]);
-    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccount").mockResolvedValue(null);
+    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccounts").mockResolvedValue([null]);
 
     const callbacks = makeSolanaKeeperCallbacks({
       db: mockDb as never,
@@ -137,6 +137,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
 
   it("excludes a row missing contractAddress or onChainId", async () => {
     selectResults.push([dueRow({ contractAddress: null })]);
+    vi.spyOn(subscriptionAccount, "fetchSubscriptionAccounts").mockResolvedValue([]);
 
     const callbacks = makeSolanaKeeperCallbacks({
       db: mockDb as never,
@@ -151,7 +152,7 @@ describe("makeSolanaKeeperCallbacks().dueSubscriptions", () => {
 });
 
 describe("makeSolanaKeeperCallbacks().onChargeSubmitted", () => {
-  it("sets lastChargeAttemptAt", async () => {
+  it("stamps lastChargeAttemptAt and resets the dunning counters", async () => {
     const callbacks = makeSolanaKeeperCallbacks({
       db: mockDb as never,
       connection: {} as Connection,
@@ -161,6 +162,11 @@ describe("makeSolanaKeeperCallbacks().onChargeSubmitted", () => {
     await callbacks.onChargeSubmitted(42n);
 
     expect(updateCalls[0].set.lastChargeAttemptAt).toBeInstanceOf(Date);
+    expect(updateCalls[0].set).toMatchObject({
+      chargeFailureCount: 0,
+      lastChargeError: null,
+      pastDueSince: null,
+    });
   });
 });
 

@@ -4,18 +4,25 @@
  * Keeps the watcher package DB-agnostic while letting operators still run a
  * one-command indexer process. The bridge calls us; we read/write Postgres
  * via @paylix/db.
+ *
+ * The payment write path itself lives in `settlement.ts`, shared with the
+ * rate backfill drain so both settle a payment identically.
  */
 
 import { and, eq, gt, inArray, isNotNull, max, sql } from "drizzle-orm";
 import type { BridgeCallbacks, BridgeSessionRow, UtxoChainKey } from "@paylix/utxo-watcher";
 import type { AddressPaymentHit } from "@paylix/utxo-watcher";
 
-import { createDb, type Database } from "@paylix/db/client";
+import { type Database } from "@paylix/db/client";
 import {
   checkoutSessions,
   merchantPayoutWallets,
   payments,
+  unmatchedEvents,
 } from "@paylix/db/schema";
+import { makeSettlement, type ConfirmedTransfer } from "./settlement";
+
+export { satsToCents } from "./settlement";
 
 export interface UtxoDbCallbacksOptions {
   /** Network key this callback set covers — one chain × one env. */
@@ -27,6 +34,7 @@ export interface UtxoDbCallbacksOptions {
 export function makeUtxoDbCallbacks(opts: UtxoDbCallbacksOptions): BridgeCallbacks {
   const db = opts.db;
   const { networkKey } = opts;
+  const settlement = makeSettlement({ db, networkKey });
 
   return {
     async loadSessions(): Promise<BridgeSessionRow[]> {
@@ -82,56 +90,74 @@ export function makeUtxoDbCallbacks(opts: UtxoDbCallbacksOptions): BridgeCallbac
     },
 
     async onPayment(sessionId: string, hit: AddressPaymentHit): Promise<void> {
-      // Lookup session + product for the payment row.
-      const [session] = await db
-        .select({
-          id: checkoutSessions.id,
-          organizationId: checkoutSessions.organizationId,
-          productId: checkoutSessions.productId,
-          customerId: checkoutSessions.customerId,
-          merchantWallet: checkoutSessions.merchantWallet,
-          amount: checkoutSessions.amount,
-          tokenSymbol: checkoutSessions.tokenSymbol,
-          livemode: checkoutSessions.livemode,
-        })
-        .from(checkoutSessions)
-        .where(eq(checkoutSessions.id, sessionId));
-
-      if (!session) return;
-      // customerId on checkout_sessions is nullable; payments.customerId is
-      // required. For UTXO payments where the merchant didn't collect a
-      // customer identifier, operators should set a placeholder at session
-      // creation. If we land here without one, skip writing the payment
-      // row but still mark the session completed — better to have a
-      // hole in reporting than to throw in the watcher loop.
-      if (session.customerId) {
-        try {
-          await db.insert(payments).values({
-            productId: session.productId,
-            organizationId: session.organizationId,
-            customerId: session.customerId,
-            amount: Number(session.amount),
-            fee: 0, // UTXO chains have no contract-level fee split; merchant settles off-chain
-            status: "confirmed",
-            txHash: hit.txid,
-            chain: networkKey,
-            token: session.tokenSymbol ?? (networkKey.startsWith("bitcoin") ? "BTC" : "LTC"),
-            fromAddress: null,
-            toAddress: null,
-            blockNumber: hit.blockHeight,
-            livemode: session.livemode,
-          });
-        } catch (err) {
-          // payments_chain_tx_idx unique index will reject duplicates —
-          // expected on replay.
-          console.warn(`[utxo-indexer] payment insert for ${sessionId} failed:`, err);
-        }
+      const session = await settlement.loadSession(sessionId);
+      if (!session) {
+        throw new Error(`[utxo-indexer] no checkout session ${sessionId} for tx ${hit.txid}`);
       }
 
-      await db
-        .update(checkoutSessions)
-        .set({ status: "completed", completedAt: new Date() })
-        .where(eq(checkoutSessions.id, sessionId));
+      const transfer: ConfirmedTransfer = {
+        txid: hit.txid,
+        blockHeight: hit.blockHeight,
+        vout: hit.vout,
+        // What actually arrived on chain, not what was quoted — the watcher
+        // only fires at or above the expected amount, so an overpayment must
+        // be recorded at its real value (it also caps refunds).
+        receivedSats: hit.valueSats,
+      };
+
+      const rate = session.fiatRateCents;
+      if (rate === null || rate === undefined || rate <= 0) {
+        // No quote-time rate means there is no honest cents figure, and
+        // `payments.amount` is NOT NULL. Retain the event so the backfill
+        // drain can finish it once the rate is populated, and leave the
+        // session open rather than recording a knowingly-wrong money value.
+        // See IDX-04, and `rate-backfill.ts` for the recovery path.
+        console.error(
+          `[utxo-indexer] session ${sessionId} has no fiat rate snapshot; refusing to write ` +
+            `a cents amount for tx ${hit.txid} (${transfer.receivedSats} sats). ` +
+            `Retained in unmatched_events for the rate backfill drain.`,
+        );
+        await settlement.retainMissingRate(session, transfer);
+        return;
+      }
+
+      const { recorded } = await settlement.settle(session, transfer, rate);
+      if (!recorded) {
+        // Duplicate delivery: the first pass already completed the session.
+        // Re-stamping completedAt would move the settlement timestamp.
+        console.warn(
+          `[utxo-indexer] session ${sessionId} left as-is; payment ${hit.txid} was already recorded`,
+        );
+      }
+    },
+
+    async onUnderpayment(
+      sessionId: string,
+      hit: AddressPaymentHit,
+      shortfallSats: bigint,
+    ): Promise<void> {
+      // Retain the shortfall so a merchant looking at an expired session can
+      // see that funds did arrive and how much was missing. Without a row the
+      // buyer's coins sit at a single-use address with nothing explaining it
+      // (IDX-33).
+      const [session] = await db
+        .select({ livemode: checkoutSessions.livemode })
+        .from(checkoutSessions)
+        .where(eq(checkoutSessions.id, sessionId))
+        .limit(1);
+      await db.insert(unmatchedEvents).values({
+        eventType: "UtxoUnderpayment",
+        txHash: hit.txid,
+        blockNumber: hit.blockHeight,
+        payload: {
+          sessionId,
+          chain: networkKey,
+          receivedSats: hit.valueSats.toString(),
+          shortfallSats: shortfallSats.toString(),
+          vout: hit.vout,
+        },
+        livemode: session?.livemode ?? false,
+      });
     },
 
     async onExpire(sessionId: string): Promise<void> {

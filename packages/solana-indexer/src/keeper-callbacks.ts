@@ -14,11 +14,17 @@ import { getAssociatedTokenAddress } from "@solana/spl-token";
 import { and, eq, lte, or, isNull, lt } from "drizzle-orm";
 import type { Database } from "@paylix/db/client";
 import { subscriptions } from "@paylix/db/schema";
-import { fetchSubscriptionAccount, subscriptionPda } from "./subscription-account";
+import { fetchSubscriptionAccounts, subscriptionPda } from "./subscription-account";
 import type { SolanaDueSubscription } from "./keeper";
 
 const DEBOUNCE_MS = 5 * 60 * 1000; // 5 minutes
 const FAILURE_THRESHOLD = 3;
+/**
+ * Ceiling on subscriptions considered per tick. Without it a backlog turns
+ * every 60-second tick into an unbounded serial RPC storm — see IDX-28.
+ * Anything left over is picked up by the next tick.
+ */
+const MAX_DUE_PER_TICK = 200;
 
 export interface KeeperCallbacksOptions {
   db: Database;
@@ -44,17 +50,28 @@ export function makeSolanaKeeperCallbacks(opts: KeeperCallbacksOptions) {
           lte(subscriptions.nextChargeDate, now),
           or(isNull(subscriptions.lastChargeAttemptAt), lt(subscriptions.lastChargeAttemptAt, debounceCutoff)),
         ),
-      );
+      )
+      .orderBy(subscriptions.nextChargeDate)
+      .limit(MAX_DUE_PER_TICK);
 
+    const addressable = candidates
+      .filter((sub) => sub.contractAddress && sub.onChainId)
+      .map((sub) => ({
+        programId: new PublicKey(sub.contractAddress),
+        pda: subscriptionPda(new PublicKey(sub.contractAddress), BigInt(sub.onChainId!)),
+      }));
+
+    // One batched RPC round trip per 100 candidates instead of one per row.
+    const accounts = await fetchSubscriptionAccounts(
+      connection,
+      addressable.map((a) => a.pda),
+    );
+
+    const nowSec = BigInt(Math.floor(now.getTime() / 1000));
     const due: SolanaDueSubscription[] = [];
-    for (const sub of candidates) {
-      if (!sub.contractAddress || !sub.onChainId) continue;
-      const programId = new PublicKey(sub.contractAddress);
-      const pda = subscriptionPda(programId, BigInt(sub.onChainId));
-
-      const onChain = await fetchSubscriptionAccount(connection, pda);
+    for (let i = 0; i < addressable.length; i++) {
+      const onChain = accounts[i];
       if (!onChain || onChain.status !== 0) continue; // not Active on-chain
-      const nowSec = BigInt(Math.floor(now.getTime() / 1000));
       if (onChain.nextChargeAt > nowSec) continue; // not due on-chain yet
 
       const mint = new PublicKey(onChain.mint);
@@ -62,7 +79,7 @@ export function makeSolanaKeeperCallbacks(opts: KeeperCallbacksOptions) {
       const platformAta = await getAssociatedTokenAddress(mint, platformWallet);
 
       due.push({
-        subscriptionPda: pda,
+        subscriptionPda: addressable[i].pda,
         subscriptionId: onChain.id,
         subscriberAta,
         merchantAta: new PublicKey(onChain.merchantAta),
@@ -74,9 +91,17 @@ export function makeSolanaKeeperCallbacks(opts: KeeperCallbacksOptions) {
   }
 
   async function onChargeSubmitted(subscriptionId: bigint): Promise<void> {
+    // Reset the dunning state on success. Without this the failure counter is
+    // cumulative for the lifetime of the subscription, so a single failure
+    // years later trips FAILURE_THRESHOLD immediately — see IDX-28.
     await db
       .update(subscriptions)
-      .set({ lastChargeAttemptAt: new Date() })
+      .set({
+        lastChargeAttemptAt: new Date(),
+        chargeFailureCount: 0,
+        lastChargeError: null,
+        pastDueSince: null,
+      })
       .where(and(eq(subscriptions.networkKey, networkKey), eq(subscriptions.onChainId, subscriptionId.toString())));
   }
 

@@ -13,14 +13,16 @@ function fakeDueSubscription(): SolanaDueSubscription {
   };
 }
 
-function fakeConnection(opts: { sendShouldThrow?: boolean } = {}): Connection {
+function fakeConnection(
+  opts: { sendShouldThrow?: boolean; confirmErr?: unknown } = {},
+): Connection {
   return {
     getLatestBlockhash: vi.fn(async () => ({ blockhash: "x".repeat(43), lastValidBlockHeight: 100 })),
     sendTransaction: vi.fn(async () => {
       if (opts.sendShouldThrow) throw new Error("simulated send failure");
       return "fakesignature";
     }),
-    confirmTransaction: vi.fn(async () => ({ value: { err: null } })),
+    confirmTransaction: vi.fn(async () => ({ value: { err: opts.confirmErr ?? null } })),
   } as unknown as Connection;
 }
 
@@ -67,6 +69,30 @@ describe("startKeeper tick()", () => {
     expect(charged).toBe(0);
     expect(onChargeSubmitted).not.toHaveBeenCalled();
     expect(onChargeFailed).toHaveBeenCalledWith(42n, expect.stringContaining("simulated send failure"));
+
+    await handle.stop();
+  });
+
+  it("treats a transaction that landed but reverted as a failure", async () => {
+    const due = fakeDueSubscription();
+    const onChargeSubmitted = vi.fn(async () => {});
+    const onChargeFailed = vi.fn(async () => {});
+
+    const handle = await startKeeper({
+      // confirmTransaction resolves with a non-null err for an on-chain revert.
+      connection: fakeConnection({ confirmErr: { InstructionError: [0, { Custom: 6001 }] } }),
+      keeper: Keypair.generate(),
+      subscriptionManagerProgramId: Keypair.generate().publicKey,
+      dueSubscriptions: async () => [due],
+      onChargeSubmitted,
+      onChargeFailed,
+    });
+
+    const charged = await handle.tick();
+
+    expect(charged).toBe(0);
+    expect(onChargeSubmitted).not.toHaveBeenCalled();
+    expect(onChargeFailed).toHaveBeenCalledWith(42n, expect.stringContaining("reverted on-chain"));
 
     await handle.stop();
   });

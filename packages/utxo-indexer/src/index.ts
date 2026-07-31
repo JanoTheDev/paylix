@@ -11,6 +11,7 @@
 import { createElectrumClient, getDescriptor, startBridge, type UtxoChainKey } from "@paylix/utxo-watcher";
 import { createDb } from "@paylix/db/client";
 import { makeUtxoDbCallbacks } from "./db-callbacks";
+import { startRateBackfill } from "./rate-backfill";
 
 const VALID_KEYS: UtxoChainKey[] = [
   "bitcoin",
@@ -18,6 +19,22 @@ const VALID_KEYS: UtxoChainKey[] = [
   "litecoin",
   "litecoin-testnet",
 ];
+
+/**
+ * Parse a numeric env var, rejecting NaN at boot rather than downstream.
+ * `Number("six")` is NaN, and `hit.confirmations < NaN` is always false — an
+ * unvalidated UTXO_CONFIRMATIONS credits every unconfirmed transaction. See
+ * IDX-24.
+ */
+function positiveIntEnv(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${key} must be a positive integer, got "${raw}"`);
+  }
+  return parsed;
+}
 
 async function main(): Promise<void> {
   const raw = process.env.CHAIN_KEY;
@@ -39,10 +56,8 @@ async function main(): Promise<void> {
 
   const client = createElectrumClient({ endpoint, descriptor });
   const callbacks = makeUtxoDbCallbacks({ networkKey: chainKey, db });
-  const confirmations = Number(
-    process.env.UTXO_CONFIRMATIONS ?? descriptor.defaultConfirmations,
-  );
-  const pollMs = Number(process.env.UTXO_POLL_MS ?? 15_000);
+  const confirmations = positiveIntEnv("UTXO_CONFIRMATIONS", descriptor.defaultConfirmations);
+  const pollMs = positiveIntEnv("UTXO_POLL_MS", 15_000);
 
   const handle = startBridge({
     descriptor,
@@ -52,12 +67,21 @@ async function main(): Promise<void> {
     callbacks,
   });
 
+  // Drains payments that were received but could not be priced at the time
+  // (no `checkout_sessions.fiat_rate_cents`). Nothing else sweeps that
+  // retention — the EVM indexer's unmatched-event retry does not handle these
+  // event types. See rate-backfill.ts.
+  const backfillMs = positiveIntEnv("UTXO_RATE_BACKFILL_MS", 5 * 60_000);
+  const backfill = startRateBackfill({ db, networkKey: chainKey, intervalMs: backfillMs });
+
   console.log(
     `[utxo-indexer] ${chainKey} watcher up — electrum=${endpoint} confirmations=${confirmations} poll=${pollMs}ms`,
   );
+  console.log(`[utxo-indexer] rate backfill drain every ${backfillMs}ms`);
 
   const shutdown = async (): Promise<void> => {
     console.log("[utxo-indexer] shutdown");
+    backfill.stop();
     await handle.stop();
   };
   process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
@@ -72,3 +96,4 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 export { makeUtxoDbCallbacks } from "./db-callbacks";
+export { runRateBackfill, startRateBackfill } from "./rate-backfill";

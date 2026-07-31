@@ -42,6 +42,11 @@ export interface BridgeCallbacks {
   /** Called when a session expires without a payment. */
   onExpire(sessionId: string): Promise<void>;
   /**
+   * Called once per confirmed transaction that pays a watched address less
+   * than the session expects. Optional; the shortfall is logged either way.
+   */
+  onUnderpayment?(sessionId: string, hit: AddressPaymentHit, shortfallSats: bigint): Promise<void>;
+  /**
    * Called when a previously-completed payment tx is no longer at its
    * original block height (reorg/orphan). Optional; callers that omit it
    * opt out of reorg monitoring.
@@ -92,6 +97,11 @@ export function startBridge(opts: BridgeOptions): BridgeHandle {
         await opts.callbacks.onExpire(session.sessionId);
         tracked.delete(session.sessionId);
       },
+      onUnderpayment: opts.callbacks.onUnderpayment
+        ? async (session: WatcherSession, hit: AddressPaymentHit, shortfallSats: bigint) => {
+            await opts.callbacks.onUnderpayment!(session.sessionId, hit, shortfallSats);
+          }
+        : undefined,
       onReorg: opts.callbacks.onReorg
         ? async (sessionId: string, txid: string) => {
             await opts.callbacks.onReorg!(sessionId, txid);
