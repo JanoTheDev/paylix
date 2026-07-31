@@ -15,6 +15,15 @@ import {
 } from "@paylix/config/networks";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { recordAudit } from "@/lib/audit";
+import { z } from "zod";
+import { clientIp } from "../_shared/client-ip";
+import { readJsonBody, parseWith } from "../_shared/http";
+import { requireRole } from "../_shared/roles";
+import {
+  isUtxoNetwork,
+  UTXO_MERCHANT_NOTICE,
+  UTXO_PAYMENTS_ENABLED,
+} from "@/app/_lib/utxo-payments";
 
 export async function GET() {
   const ctx = await resolveActiveOrg();
@@ -117,12 +126,80 @@ export async function GET() {
   });
 }
 
+// A trimmed, non-empty string capped at `max`. Empty strings collapse to
+// undefined so a blank form field is "leave alone", not "store the empty
+// string" (which is what `String(bp.legalName ?? "")` used to do — and
+// `{"legalName":{}}` stored the literal "[object Object]").
+const bounded = (max: number) => z.string().trim().max(max);
+
+// `logoUrl` is rendered on invoices, so it must be an https URL or a
+// relative path into our own uploads directory — never `javascript:` or a
+// data: document.
+const logoUrlSchema = bounded(2048).refine(
+  (v) => v === "" || v.startsWith("/uploads/") || /^https:\/\//i.test(v),
+  "logoUrl must be an https URL or an uploaded /uploads/... path",
+);
+
+const settingsSchema = z.object({
+  name: bounded(200).min(1).optional(),
+  walletAddress: bounded(64).optional(),
+  checkoutFieldDefaults: z
+    .object({
+      firstName: z.boolean().optional(),
+      lastName: z.boolean().optional(),
+      email: z.boolean().optional(),
+      phone: z.boolean().optional(),
+    })
+    .optional(),
+  networks: z
+    .array(
+      z.object({
+        networkKey: bounded(64).min(1),
+        enabled: z.boolean(),
+        overrideAddress: bounded(128).nullish(),
+        xpub: bounded(256).nullish(),
+      }),
+    )
+    .max(64)
+    .optional(),
+  businessProfile: z
+    .object({
+      legalName: bounded(200).optional(),
+      addressLine1: bounded(200).optional(),
+      addressLine2: bounded(200).nullish(),
+      city: bounded(120).optional(),
+      postalCode: bounded(32).optional(),
+      country: bounded(2).optional(),
+      taxId: bounded(64).nullish(),
+      supportEmail: bounded(254).optional(),
+      logoUrl: logoUrlSchema.nullish(),
+      invoicePrefix: bounded(16).optional(),
+      invoiceFooter: bounded(2000).nullish(),
+    })
+    .optional(),
+  notificationsEnabled: z.boolean().optional(),
+  notificationPreferences: z.record(z.string(), z.boolean()).optional(),
+});
+
 export async function PATCH(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId } = ctx;
 
-  const body = await request.json();
+  const rawBody = await readJsonBody(request);
+  if (!rawBody.ok) return rawBody.response;
+  const parsed = parseWith(settingsSchema, rawBody.data);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
+
+  // The payout wallet decides where every future payment is sent. Gating it
+  // on "has a session with an active org" meant a `member`-role invitee
+  // could redirect the merchant's funds.
+  if (body.networks !== undefined) {
+    const role = await requireRole(ctx);
+    if (!role.ok) return role.response;
+  }
+
   const updates: Partial<{
     name: string;
     walletAddress: string;
@@ -134,12 +211,12 @@ export async function PATCH(request: Request) {
     };
   }> = {};
 
-  if (typeof body.name === "string" && body.name.trim().length > 0) {
-    updates.name = body.name.trim();
+  if (body.name !== undefined && body.name.length > 0) {
+    updates.name = body.name;
   }
 
-  if (typeof body.walletAddress === "string") {
-    const addr = body.walletAddress.trim();
+  if (body.walletAddress !== undefined) {
+    const addr = body.walletAddress;
     if (addr === "") {
       updates.walletAddress = "";
     } else if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
@@ -152,7 +229,7 @@ export async function PATCH(request: Request) {
     }
   }
 
-  if (body.checkoutFieldDefaults && typeof body.checkoutFieldDefaults === "object") {
+  if (body.checkoutFieldDefaults) {
     const f = body.checkoutFieldDefaults;
     updates.checkoutFieldDefaults = {
       firstName: Boolean(f.firstName),
@@ -162,17 +239,38 @@ export async function PATCH(request: Request) {
     };
   }
 
-  if (Array.isArray(body.networks)) {
+  if (body.networks) {
     for (const entry of body.networks) {
-      if (
-        typeof entry.networkKey !== "string" ||
-        typeof entry.enabled !== "boolean"
-      ) {
+      // Keep a widened copy: assertValidNetworkKey is an assertion function
+      // that narrows its argument to the EVM union, which would make the
+      // Solana/UTXO family checks below unreachable at the type level.
+      const networkKey = String(entry.networkKey);
+      const isSolana =
+        networkKey === "solana" || networkKey === "solana-devnet";
+      const isUtxo = isUtxoNetwork(networkKey);
+
+      // The settings UI disables the Bitcoin/Litecoin rows, but a merchant
+      // can PATCH here directly. Enabling a UTXO payout today produces a
+      // receive address the buyer can pay into while the indexer refuses to
+      // record the payment (no captured fiat rate) — so refuse to turn it on
+      // at all. Disabling one stays allowed, so anyone who already enabled a
+      // network can back it out.
+      //
+      // This MUST run before assertValidNetworkKey: that helper only accepts
+      // the EVM union, so it would otherwise reject "bitcoin" with a generic
+      // `invalid_network_key` and the merchant would never see why.
+      if (!UTXO_PAYMENTS_ENABLED && isUtxo && entry.enabled) {
         return NextResponse.json(
-          { error: { code: "invalid_request", message: "Invalid network entry" } },
-          { status: 400 },
+          {
+            error: {
+              code: "network_unavailable",
+              message: UTXO_MERCHANT_NOTICE,
+            },
+          },
+          { status: 409 },
         );
       }
+
       try {
         assertValidNetworkKey(entry.networkKey);
       } catch (err) {
@@ -186,16 +284,8 @@ export async function PATCH(request: Request) {
       //   EVM     — 0x-prefixed 20-byte hex
       //   Solana  — base58 pubkey (32-44 chars, base58 alphabet)
       //   UTXO    — xpub stored separately; overrideAddress is ignored
-      const isSolana =
-        entry.networkKey === "solana" || entry.networkKey === "solana-devnet";
-      const isUtxo =
-        entry.networkKey === "bitcoin" ||
-        entry.networkKey === "bitcoin-testnet" ||
-        entry.networkKey === "litecoin" ||
-        entry.networkKey === "litecoin-testnet";
-
       const addr = isUtxo ? null : entry.overrideAddress;
-      const xpub = isUtxo ? (typeof entry.xpub === "string" ? entry.xpub : null) : null;
+      const xpub = isUtxo ? (entry.xpub ?? null) : null;
 
       if (
         !isUtxo &&
@@ -254,44 +344,33 @@ export async function PATCH(request: Request) {
     }
   }
 
-  if (body.businessProfile && typeof body.businessProfile === "object") {
+  if (body.businessProfile) {
     const bp = body.businessProfile;
+    // Values are already trimmed + length-capped by the schema; no ad-hoc
+    // String() coercion, so an object or array can't reach the column.
+    const profileValues = {
+      legalName: bp.legalName ?? "",
+      addressLine1: bp.addressLine1 ?? "",
+      addressLine2: bp.addressLine2 ?? null,
+      city: bp.city ?? "",
+      postalCode: bp.postalCode ?? "",
+      country: (bp.country ?? "").toUpperCase(),
+      taxId: bp.taxId ?? null,
+      supportEmail: bp.supportEmail ?? "",
+      logoUrl: bp.logoUrl ?? null,
+      invoicePrefix: bp.invoicePrefix || "INV-",
+      invoiceFooter: bp.invoiceFooter ?? null,
+    };
     await db
       .insert(merchantProfiles)
-      .values({
-        organizationId,
-        legalName: String(bp.legalName ?? ""),
-        addressLine1: String(bp.addressLine1 ?? ""),
-        addressLine2: bp.addressLine2 ?? null,
-        city: String(bp.city ?? ""),
-        postalCode: String(bp.postalCode ?? ""),
-        country: String(bp.country ?? "").toUpperCase(),
-        taxId: bp.taxId ?? null,
-        supportEmail: String(bp.supportEmail ?? ""),
-        logoUrl: bp.logoUrl ?? null,
-        invoicePrefix: String(bp.invoicePrefix ?? "INV-"),
-        invoiceFooter: bp.invoiceFooter ?? null,
-      })
+      .values({ organizationId, ...profileValues })
       .onConflictDoUpdate({
         target: merchantProfiles.organizationId,
-        set: {
-          legalName: String(bp.legalName ?? ""),
-          addressLine1: String(bp.addressLine1 ?? ""),
-          addressLine2: bp.addressLine2 ?? null,
-          city: String(bp.city ?? ""),
-          postalCode: String(bp.postalCode ?? ""),
-          country: String(bp.country ?? "").toUpperCase(),
-          taxId: bp.taxId ?? null,
-          supportEmail: String(bp.supportEmail ?? ""),
-          logoUrl: bp.logoUrl ?? null,
-          invoicePrefix: String(bp.invoicePrefix ?? "INV-"),
-          invoiceFooter: bp.invoiceFooter ?? null,
-          updatedAt: new Date(),
-        },
+        set: { ...profileValues, updatedAt: new Date() },
       });
   }
 
-  if (typeof body.notificationsEnabled === "boolean") {
+  if (body.notificationsEnabled !== undefined) {
     await db
       .insert(merchantProfiles)
       .values({
@@ -307,11 +386,8 @@ export async function PATCH(request: Request) {
       });
   }
 
-  if (
-    body.notificationPreferences &&
-    typeof body.notificationPreferences === "object"
-  ) {
-    const incoming = body.notificationPreferences as Record<string, unknown>;
+  if (body.notificationPreferences) {
+    const incoming = body.notificationPreferences;
 
     // Load existing row so we can merge partial updates on top of whatever
     // the merchant has stored today (preserves kinds not in the payload).
@@ -326,8 +402,9 @@ export async function PATCH(request: Request) {
       ...(existing?.preferences ?? {}),
     };
     for (const kind of NOTIFICATION_KINDS) {
-      if (typeof incoming[kind] === "boolean") {
-        merged[kind] = incoming[kind] as boolean;
+      const value = incoming[kind];
+      if (typeof value === "boolean") {
+        merged[kind] = value;
       }
     }
 
@@ -350,10 +427,10 @@ export async function PATCH(request: Request) {
   // skip the users table update
   if (Object.keys(updates).length === 0) {
     if (
-      Array.isArray(body.networks) ||
-      body.businessProfile ||
-      typeof body.notificationsEnabled === "boolean" ||
-      body.notificationPreferences
+      body.networks !== undefined ||
+      body.businessProfile !== undefined ||
+      body.notificationsEnabled !== undefined ||
+      body.notificationPreferences !== undefined
     ) {
       void recordAudit({
         organizationId,
@@ -361,15 +438,12 @@ export async function PATCH(request: Request) {
         action: "settings.updated",
         resourceType: "settings",
         details: {
-          networks: Array.isArray(body.networks),
-          businessProfile: !!body.businessProfile,
-          notificationsEnabled:
-            typeof body.notificationsEnabled === "boolean"
-              ? body.notificationsEnabled
-              : undefined,
+          networks: body.networks !== undefined,
+          businessProfile: body.businessProfile !== undefined,
+          notificationsEnabled: body.notificationsEnabled,
           notificationPreferences: body.notificationPreferences ?? undefined,
         },
-        ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+        ipAddress: clientIp(request),
       });
       return NextResponse.json({ success: true });
     }
@@ -394,7 +468,7 @@ export async function PATCH(request: Request) {
     action: "settings.updated",
     resourceType: "settings",
     details: { fields: Object.keys(updates) },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json(updated);

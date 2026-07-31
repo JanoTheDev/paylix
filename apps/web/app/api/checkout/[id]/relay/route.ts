@@ -13,6 +13,7 @@ import {
 import { sql } from "drizzle-orm";
 import { createRelayerClient } from "@/lib/relayer";
 import {
+  FLOW_EIP2612,
   PAYMENT_VAULT_ABI,
   SUBSCRIPTION_MANAGER_ABI,
 } from "@/lib/contracts";
@@ -38,6 +39,12 @@ import { checkWalletActivity } from "@/lib/wallet-activity";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { findBlocklistMatch, BLOCKLIST_MESSAGE } from "@/lib/blocklist";
 import { loadOrgBlocklist } from "@/lib/blocklist-load";
+import { clientIpKey } from "../../../_shared/client-ip";
+import { orgScope } from "@/lib/org-scope";
+import {
+  getPlatformFeeBps,
+  MAX_PLATFORM_FEE_BPS,
+} from "../../../_shared/platform-fee";
 
 async function withRetry<T>(
   fn: () => Promise<T>,
@@ -80,8 +87,7 @@ export async function POST(
 
   // Rate limit: 10 relay attempts per minute per source IP.
   // Per-session dedup is handled by the relay_in_flight_at lock below.
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const ip = forwardedFor?.split(",")[0]?.trim() || "unknown";
+  const ip = clientIpKey(request);
   const rl = await checkRateLimitAsync(`relay:${ip}`, 10, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
@@ -149,6 +155,9 @@ export async function POST(
       discountCents: checkoutSessions.discountCents,
       subtotalAmount: checkoutSessions.subtotalAmount,
       quantity: checkoutSessions.quantity,
+      // Fee ceiling stamped at quote time; the buyer signed over this exact
+      // value, so it is replayed verbatim rather than recomputed.
+      maxFeeBps: checkoutSessions.maxFeeBps,
       billingInterval: products.billingInterval,
       trialDays: products.trialDays,
       trialMinutes: products.trialMinutes,
@@ -217,6 +226,156 @@ export async function POST(
     );
   }
 
+  // Resolve the token's signature scheme and check the request carries the
+  // matching payload. This MUST happen before the trial branch: the trial
+  // path dereferences permitValue/v/r/s and parseRelayBody leaves those null
+  // for any Permit2 or DAI-permit shape, so a trial checkout on a Permit2
+  // token used to throw a TypeError and return an unhandled 500.
+  //
+  // All of these guards run before acquireRelayLock, so none of them needs
+  // to release it.
+  const tokenConfig = getToken(
+    session.networkKey as NetworkKey,
+    session.tokenSymbol,
+  );
+  const tokenAddress = resolveTokenAddress(tokenConfig);
+  const scheme = tokenConfig.signatureScheme;
+
+  if (scheme === "none") {
+    return NextResponse.json(
+      {
+        error: {
+          code: "scheme_not_supported",
+          message: `Token ${session.tokenSymbol} on ${session.networkKey} has no gasless path configured.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+  if (scheme === "dai-permit" && session.type === "subscription") {
+    return NextResponse.json(
+      {
+        error: {
+          code: "scheme_not_supported",
+          message: "DAI-permit subscriptions aren't wired yet. Use DAI one-time or switch to a Permit2-compatible chain.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+  if (scheme === "dai-permit" && daiPermit === null) {
+    return NextResponse.json(
+      {
+        error: { code: "invalid_body", message: `Token ${session.tokenSymbol} uses DAI-permit; request must include daiPermit.` },
+      },
+      { status: 400 },
+    );
+  }
+
+  // Body-shape guard: Permit2 tokens need either the one-time
+  // (permit2Nonce + permit2Signature) or AllowanceTransfer (permit2Allowance)
+  // payload. EIP-2612 tokens need v/r/s/permitValue. Validation.ts accepts
+  // any shape; here we check the one that matches the scheme + product type.
+  if (scheme === "permit2") {
+    const isSub = session.type === "subscription";
+    const hasOneTime = permit2Nonce !== null && permit2Signature !== null;
+    const hasAllowance = permit2Allowance !== null;
+    if (isSub && !hasAllowance) {
+      return NextResponse.json(
+        { error: { code: "invalid_body", message: `Subscription with ${session.tokenSymbol} requires a Permit2 AllowanceTransfer payload (permit2Allowance).` } },
+        { status: 400 },
+      );
+    }
+    if (!isSub && !hasOneTime) {
+      return NextResponse.json(
+        { error: { code: "invalid_body", message: `One-time payment with ${session.tokenSymbol} requires Permit2 SignatureTransfer (permit2Nonce/permit2Signature).` } },
+        { status: 400 },
+      );
+    }
+  }
+  if (scheme === "eip2612" && (v === null || r === null || s === null || permitValue === null)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_body",
+          message: `Token ${session.tokenSymbol} uses EIP-2612; request must include v, r, s, and permitValue.`,
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  // Fee ceiling the buyer bound into their intent signature. Read from the
+  // session, NOT from the request body and NOT live from `platformFee()`:
+  //
+  //  - a client-supplied ceiling is worthless, since the whole point is to
+  //    protect the buyer from a fee raise;
+  //  - a live read races an owner fee raise between quote and signature,
+  //    which is exactly the window SC-03 closes. The value is stamped on the
+  //    session at quote time and is what the client signed over, so replaying
+  //    it verbatim is the only thing that reproduces the digest.
+  const maxFeeBps = session.maxFeeBps;
+  if (maxFeeBps === null || maxFeeBps === undefined) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "fee_ceiling_missing",
+          message:
+            "This checkout session predates fee-ceiling capture and can no longer be paid. Start a new checkout.",
+        },
+      },
+      { status: 409 },
+    );
+  }
+  if (maxFeeBps < 0 || BigInt(maxFeeBps) > MAX_PLATFORM_FEE_BPS) {
+    // Defensive: a stored value out of range would revert on-chain with
+    // "maxFeeBps too high". Fail here with something actionable.
+    console.error(
+      `[Relay] session ${session.id} has out-of-range maxFeeBps=${maxFeeBps}`,
+    );
+    return NextResponse.json(
+      { error: { code: "fee_ceiling_invalid", message: "Invalid fee ceiling on this session." } },
+      { status: 409 },
+    );
+  }
+  const maxFeeBpsBig = BigInt(maxFeeBps);
+
+  // Sanity check in exactly the form the contract enforces:
+  //   require(platformFee <= maxFeeBps, "Fee above signed max")
+  // An owner fee RAISE above the signed ceiling voids the intent — that is
+  // SC-03 working as designed, and failing here gives the buyer a readable
+  // error instead of an opaque on-chain revert. An owner fee DROP still
+  // settles, matching `_feeBpsFor`, which clamps downward only.
+  //
+  // This is a *check*, never a source: the value passed to the contract is
+  // always the stored one the buyer signed over.
+  try {
+    const currentFeeBps = await getPlatformFeeBps({
+      contractAddress: isSubscription
+        ? deployment.subscriptionManager
+        : deployment.paymentVault,
+      chain: deployment.chain,
+      chainId: deployment.chainId,
+      rpcUrl: deployment.rpcUrl,
+    });
+    if (currentFeeBps > maxFeeBpsBig) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "fee_above_signed_max",
+            message:
+              "The platform fee changed after this checkout was quoted. Start a new checkout to continue.",
+          },
+        },
+        { status: 409 },
+      );
+    }
+  } catch (err) {
+    // A read failure must not block a payment the contract would accept —
+    // the contract enforces the same rule authoritatively a moment later.
+    console.warn("[Relay] platformFee sanity read failed; deferring to chain:", err);
+  }
+
   // Blocklist: wallet / email / country. Load once per relay attempt —
   // small per-org row count, fine to do inline without caching.
   const blocklist = await loadOrgBlocklist(
@@ -254,11 +413,30 @@ export async function POST(
   const deadlineCheck = validateDeadline(deadline, maxDeadlineWindowSeconds);
   if (!deadlineCheck.ok) return errorResponse(deadlineCheck.error);
 
+  // Acquire the atomic session lock BEFORE the trial branch. The trial path
+  // is a read-then-write (dedup check → customer upsert → subscriptions
+  // insert → session update) and used to run entirely outside the lock, so
+  // two simultaneous POSTs both passed the dedup check and both inserted a
+  // `trialing` row with stored permit signatures — which the trial converter
+  // later replayed twice, creating two on-chain subscriptions for one buyer.
+  //
+  // On success the indexer's session-completed update supersedes the lock;
+  // every failure path below releases it so the buyer can retry.
+  const locked = await acquireRelayLock(db, sessionId);
+  if (!locked) {
+    return NextResponse.json(
+      { error: { code: "session_already_relayed" } },
+      { status: 409 },
+    );
+  }
+  const unlock = () => releaseRelayLock(db, sessionId).catch(() => {});
+
   let runTrialBranch = isTrial;
   let normalizedBuyerEmail: string | null = null;
   if (runTrialBranch) {
     const rawBuyerEmail = session.buyerEmail?.trim() ?? null;
     if (!rawBuyerEmail) {
+      await unlock();
       return NextResponse.json(
         {
           error: {
@@ -270,6 +448,7 @@ export async function POST(
       );
     }
     if (isDisposableEmail(rawBuyerEmail)) {
+      await unlock();
       return NextResponse.json(
         {
           error: {
@@ -287,8 +466,13 @@ export async function POST(
         address: buyer as `0x${string}`,
         networkKey: session.networkKey,
         tokenSymbol: session.tokenSymbol,
+        // Without an explicit RPC the check silently falls back to the
+        // public node and the "no on-chain history → no trial" control
+        // degrades to always-allow.
+        rpcUrl: deployment.rpcUrl,
       });
       if (!wallet.active) {
+        await unlock();
         return NextResponse.json(
           {
             error: {
@@ -304,6 +488,7 @@ export async function POST(
 
     const dedup = await checkExistingSubscription({
       organizationId: session.organizationId,
+      livemode: session.livemode,
       productId: session.productId,
       buyerWallet: buyer,
       customerIdentifier: session.customerId ?? null,
@@ -325,6 +510,7 @@ export async function POST(
   if (runTrialBranch) {
     const intervalSeconds = intervalToSeconds(session.billingInterval);
     if (intervalSeconds <= 0) {
+      await unlock();
       return NextResponse.json(
         { error: { code: "invalid_interval", message: "Product has no valid billing interval" } },
         { status: 400 },
@@ -344,10 +530,14 @@ export async function POST(
         ),
       );
     if (!customer) {
+      // Upsert rather than plain insert: the lock serialises relay attempts
+      // for this session, but the same (org, customerId) pair can be reached
+      // concurrently from a different session.
       const [created] = await db
         .insert(customers)
         .values({
           organizationId: session.organizationId,
+          livemode: session.livemode,
           customerId: customerIdentifier,
           walletAddress: buyer,
           country: session.buyerCountry ?? null,
@@ -356,6 +546,10 @@ export async function POST(
           lastName: session.buyerLastName ?? null,
           email: normalizedBuyerEmail,
           phone: session.buyerPhone ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [customers.organizationId, customers.customerId],
+          set: { walletAddress: buyer },
         })
         .returning();
       customer = created;
@@ -374,10 +568,9 @@ export async function POST(
       }
     }
 
-    // Trial + subscription paths are EIP-2612-only today; the eip2612 guard
-    // at the top of the route ensures these fields are non-null when we get
-    // here. Asserting with ! rather than branching keeps the trial snapshot
-    // shape stable for the trial-converter later.
+    // Trial + subscription paths are EIP-2612-only today. The scheme guard
+    // above this branch has already rejected every non-2612 token, so these
+    // fields are non-null here.
     const pendingPermitSignature = {
       permit: {
         value: permitValue!.toString(),
@@ -395,6 +588,20 @@ export async function POST(
         signature: intentSignature,
         productIdBytes,
         customerIdBytes,
+        // Part of the signed SubscriptionIntent digest, so the trial
+        // converter MUST replay this exact value — recomputing it from the
+        // platform fee at conversion time would break the signature if the
+        // owner changed the fee during the trial, which is precisely the
+        // attack SC-03 closes. The converter refuses any stored intent
+        // without it rather than burning gas on an unverifiable call.
+        maxFeeBps: maxFeeBps.toString(),
+        // NOT calldata — `flow` exists only inside the EIP-712 typehash and
+        // each entry point substitutes its own constant
+        // (SubscriptionManager.sol:360 passes FLOW_EIP2612). Stored so the
+        // converter can refuse to replay a Permit2-signed intent through the
+        // EIP-2612 entry point. Trials are EIP-2612-only today, enforced by
+        // the scheme guard above this branch.
+        flow: FLOW_EIP2612,
       },
       priceSnapshot: {
         networkKey: session.networkKey!,
@@ -408,6 +615,7 @@ export async function POST(
       .values({
         productId: session.productId,
         organizationId: session.organizationId,
+        livemode: session.livemode,
         customerId: customer.id,
         subscriberAddress: buyer,
         contractAddress: deployment.subscriptionManager.toLowerCase(),
@@ -440,20 +648,30 @@ export async function POST(
       subscriberAddress: buyer,
       trialEndsAt: trialEndsAt.toISOString(),
       metadata: newSub.metadata ?? {},
-    }).catch((err) => console.error("[Relay] trial_started webhook failed:", err));
+    }, session.livemode).catch((err) => console.error("[Relay] trial_started webhook failed:", err));
 
     return NextResponse.json({
       trial: true,
       subscriptionId: newSub.id,
       trialEndsAt: trialEndsAt.toISOString(),
       customerUuid: customer.id,
-      portalToken: signPortalToken(customer.id),
+      // Optional convenience field — a misconfigured portal secret must not
+      // fail a trial that has already been recorded.
+      portalToken: (() => {
+        try {
+          return signPortalToken(customer.id);
+        } catch (err) {
+          console.error("[Relay] portal token unavailable:", err);
+          return null;
+        }
+      })(),
     });
   }
 
   if (isSubscription) {
     const dedup = await checkExistingSubscription({
       organizationId: session.organizationId,
+      livemode: session.livemode,
       productId: session.productId,
       buyerWallet: buyer,
       customerIdentifier: session.customerId ?? null,
@@ -461,6 +679,7 @@ export async function POST(
       intent: "subscription",
     });
     if (dedup.exists) {
+      await unlock();
       return NextResponse.json(
         {
           error: {
@@ -474,18 +693,6 @@ export async function POST(
     }
   }
 
-  // Acquire an atomic lock on the session so two concurrent relay attempts
-  // can't both reach the contract call. The lock is released on terminal
-  // failure (below); on success the indexer's session-completed update
-  // supersedes it.
-  const locked = await acquireRelayLock(db, sessionId);
-  if (!locked) {
-    return NextResponse.json(
-      { error: { code: "session_already_relayed" } },
-      { status: 409 },
-    );
-  }
-
   // 6. Submit the relayed transaction
   // session.amount is now stored in native token units (bigint), no
   // conversion needed. The old cents × 10_000 math is gone — amounts are
@@ -494,91 +701,11 @@ export async function POST(
   const relayer = createRelayerClient(deployment);
   let txHash: `0x${string}`;
 
-  // Resolve the actual token address + scheme from the registry. Payments
-  // for non-USDC tokens (USDT / WETH / DAI / etc.) target the token's
-  // canonical address, not deployment.usdcAddress. The scheme routes the
-  // call to the right vault function.
-  const tokenConfig = getToken(
-    session.networkKey as NetworkKey,
-    session.tokenSymbol,
-  );
-  const tokenAddress = resolveTokenAddress(tokenConfig);
-  const scheme = tokenConfig.signatureScheme;
-
-  if (scheme === "none") {
-    await releaseRelayLock(db, sessionId).catch(() => {});
-    return NextResponse.json(
-      {
-        error: {
-          code: "scheme_not_supported",
-          message: `Token ${session.tokenSymbol} on ${session.networkKey} has no gasless path configured.`,
-        },
-      },
-      { status: 400 },
-    );
-  }
-  if (scheme === "dai-permit" && session.type === "subscription") {
-    await releaseRelayLock(db, sessionId).catch(() => {});
-    return NextResponse.json(
-      {
-        error: {
-          code: "scheme_not_supported",
-          message: "DAI-permit subscriptions aren't wired yet. Use DAI one-time or switch to a Permit2-compatible chain.",
-        },
-      },
-      { status: 400 },
-    );
-  }
-  if (scheme === "dai-permit" && daiPermit === null) {
-    await releaseRelayLock(db, sessionId).catch(() => {});
-    return NextResponse.json(
-      {
-        error: { code: "invalid_body", message: `Token ${session.tokenSymbol} uses DAI-permit; request must include daiPermit.` },
-      },
-      { status: 400 },
-    );
-  }
-
-  // Body-shape guard: Permit2 tokens need either the one-time
-  // (permit2Nonce + permit2Signature) or AllowanceTransfer (permit2Allowance)
-  // payload. EIP-2612 tokens need v/r/s/permitValue. Validation.ts accepts
-  // any shape; here we check the one that matches the scheme + product type.
-  if (scheme === "permit2") {
-    const isSub = session.type === "subscription";
-    const hasOneTime = permit2Nonce !== null && permit2Signature !== null;
-    const hasAllowance = permit2Allowance !== null;
-    if (isSub && !hasAllowance) {
-      await releaseRelayLock(db, sessionId).catch(() => {});
-      return NextResponse.json(
-        { error: { code: "invalid_body", message: `Subscription with ${session.tokenSymbol} requires a Permit2 AllowanceTransfer payload (permit2Allowance).` } },
-        { status: 400 },
-      );
-    }
-    if (!isSub && !hasOneTime) {
-      await releaseRelayLock(db, sessionId).catch(() => {});
-      return NextResponse.json(
-        { error: { code: "invalid_body", message: `One-time payment with ${session.tokenSymbol} requires Permit2 SignatureTransfer (permit2Nonce/permit2Signature).` } },
-        { status: 400 },
-      );
-    }
-  }
-  if (scheme === "eip2612" && (v === null || r === null || s === null || permitValue === null)) {
-    await releaseRelayLock(db, sessionId).catch(() => {});
-    return NextResponse.json(
-      {
-        error: {
-          code: "invalid_body",
-          message: `Token ${session.tokenSymbol} uses EIP-2612; request must include v, r, s, and permitValue.`,
-        },
-      },
-      { status: 400 },
-    );
-  }
-
   try {
     if (isSubscription) {
       const intervalSeconds = BigInt(intervalToSeconds(session.billingInterval));
       if (intervalSeconds <= BigInt(0)) {
+        await unlock();
         return NextResponse.json(
           { error: { code: "invalid_interval", message: "Product has no valid billing interval" } },
           { status: 400 },
@@ -596,7 +723,15 @@ export async function POST(
               durationInCycles: coupons.durationInCycles,
             })
             .from(coupons)
-            .where(eq(coupons.id, session.appliedCouponId))
+            .where(
+              and(
+                eq(coupons.id, session.appliedCouponId),
+                orgScope(coupons, {
+                  organizationId: session.organizationId,
+                  livemode: session.livemode,
+                }),
+              ),
+            )
             .limit(1)
             .then((rows) => rows[0] ?? null)
         : null;
@@ -613,7 +748,7 @@ export async function POST(
         // yet — the contract-side createSubscriptionWithPermit2Discount
         // doesn't exist. Forever coupons pre-apply to amount so they're fine.
         if (useDiscountPath) {
-          await releaseRelayLock(db, sessionId).catch(() => {});
+          await unlock();
           return NextResponse.json(
             {
               error: {
@@ -639,6 +774,7 @@ export async function POST(
               interval: intervalSeconds,
               productId: productIdBytes,
               customerId: customerIdBytes,
+              maxFeeBps: maxFeeBpsBig,
               deadline,
             },
             {
@@ -677,6 +813,7 @@ export async function POST(
               permitValue: permitValue!,
               discountAmount,
               discountCycles,
+              maxFeeBps: maxFeeBpsBig,
               deadline,
               v: v!,
               r: r!,
@@ -700,6 +837,7 @@ export async function POST(
               productId: productIdBytes,
               customerId: customerIdBytes,
               permitValue: permitValue!,
+              maxFeeBps: maxFeeBpsBig,
               deadline,
               v: v!,
               r: r!,
@@ -724,6 +862,7 @@ export async function POST(
             amount: tokenAmount,
             productId: productIdBytes,
             customerId: customerIdBytes,
+            maxFeeBps: maxFeeBpsBig,
             daiNonce: dp.nonce,
             permitExpiry: deadline,
             v: dp.v,
@@ -749,6 +888,7 @@ export async function POST(
             amount: tokenAmount,
             productId: productIdBytes,
             customerId: customerIdBytes,
+            maxFeeBps: maxFeeBpsBig,
             permit2Nonce: permit2Nonce as bigint,
             permit2Deadline: deadline,
             permit2Signature: permit2Signature as `0x${string}`,
@@ -757,18 +897,25 @@ export async function POST(
         ],
       }));
     } else {
-      // scheme === "eip2612" — classic permit path.
+      // scheme === "eip2612" — classic permit path. Takes a PaymentIntentData
+      // struct (note: `buyer` before `token`, unlike the Permit2/DAI structs)
+      // plus a separate PermitSig. `d.deadline` must equal
+      // `permitSig.deadline` — the contract requires them to match.
       txHash = await withRetry(() => relayer.writeContract({
         address: deployment.paymentVault,
         abi: PAYMENT_VAULT_ABI,
         functionName: "createPaymentWithPermit",
         args: [
-          tokenAddress,
-          buyer,
-          session.merchantWallet as `0x${string}`,
-          tokenAmount,
-          productIdBytes,
-          customerIdBytes,
+          {
+            buyer,
+            token: tokenAddress,
+            merchant: session.merchantWallet as `0x${string}`,
+            amount: tokenAmount,
+            productId: productIdBytes,
+            customerId: customerIdBytes,
+            maxFeeBps: maxFeeBpsBig,
+            deadline,
+          },
           { deadline, v: v as number, r: r as `0x${string}`, s: s as `0x${string}` },
           intentSignature,
         ],
@@ -776,7 +923,7 @@ export async function POST(
     }
   } catch (err) {
     // Release the lock so the user can retry
-    await releaseRelayLock(db, sessionId).catch(() => {});
+    await unlock();
     console.error("[Relay] submit failed:", err);
     const message = err instanceof Error ? err.message : "Relay failed";
     return NextResponse.json(
@@ -804,6 +951,10 @@ export async function POST(
           .where(
             and(
               eq(coupons.id, couponId),
+              orgScope(coupons, {
+                organizationId: session.organizationId,
+                livemode: session.livemode,
+              }),
               eq(coupons.isActive, true),
               or(
                 isNull(coupons.maxRedemptions),
@@ -830,7 +981,7 @@ export async function POST(
           amount: session.amount.toString(),
           subtotalAmount: session.subtotalAmount?.toString() ?? null,
           metadata: session.metadata ?? {},
-        }).catch((err) => console.error("[Relay] coupon.redeemed webhook failed:", err));
+        }, session.livemode).catch((err) => console.error("[Relay] coupon.redeemed webhook failed:", err));
       } catch (err) {
         console.error("[Relay] coupon redemption bookkeeping failed:", err);
       }

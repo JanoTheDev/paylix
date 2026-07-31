@@ -1,8 +1,8 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
-import { webhooks, webhookDeliveries } from "@paylix/db/schema";
+import { webhooks } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
-import { createHmac, randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { apiError } from "@/lib/api-error";
@@ -13,6 +13,8 @@ import {
   type WebhookEventType,
 } from "@/lib/webhook-test-fixtures";
 import { withIdempotency } from "@/lib/idempotency";
+import { deliverWebhook } from "@/lib/webhook-dispatch";
+import { parseJsonBody, parseWith } from "../../../_shared/http";
 
 const sendTestSchema = z.object({
   event: z.enum(WEBHOOK_EVENT_TYPES),
@@ -29,16 +31,10 @@ export async function POST(
   const { id } = await params;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
-    let body: unknown;
-    try {
-      body = rawBody.length > 0 ? JSON.parse(rawBody) : null;
-    } catch {
-      return apiError("invalid_body", "Request body must be valid JSON.", 400);
-    }
-    const parsed = sendTestSchema.safeParse(body);
-    if (!parsed.success) {
-      return apiError("validation_failed", "event is required", 400);
-    }
+    const body = parseJsonBody(rawBody);
+    if (!body.ok) return body.response;
+    const parsed = parseWith(sendTestSchema, body.data);
+    if (!parsed.ok) return parsed.response;
     const event: WebhookEventType = parsed.data.event;
 
   // Per-org rate limit: 20 test events per minute.
@@ -81,64 +77,31 @@ export async function POST(
     event_id: eventId,
     data: fixtureDataFor(event),
   };
-  const payloadString = JSON.stringify(envelope);
-  const ts = Math.floor(Date.now() / 1000);
-  const signature = `t=${ts},v1=${createHmac("sha256", webhook.secret)
-    .update(`${ts}.${payloadString}`)
-    .digest("hex")}`;
 
-  const [delivery] = await db
-    .insert(webhookDeliveries)
-    .values({
-      webhookId: webhook.id,
-      event,
-      payload: envelope,
-      status: "pending",
-      attempts: 0,
-      livemode: webhook.livemode,
-    })
-    .returning();
+  // One shared sender for every outbound webhook: signs, records the
+  // delivery row (with livemode), re-validates the URL immediately before
+  // the request, and refuses to follow redirects — so a registered-then-
+  // redirected endpoint can't steer us at an internal address.
+  const result = await deliverWebhook({ webhook, event, envelope });
 
-  try {
-    const response = await fetch(webhook.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-paylix-signature": signature,
-        "x-paylix-test": "1",
-        "User-Agent": "Paylix-Webhook/1.0",
-      },
-      body: payloadString,
-      signal: AbortSignal.timeout(10_000),
-    });
-    await db
-      .update(webhookDeliveries)
-      .set({
-        status: response.ok ? "delivered" : "failed",
-        httpStatus: response.status,
-        attempts: 1,
-      })
-      .where(eq(webhookDeliveries.id, delivery.id));
-    return NextResponse.json({
-      deliveryId: delivery.id,
-      eventId,
-      status: response.ok ? "delivered" : "failed",
-      httpStatus: response.status,
-    });
-  } catch (err) {
-    await db
-      .update(webhookDeliveries)
-      .set({ status: "failed", attempts: 1 })
-      .where(eq(webhookDeliveries.id, delivery.id));
+  if (!result.ok) {
     return NextResponse.json(
       {
-        deliveryId: delivery.id,
+        deliveryId: result.deliveryId,
         eventId,
         status: "failed",
-        error: err instanceof Error ? err.message : "Fetch failed",
+        httpStatus: result.httpStatus,
+        error: result.error,
       },
       { status: 502 },
     );
   }
+
+  return NextResponse.json({
+    deliveryId: result.deliveryId,
+    eventId,
+    status: "delivered",
+    httpStatus: result.httpStatus,
+  });
   });
 }

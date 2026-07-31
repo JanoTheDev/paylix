@@ -10,6 +10,9 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../_shared/client-ip";
+import { parseJsonBody, parseWith } from "../_shared/http";
+import { requireRole } from "../_shared/roles";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -70,18 +73,17 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
+  // Registering an endpoint means receiving every payment event for the org
+  // — customer emails, amounts, wallet addresses. Same blast radius as
+  // minting an API key, so the same gate.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
   return withIdempotency(request, organizationId, async (rawBody) => {
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      return apiError("invalid_body", "Request body must be valid JSON.", 400);
-    }
-    const parsed = createWebhookSchema.safeParse(body);
-    if (!parsed.success) {
-      const issues = parsed.error.issues.map((i) => i.message).join("; ");
-      return apiError("validation_failed", issues);
-    }
+    const body = parseJsonBody(rawBody);
+    if (!body.ok) return body.response;
+    const parsed = parseWith(createWebhookSchema, body.data);
+    if (!parsed.ok) return parsed.response;
 
     const { url, events } = parsed.data;
 
@@ -118,7 +120,7 @@ export async function POST(request: Request) {
       resourceType: "webhook",
       resourceId: row.id,
       details: { url: row.url, events: row.events },
-      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress: clientIp(request),
     });
 
     return NextResponse.json(row, { status: 201 });

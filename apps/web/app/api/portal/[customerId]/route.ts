@@ -7,7 +7,7 @@ import {
 } from "@paylix/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import { requirePortalCustomerId } from "@/lib/portal-auth";
 
 // Token-protected endpoint. The caller must pass `?token=` signed by
 // `signPortalToken(customerId)`. Dashboard users mint these via the
@@ -18,11 +18,8 @@ export async function GET(
 ) {
   const { customerId } = await params;
 
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
-  if (!token || !verifyPortalToken(token, customerId)) {
-    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
-  }
+  const portal = await requirePortalCustomerId(request, customerId);
+  if (!portal.ok) return portal.response;
 
   const [customer] = await db
     .select({

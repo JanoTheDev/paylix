@@ -8,6 +8,7 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../_shared/client-ip";
 
 const createSchema = z.object({
   productId: z.string().uuid(),
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
     resourceType: "payment_link",
     resourceId: row.id,
     details: { productId: product.id, name: row.name },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
     return NextResponse.json(row, { status: 201 });

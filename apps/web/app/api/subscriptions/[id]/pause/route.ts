@@ -7,6 +7,7 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { computePauseUpdate } from "./logic";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../../../_shared/client-ip";
 
 export async function POST(
   request: Request,
@@ -40,7 +41,7 @@ export async function POST(
       action: "subscription.paused",
       resourceType: "subscription",
       resourceId: id,
-      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress: clientIp(request),
     });
 
     return NextResponse.json({ success: true });

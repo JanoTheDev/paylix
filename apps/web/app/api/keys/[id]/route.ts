@@ -6,6 +6,8 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../_shared/client-ip";
+import { requireRole } from "../../_shared/roles";
 
 export async function DELETE(
   request: Request,
@@ -14,6 +16,10 @@ export async function DELETE(
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
+
+  // Revoking a key can take a merchant's integration offline.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
 
   const { id } = await params;
 
@@ -33,7 +39,7 @@ export async function DELETE(
     action: "api_key.revoked",
     resourceType: "api_key",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ success: true });

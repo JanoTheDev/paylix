@@ -2,9 +2,16 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customers, subscriptions } from "@paylix/db/schema";
 import { normalizeEmail } from "@/lib/email-normalize";
+import { orgScope } from "@/lib/org-scope";
 
 export async function checkExistingSubscription(args: {
   organizationId: string;
+  /**
+   * Mode the calling session runs in. Without it the "one trial per product
+   * per identity, ever" rule conflated test and live: a merchant testing
+   * their own trial flow permanently burned that wallet/email for live mode.
+   */
+  livemode: boolean;
   productId: string;
   buyerWallet: string;
   customerIdentifier: string | null;
@@ -13,6 +20,7 @@ export async function checkExistingSubscription(args: {
 }): Promise<{ exists: boolean }> {
   const {
     organizationId,
+    livemode,
     productId,
     buyerWallet,
     customerIdentifier,
@@ -29,6 +37,12 @@ export async function checkExistingSubscription(args: {
       .from(customers)
       .where(
         and(
+          // NOT livemode-scoped on purpose: `customers_org_customer_idx` is
+          // unique on (organization_id, customer_id) with no livemode, so a
+          // customer row is shared across modes. Filtering by mode here
+          // would miss the row that actually exists. The mode separation
+          // API-17 asks for lives on the `subscriptions` query below, which
+          // is where the trial-dedup statuses are.
           eq(customers.organizationId, organizationId),
           eq(customers.customerId, customerIdentifier),
         ),
@@ -82,7 +96,7 @@ export async function checkExistingSubscription(args: {
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.organizationId, organizationId),
+        orgScope(subscriptions, { organizationId, livemode }),
         eq(subscriptions.productId, productId),
         statusFilter,
         or(...conditions),

@@ -7,7 +7,7 @@ import {
 } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import { requirePortalCustomer } from "@/lib/portal-auth";
 import { apiError } from "@/lib/api-error";
 
 const patchSchema = z.object({
@@ -18,15 +18,9 @@ const patchSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const customerId = url.searchParams.get("customerId");
-  const token = url.searchParams.get("token");
-  if (!customerId || !token) {
-    return apiError("invalid_body", "Missing customerId or token", 400);
-  }
-  if (!verifyPortalToken(token, customerId)) {
-    return apiError("invalid_token", "Invalid or expired portal token", 401);
-  }
+  const portal = await requirePortalCustomer(request);
+  if (!portal.ok) return portal.response;
+  const customerId = portal.customerId;
 
   const rows = await db
     .select()
@@ -50,10 +44,10 @@ export async function PATCH(request: Request) {
       parsed.error.issues.map((i) => i.message).join("; "),
     );
   }
-  const { customerId, token, category, optedIn } = parsed.data;
-  if (!verifyPortalToken(token, customerId)) {
-    return apiError("invalid_token", "Invalid or expired portal token", 401);
-  }
+  const portal = await requirePortalCustomer(request, parsed.data);
+  if (!portal.ok) return portal.response;
+  const customerId = portal.customerId;
+  const { category, optedIn } = parsed.data;
 
   const cat: CustomerNotificationCategory = category;
 

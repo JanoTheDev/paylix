@@ -7,6 +7,9 @@ import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../_shared/client-ip";
+import { readJsonBody, parseWith } from "../../_shared/http";
+import { productPriceSchema } from "../../_shared/price-schema";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -30,15 +33,7 @@ const updateProductSchema = z.object({
       phone: z.boolean().optional(),
     })
     .optional(),
-  prices: z
-    .array(
-      z.object({
-        networkKey: z.string(),
-        tokenSymbol: z.string(),
-        amount: z.string(),
-      }),
-    )
-    .optional(),
+  prices: z.array(productPriceSchema).optional(),
   taxRateBps: z.number().int().min(0).max(10000).nullable().optional(),
   taxLabel: z.string().max(64).nullable().optional(),
   reverseChargeEligible: z.boolean().optional(),
@@ -55,14 +50,32 @@ export async function PATCH(
   const { organizationId, userId, livemode } = ctx;
 
   const { id } = await params;
-  const body = await request.json();
-  const parsed = updateProductSchema.safeParse(body);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => i.message).join("; ");
-    return apiError("validation_failed", issues);
-  }
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsed = parseWith(updateProductSchema, body.data);
+  if (!parsed.ok) return parsed.response;
 
   const data = parsed.data;
+
+  // Network/token assertions run BEFORE db.transaction so an invalid pair
+  // returns a 400 instead of throwing out of the transaction as a 500 —
+  // matching the POST route, which already wraps them in try/catch.
+  if (data.prices) {
+    for (const p of data.prices) {
+      try {
+        assertValidNetworkKey(p.networkKey);
+        assertValidTokenSymbol(
+          NETWORKS[p.networkKey as NetworkKey],
+          p.tokenSymbol,
+        );
+      } catch (err) {
+        return apiError(
+          "invalid_price",
+          err instanceof Error ? err.message : "Invalid price entry",
+        );
+      }
+    }
+  }
 
   const updated = await db.transaction(async (tx) => {
     const [existing] = await tx
@@ -118,24 +131,26 @@ export async function PATCH(
     if (!row) return null;
 
     if (data.prices) {
-      for (const p of data.prices) {
-        assertValidNetworkKey(p.networkKey);
-        assertValidTokenSymbol(
-          NETWORKS[p.networkKey as NetworkKey],
-          p.tokenSymbol,
-        );
-      }
-
       await tx
         .update(productPrices)
         .set({ isActive: false })
-        .where(eq(productPrices.productId, id));
+        .where(
+          and(
+            eq(productPrices.productId, id),
+            // The product was org-scoped above; keep the deactivation from
+            // reaching the other mode's price rows for the same product.
+            eq(productPrices.livemode, existing.livemode),
+          ),
+        );
 
       await tx
         .insert(productPrices)
         .values(
           data.prices.map((p) => ({
             productId: id,
+            // Inherits the product's mode. Without it the column default
+            // (false) made every live-mode price row a test-mode row.
+            livemode: existing.livemode,
             networkKey: p.networkKey,
             tokenSymbol: p.tokenSymbol,
             amount: BigInt(p.amount),
@@ -166,7 +181,7 @@ export async function PATCH(
     resourceType: "product",
     resourceId: id,
     details: { name: updated.name },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json(updated);

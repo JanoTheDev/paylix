@@ -42,7 +42,24 @@ export async function GET(
 
   if (!customer) return NextResponse.json({ error: { code: "not_found", message: "Customer not found" } }, { status: 404 });
 
-  const token = signPortalToken(customer.id);
+  // signPortalToken throws when BETTER_AUTH_SECRET is unset or too short —
+  // that's a deployment misconfiguration, not a client error, so surface it
+  // as a typed 500 rather than an unhandled exception.
+  let token: string;
+  try {
+    token = signPortalToken(customer.id);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "portal_not_configured",
+          message:
+            "Customer portal links are unavailable: BETTER_AUTH_SECRET is not configured.",
+        },
+      },
+      { status: 500 },
+    );
+  }
   const baseUrl = process.env.BETTER_AUTH_URL || "http://localhost:3000";
   return NextResponse.json({
     url: `${baseUrl}/portal/${customer.id}?token=${token}`,

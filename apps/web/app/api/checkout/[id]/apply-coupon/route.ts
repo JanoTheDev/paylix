@@ -11,34 +11,88 @@ import {
   type CouponForMath,
 } from "@/lib/coupon-math";
 import { apiError } from "@/lib/api-error";
+import { checkRateLimitAsync } from "@/lib/rate-limit";
+import { clientIpKey } from "../../../_shared/client-ip";
+import { readJsonBody, parseWith } from "../../../_shared/http";
 import { getToken, type NetworkKey } from "@paylix/config/networks";
 
-const applySchema = z.object({ code: z.string().min(2).max(40) });
+const applySchema = z.object({ code: z.string().trim().min(2).max(40) });
+
+/** Statuses in which the amount may still be adjusted by the buyer. */
+const OPEN_STATUSES = new Set(["awaiting_currency", "active", "viewed"]);
+
+/**
+ * `not_found` vs `coupon_invalid` used to be distinguishable, which turned
+ * this unauthenticated endpoint into a code enumerator against the org's
+ * whole coupon table. Both now return the same shape.
+ */
+const COUPON_REJECTED = "That coupon code isn't valid for this checkout.";
+
+async function guardOpenSession(id: string) {
+  const [session] = await db
+    .select()
+    .from(checkoutSessions)
+    .where(eq(checkoutSessions.id, id))
+    .limit(1);
+  if (!session) {
+    return { ok: false as const, response: apiError("not_found", "Checkout session not found", 404) };
+  }
+  if (!OPEN_STATUSES.has(session.status)) {
+    return { ok: false as const, response: apiError("invalid_state", "Checkout is not open", 409) };
+  }
+  if (session.relayInFlightAt !== null) {
+    return {
+      ok: false as const,
+      response: apiError("relay_in_flight", "A payment is being submitted for this session", 409),
+    };
+  }
+  if (new Date(session.expiresAt).getTime() < Date.now()) {
+    return { ok: false as const, response: apiError("invalid_state", "Checkout has expired", 409) };
+  }
+  return { ok: true as const, session };
+}
+
+async function guardRate(request: Request, id: string) {
+  const ipLimit = await checkRateLimitAsync(
+    `coupon:${clientIpKey(request)}`,
+    10,
+    60_000,
+  );
+  if (!ipLimit.ok) {
+    return apiError(
+      "rate_limited",
+      `Too many attempts. Retry in ${Math.ceil((ipLimit.retryAfterMs ?? 0) / 1000)}s`,
+      429,
+    );
+  }
+  const sessionLimit = await checkRateLimitAsync(`coupon-session:${id}`, 10, 60_000);
+  if (!sessionLimit.ok) {
+    return apiError(
+      "rate_limited",
+      `Too many attempts. Retry in ${Math.ceil((sessionLimit.retryAfterMs ?? 0) / 1000)}s`,
+      429,
+    );
+  }
+  return null;
+}
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const body = await request.json().catch(() => null);
-  const parsed = applySchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError("validation_failed", "code is required");
-  }
+  const limited = await guardRate(request, id);
+  if (limited) return limited;
+
+  const rawBody = await readJsonBody(request);
+  if (!rawBody.ok) return rawBody.response;
+  const parsed = parseWith(applySchema, rawBody.data);
+  if (!parsed.ok) return parsed.response;
   const code = canonicalCouponCode(parsed.data.code);
 
-  const [session] = await db
-    .select()
-    .from(checkoutSessions)
-    .where(eq(checkoutSessions.id, id))
-    .limit(1);
-  if (!session) return apiError("not_found", "Checkout session not found", 404);
-  if (session.status === "completed" || session.status === "expired") {
-    return apiError("invalid_state", "Checkout is not open", 409);
-  }
-  if (new Date(session.expiresAt).getTime() < Date.now()) {
-    return apiError("invalid_state", "Checkout has expired", 409);
-  }
+  const guard = await guardOpenSession(id);
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   if (session.amount === 0n) {
     // Amount isn't known yet (awaiting_currency). Buyer must pick a currency first.
     return apiError("awaiting_currency", "Pick a currency before applying a coupon", 409);
@@ -54,7 +108,9 @@ export async function POST(
       ),
     )
     .limit(1);
-  if (!coupon) return apiError("not_found", "Coupon not found", 404);
+  // Same response as a coupon that exists but doesn't validate — see
+  // COUPON_REJECTED.
+  if (!coupon) return apiError("coupon_invalid", COUPON_REJECTED, 409);
 
   // SubscriptionManager.createSubscriptionWithPermit always calls
   // _processPayment on creation, so the on-chain stored amount IS the
@@ -89,7 +145,7 @@ export async function POST(
 
   const validation = validateCoupon(couponForMath, new Date());
   if (!validation.ok) {
-    return apiError("coupon_invalid", validation.reason, 409);
+    return apiError("coupon_invalid", COUPON_REJECTED, 409);
   }
 
   // Preserve the pre-discount amount on subtotalAmount (first apply only).
@@ -180,16 +236,19 @@ export async function POST(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const [session] = await db
-    .select()
-    .from(checkoutSessions)
-    .where(eq(checkoutSessions.id, id))
-    .limit(1);
-  if (!session) return apiError("not_found", "Checkout session not found", 404);
+  const limited = await guardRate(request, id);
+  if (limited) return limited;
+
+  // The DELETE handler used to check only that the session existed, then
+  // rewrote `amount` and nulled `subtotalAmount` — so calling it against a
+  // `completed` session mutated the recorded amount *after* payment.
+  const guard = await guardOpenSession(id);
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   await db
     .update(checkoutSessions)
@@ -198,6 +257,13 @@ export async function DELETE(
       discountCents: null,
       amount: session.subtotalAmount ?? session.amount,
       subtotalAmount: null,
+      // Restoring the pre-discount base also restores a pre-*tax* figure, so
+      // the tax snapshot has to go with it. Leaving it populated left
+      // taxAmount/taxRateBps/taxLabel describing an amount that no longer
+      // includes them.
+      taxAmount: null,
+      taxRateBps: null,
+      taxLabel: null,
     })
     .where(eq(checkoutSessions.id, id));
 

@@ -34,7 +34,15 @@ export async function GET(
       createdAt: webhookDeliveries.createdAt,
     })
     .from(webhookDeliveries)
-    .where(eq(webhookDeliveries.webhookId, id))
+    .where(
+      and(
+        eq(webhookDeliveries.webhookId, id),
+        // webhook_deliveries has no organization_id; ownership comes from
+        // the orgScope'd webhook above. Mode is enforced here so the
+        // invariant holds in SQL rather than only by convention.
+        eq(webhookDeliveries.livemode, livemode),
+      ),
+    )
     .orderBy(desc(webhookDeliveries.createdAt))
     .limit(50);
 

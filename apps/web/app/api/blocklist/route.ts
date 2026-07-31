@@ -9,6 +9,7 @@ import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { normalizeEmail } from "@/lib/email-normalize";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../_shared/client-ip";
 
 const createSchema = z.object({
   type: z.enum(["wallet", "email", "country"]),
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
     resourceType: "blocklist_entry",
     resourceId: row.id,
     details: { type, value },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
     return NextResponse.json(row, { status: 201 });

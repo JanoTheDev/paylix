@@ -6,6 +6,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../../_shared/client-ip";
 
 /**
  * Undoes a scheduled cancellation. Valid only while the sub is still
@@ -49,7 +50,7 @@ export async function POST(
     action: "subscription.cancel_resumed",
     resourceType: "subscription",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ success: true });

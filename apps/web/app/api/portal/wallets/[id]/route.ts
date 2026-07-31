@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { customerWallets } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import { requirePortalCustomer } from "@/lib/portal-auth";
 import { apiError } from "@/lib/api-error";
 
 const authSchema = z.object({
@@ -15,18 +15,25 @@ async function authorize(request: Request, walletId: string) {
   const body = await request.json().catch(() => ({}));
   const parsed = authSchema.safeParse(body);
   if (!parsed.success) return { ok: false as const, response: apiError("invalid_body", "Missing auth", 400) };
-  if (!verifyPortalToken(parsed.data.token, parsed.data.customerId)) {
-    return { ok: false as const, response: apiError("invalid_token", "Invalid or expired portal token", 401) };
-  }
+  const portal = await requirePortalCustomer(request, parsed.data);
+  if (!portal.ok) return { ok: false as const, response: portal.response };
+
+  // Ownership in the WHERE clause: a wallet belonging to someone else is
+  // indistinguishable from one that doesn't exist.
   const [wallet] = await db
     .select()
     .from(customerWallets)
-    .where(eq(customerWallets.id, walletId))
+    .where(
+      and(
+        eq(customerWallets.id, walletId),
+        eq(customerWallets.customerId, portal.customerId),
+      ),
+    )
     .limit(1);
-  if (!wallet || wallet.customerId !== parsed.data.customerId) {
+  if (!wallet) {
     return { ok: false as const, response: apiError("not_found", "Wallet not found", 404) };
   }
-  return { ok: true as const, wallet, customerId: parsed.data.customerId };
+  return { ok: true as const, wallet, customerId: portal.customerId };
 }
 
 export async function DELETE(

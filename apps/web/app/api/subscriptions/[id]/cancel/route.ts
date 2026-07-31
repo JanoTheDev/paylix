@@ -9,6 +9,7 @@ import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../../../_shared/client-ip";
 
 const cancelSchema = z
   .object({ when: z.enum(["immediate", "period_end"]).optional() })
@@ -89,7 +90,7 @@ export async function POST(
       resourceType: "subscription",
       resourceId: id,
       details: { cancelAt: existing.nextChargeDate.toISOString() },
-      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress: clientIp(request),
     });
 
     return NextResponse.json({
@@ -111,7 +112,7 @@ export async function POST(
     action: "subscription.cancelled",
     resourceType: "subscription",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   void dispatchWebhooks(organizationId, "subscription.cancelled", {
@@ -119,7 +120,7 @@ export async function POST(
     onChainId: updated.onChainId,
     status: "cancelled",
     metadata: updated.metadata ?? {},
-  }).catch((err) => console.error("[cancel] webhook failed:", err));
+  }, livemode).catch((err) => console.error("[cancel] webhook failed:", err));
 
   return NextResponse.json({ success: true });
   });

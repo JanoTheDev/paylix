@@ -7,14 +7,42 @@ import { apiError } from "@/lib/api-error";
 import { resolveDeploymentForMode } from "@/lib/deployment";
 import { mintMockUsdc } from "@/lib/faucet";
 import { checkFaucetLimits, FAUCET_WINDOW_MS } from "@/lib/faucet-limits";
+import { checkRateLimitAsync } from "@/lib/rate-limit";
+import { clientIpKey } from "../../_shared/client-ip";
+import { readJsonBody, parseWith } from "../../_shared/http";
+import { baseUnitsPerCentFor } from "../../_shared/token-scale";
+import { z } from "zod";
+
+const faucetSchema = z.object({
+  address: z
+    .string()
+    .trim()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "address must be a valid Ethereum address"),
+  amount: z.number().int().min(1).max(100_000).optional(),
+});
 
 export async function POST(request: Request) {
-  const auth = await authenticateApiKey(request, undefined, {
+  // Secret keys only. `undefined` here accepted `pk_test_` keys, which are
+  // by definition embeddable in client-side code — any visitor to a
+  // merchant's checkout page could extract one and drain the org's faucet
+  // allocation. Every other key-authenticated route passes "secret".
+  const auth = await authenticateApiKey(request, "secret", {
     key: "faucet",
     perMinute: 10,
   });
   if (auth?.rateLimitResponse) return auth.rateLimitResponse;
   if (!auth) return apiError("unauthorized", "Invalid or missing API key", 401);
+
+  // Per-IP limit on top of the per-key one, so a leaked key can't be
+  // fanned out across machines to exhaust the global window cap.
+  const ipLimit = await checkRateLimitAsync(`faucet-ip:${clientIpKey(request)}`, 10, 60_000);
+  if (!ipLimit.ok) {
+    return apiError(
+      "rate_limited",
+      `Too many faucet requests. Retry in ${Math.ceil((ipLimit.retryAfterMs ?? 0) / 1000)}s`,
+      429,
+    );
+  }
 
   if (auth.livemode) {
     return apiError(
@@ -24,26 +52,28 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("invalid_body", "Request body must be valid JSON", 400);
-  }
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsed = parseWith(faucetSchema, body.data);
+  if (!parsed.ok) return parsed.response;
 
-  const parsed = body as { address?: unknown; amount?: unknown };
-  const address = typeof parsed.address === "string" ? parsed.address : null;
-  if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    return apiError("invalid_address", "address must be a valid Ethereum address", 400);
-  }
-
-  const amount =
-    typeof parsed.amount === "number" && parsed.amount > 0
-      ? Math.floor(parsed.amount)
-      : 1000;
-  const amountWei = BigInt(amount) * 1_000_000n;
+  const address = parsed.data.address;
+  const amount = parsed.data.amount ?? 1000;
 
   const deployment = resolveDeploymentForMode(false);
+
+  // `amount` is whole USDC. Derive the scale from the registry rather than
+  // hardcoding `* 1_000_000n` (6 decimals) — the same assumption API-13
+  // removed from the tax, analytics and refund paths.
+  const unitsPerCent = baseUnitsPerCentFor(deployment.networkKey, "USDC");
+  if (unitsPerCent === null) {
+    return apiError(
+      "unsupported_token",
+      `USDC is not registered on ${deployment.networkKey}; cannot size a faucet mint.`,
+      409,
+    );
+  }
+  const amountWei = BigInt(amount) * 100n * unitsPerCent;
   const cutoff = new Date(Date.now() - FAUCET_WINDOW_MS);
 
   const walletCountRow = await db

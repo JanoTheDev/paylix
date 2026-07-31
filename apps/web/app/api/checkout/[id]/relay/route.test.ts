@@ -56,7 +56,25 @@ vi.mock("@/lib/contracts", () => ({
   },
   PAYMENT_VAULT_ABI: [],
   SUBSCRIPTION_MANAGER_ABI: [],
+  // Settlement-flow identifiers. Not calldata — they exist only inside the
+  // EIP-712 typehash — but the relay stores the value alongside the trial
+  // signature so the converter can refuse to replay an intent through the
+  // wrong entry point.
+  FLOW_EIP2612: 1,
+  FLOW_PERMIT2: 2,
+  FLOW_DAI_PERMIT: 3,
 }));
+
+// The relay reads platformFee() as a sanity check on the stored ceiling.
+// Mocked so the suite neither hits the network nor depends on a live node;
+// 50 bps matches TRIAL_SESSION.maxFeeBps, i.e. "fee unchanged since quote".
+vi.mock("../../../_shared/platform-fee", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../_shared/platform-fee")>();
+  return {
+    ...actual,
+    getPlatformFeeBps: vi.fn().mockResolvedValue(50n),
+  };
+});
 vi.mock("@/lib/billing-intervals", () => ({
   intervalToSeconds: (interval: string) => {
     const intervals: Record<string, number> = {
@@ -68,7 +86,9 @@ vi.mock("@/lib/billing-intervals", () => ({
 }));
 vi.mock("./lock", () => ({
   acquireRelayLock: vi.fn().mockResolvedValue(true),
-  releaseRelayLock: vi.fn(),
+  // Must resolve: the route now releases the lock on every early return in
+  // the trial branch and chains `.catch()` on the result.
+  releaseRelayLock: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("./validation", () => ({
   parseRelayBody: (body: unknown) => {
@@ -168,6 +188,11 @@ const TRIAL_SESSION = {
   buyerLastName: null,
   buyerEmail: "buyer@example.com",
   buyerPhone: null,
+  // Fee ceiling stamped at quote time (0.5%). The relay refuses a session
+  // with a null ceiling — it can't reproduce the signed intent digest — so
+  // the fixture has to carry one or every trial test short-circuits on
+  // `fee_ceiling_missing` before reaching what it means to assert.
+  maxFeeBps: 50,
   billingInterval: "monthly",
   trialDays: 14,
   trialMinutes: 0,
@@ -236,10 +261,18 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
     mockDb.select.mockReturnValueOnce(selectCustomerChain);
 
     // Setup: insert customer
+    // The customer insert is an upsert (onConflictDoUpdate), so the chain has
+    // to offer both terminals the way drizzle does: `.returning()` directly,
+    // or `.onConflictDoUpdate(...).returning()`.
     const insertCustomerChain = {
       values: vi.fn(function () {
         return {
           returning: vi.fn().mockResolvedValue([CUSTOMER_ROW]),
+          onConflictDoUpdate: vi.fn(function () {
+            return {
+              returning: vi.fn().mockResolvedValue([CUSTOMER_ROW]),
+            };
+          }),
         };
       }),
     };
@@ -448,10 +481,18 @@ describe("POST /api/checkout/[id]/relay (trial branch)", () => {
     };
     mockDb.select.mockReturnValueOnce(selectCustomerChain);
 
+    // The customer insert is an upsert (onConflictDoUpdate), so the chain has
+    // to offer both terminals the way drizzle does: `.returning()` directly,
+    // or `.onConflictDoUpdate(...).returning()`.
     const insertCustomerChain = {
       values: vi.fn(function () {
         return {
           returning: vi.fn().mockResolvedValue([CUSTOMER_ROW]),
+          onConflictDoUpdate: vi.fn(function () {
+            return {
+              returning: vi.fn().mockResolvedValue([CUSTOMER_ROW]),
+            };
+          }),
         };
       }),
     };

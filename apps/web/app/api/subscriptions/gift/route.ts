@@ -16,6 +16,9 @@ import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { findBlocklistMatch, BLOCKLIST_MESSAGE } from "@/lib/blocklist";
 import { loadOrgBlocklist } from "@/lib/blocklist-load";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../../_shared/client-ip";
+import { parseJsonBody, parseWith } from "../../_shared/http";
+import { requireRole } from "../../_shared/roles";
 
 const giftSchema = z.object({
   productId: z.string().uuid(),
@@ -35,20 +38,15 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
+  // Granting a free subscription gives away product for nothing.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
   return withIdempotency(request, organizationId, async (rawBody) => {
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      return apiError("invalid_body", "Request body must be valid JSON.", 400);
-    }
-    const parsed = giftSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError(
-      "validation_failed",
-      parsed.error.issues.map((i) => i.message).join("; "),
-    );
-  }
+    const body = parseJsonBody(rawBody);
+    if (!body.ok) return body.response;
+    const parsed = parseWith(giftSchema, body.data);
+    if (!parsed.ok) return parsed.response;
 
   const { productId, customerId: extCustomerId } = parsed.data;
   const expiresAt = parsed.data.expiresAt
@@ -129,7 +127,7 @@ export async function POST(request: Request) {
       customerId: customer.customerId,
       expiresAt: expiresAt?.toISOString() ?? null,
     },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   void dispatchWebhooks(organizationId, "subscription.created", {
@@ -139,7 +137,7 @@ export async function POST(request: Request) {
     gift: true,
     expiresAt: expiresAt?.toISOString() ?? null,
       metadata: row.metadata ?? {},
-    }).catch((err) => console.error("[gift] webhook failed:", err));
+    }, livemode).catch((err) => console.error("[gift] webhook failed:", err));
 
     return NextResponse.json(row, { status: 201 });
   });

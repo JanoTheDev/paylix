@@ -7,7 +7,9 @@ import { generateApiKey } from "@/lib/api-key-utils";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
-import { apiError } from "@/lib/api-error";
+import { clientIp } from "../_shared/client-ip";
+import { readJsonBody, parseWith } from "../_shared/http";
+import { requireRole } from "../_shared/roles";
 
 const createKeySchema = z.object({
   name: z.string().min(1).max(100),
@@ -45,16 +47,22 @@ export async function POST(request: Request) {
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
-  const body = await request.json();
-  const parsed = createKeySchema.safeParse(body);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => i.message).join("; ");
-    return apiError("validation_failed", issues);
-  }
+  // Minting an `sk_live_` key hands out full API access to the org's money.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsed = parseWith(createKeySchema, body.data);
+  if (!parsed.ok) return parsed.response;
 
   const { name, type } = parsed.data;
   const { key, prefix, hash } = generateApiKey(type, livemode ? "live" : "test");
 
+  // Explicit projection. `.returning()` with no column list put `keyHash`
+  // (and `previousKeyHash`) in the response body — and `authenticateApiKey`
+  // looks keys up by `eq(apiKeys.keyHash, hash)`, so the hash *is* the
+  // credential as far as that query is concerned.
   const [row] = await db
     .insert(apiKeys)
     .values({
@@ -65,7 +73,15 @@ export async function POST(request: Request) {
       prefix,
       type,
     })
-    .returning();
+    .returning({
+      id: apiKeys.id,
+      name: apiKeys.name,
+      prefix: apiKeys.prefix,
+      type: apiKeys.type,
+      isActive: apiKeys.isActive,
+      livemode: apiKeys.livemode,
+      createdAt: apiKeys.createdAt,
+    });
 
   void recordAudit({
     organizationId,
@@ -74,7 +90,7 @@ export async function POST(request: Request) {
     resourceType: "api_key",
     resourceId: row.id,
     details: { name: row.name, type: row.type },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ ...row, key }, { status: 201 });

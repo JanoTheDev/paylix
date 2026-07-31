@@ -2,15 +2,13 @@ import { db } from "@/lib/db";
 import { customers, invoices } from "@paylix/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import { requirePortalCustomer } from "@/lib/portal-auth";
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const customerId = url.searchParams.get("customerId");
-  const token = url.searchParams.get("token");
-  if (!customerId || !token || !verifyPortalToken(token, customerId)) {
-    return NextResponse.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
-  }
+  const portal = await requirePortalCustomer(req);
+  if (!portal.ok) return portal.response;
+  const customerId = portal.customerId;
+
   const [customer] = await db
     .select()
     .from(customers)

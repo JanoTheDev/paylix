@@ -2,50 +2,22 @@ import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { subscriptions } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import {
+  requirePortalCustomer,
+  requireOwnedSubscription,
+} from "@/lib/portal-auth";
+import { readPortalSubscriptionId } from "../_shared-body";
 import { computeResumeUpdate } from "../../subscriptions/[id]/pause/logic";
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const { subscriptionId, customerId, token } = body as {
-    subscriptionId?: string;
-    customerId?: string;
-    token?: string;
-  };
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const portal = await requirePortalCustomer(request, body);
+  if (!portal.ok) return portal.response;
 
-  if (!subscriptionId || !customerId || !token) {
-    return NextResponse.json(
-      { error: { code: "invalid_body", message: "Missing subscriptionId, customerId, or token" } },
-      { status: 400 },
-    );
-  }
-
-  if (!verifyPortalToken(token, customerId)) {
-    return NextResponse.json(
-      { error: { code: "invalid_token", message: "Invalid or expired portal token" } },
-      { status: 401 },
-    );
-  }
-
-  const [sub] = await db
-    .select({
-      status: subscriptions.status,
-      customerId: subscriptions.customerId,
-      pausedAt: subscriptions.pausedAt,
-      pausedBy: subscriptions.pausedBy,
-      nextChargeDate: subscriptions.nextChargeDate,
-    })
-    .from(subscriptions)
-    .where(eq(subscriptions.id, subscriptionId))
-    .limit(1);
-
-  if (!sub) {
-    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
-  }
-
-  if (sub.customerId !== customerId) {
-    return NextResponse.json({ error: { code: "forbidden", message: "Not your subscription" } }, { status: 403 });
-  }
+  const subscriptionId = readPortalSubscriptionId(body);
+  const owned = await requireOwnedSubscription(portal.customerId, subscriptionId);
+  if (!owned.ok) return owned.response;
+  const sub = owned.subscription;
 
   const result = computeResumeUpdate(sub, "customer", new Date());
   if (!result.ok) {

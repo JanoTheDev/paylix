@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { payments, refundRequests } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import { requirePortalCustomer } from "@/lib/portal-auth";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { apiError } from "@/lib/api-error";
 
@@ -28,11 +28,10 @@ export async function POST(request: Request) {
       parsed.error.issues.map((i) => i.message).join("; "),
     );
   }
-  const { paymentId, customerId, token, amount, reason } = parsed.data;
-
-  if (!verifyPortalToken(token, customerId)) {
-    return apiError("invalid_token", "Invalid or expired portal token", 401);
-  }
+  const portal = await requirePortalCustomer(request, parsed.data);
+  if (!portal.ok) return portal.response;
+  const customerId = portal.customerId;
+  const { paymentId, amount, reason } = parsed.data;
 
   const [payment] = await db
     .select()
@@ -73,7 +72,7 @@ export async function POST(request: Request) {
       customerId,
       amount,
       reason: reason ?? null,
-    }).catch((err) =>
+    }, payment.livemode).catch((err) =>
       console.error("[refund-request] webhook failed:", err),
     );
 
@@ -88,15 +87,9 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
-  const customerId = url.searchParams.get("customerId");
-  if (!token || !customerId) {
-    return apiError("invalid_body", "Missing token or customerId", 400);
-  }
-  if (!verifyPortalToken(token, customerId)) {
-    return apiError("invalid_token", "Invalid or expired portal token", 401);
-  }
+  const portal = await requirePortalCustomer(request);
+  if (!portal.ok) return portal.response;
+  const customerId = portal.customerId;
 
   const rows = await db
     .select()

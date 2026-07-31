@@ -6,6 +6,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
+import { clientIp } from "../../../_shared/client-ip";
 
 export async function POST(
   request: Request,
@@ -59,7 +60,7 @@ export async function POST(
     action: "subscription.trial_cancelled",
     resourceType: "subscription",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   void dispatchWebhooks(organizationId, "subscription.trial_cancelled", {
@@ -71,7 +72,7 @@ export async function POST(
     cancelledBy: "merchant",
     cancelledAt: new Date().toISOString(),
     metadata: row.metadata ?? {},
-  }).catch((err) => console.error("[cancel-trial] webhook failed:", err));
+  }, livemode).catch((err) => console.error("[cancel-trial] webhook failed:", err));
 
   return NextResponse.json({ ok: true });
 }

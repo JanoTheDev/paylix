@@ -6,6 +6,9 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../../_shared/client-ip";
+import { requireRole } from "../../../_shared/roles";
+import { withIdempotency } from "@/lib/idempotency";
 
 /**
  * Admin-only: forgive the current past-due cycle. Inserts a payment row
@@ -22,7 +25,29 @@ export async function POST(
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
+  // Forgiving a cycle writes a zero-amount payment row and moves the billing
+  // date — a revenue decision, not a member-level one.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
   const { id } = await params;
+
+  // Not idempotent on its own: a response lost to a gateway timeout that the
+  // caller retries inserts a SECOND amount-0 payment row and advances
+  // nextChargeDate by another interval — two free periods for one click.
+  return withIdempotency(request, organizationId, () =>
+    handleCompCharge({ id, organizationId, userId, livemode, request }),
+  );
+}
+
+async function handleCompCharge(args: {
+  id: string;
+  organizationId: string;
+  userId: string;
+  livemode: boolean;
+  request: Request;
+}): Promise<Response> {
+  const { id, organizationId, userId, livemode, request } = args;
 
   const [sub] = await db
     .select()
@@ -90,7 +115,7 @@ export async function POST(
     resourceType: "subscription",
     resourceId: id,
     details: { paymentId: payment.id },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({

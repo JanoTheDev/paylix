@@ -19,7 +19,7 @@ const createSchema = z.object({
 export async function POST(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
-  const { organizationId } = ctx;
+  const { organizationId, livemode } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
     let body: unknown;
@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       .insert(customers)
       .values({
         organizationId,
+        livemode,
         customerId,
         firstName: data.firstName ?? null,
         lastName: data.lastName ?? null,

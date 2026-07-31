@@ -4,9 +4,7 @@ import {
   customerNotificationPreferences,
   type CustomerNotificationCategory,
 } from "@paylix/db/schema";
-import { createHmac, timingSafeEqual } from "crypto";
-
-const SECRET = process.env.PORTAL_TOKEN_SECRET ?? process.env.BETTER_AUTH_SECRET ?? "";
+import { verifyUnsubscribeToken } from "@/lib/portal-tokens";
 
 const ALLOWED: CustomerNotificationCategory[] = [
   "marketing",
@@ -15,26 +13,26 @@ const ALLOWED: CustomerNotificationCategory[] = [
   "receipts",
 ];
 
+/**
+ * Token verification lives in `lib/portal-tokens.ts`.
+ *
+ * The local copy this replaced resolved its HMAC key with
+ * `?? ""` — on any deployment without `PORTAL_TOKEN_SECRET`/
+ * `BETTER_AUTH_SECRET` set, every unsubscribe token was signed with the
+ * empty string and therefore forgeable for any customer id. The shared
+ * helper throws on a missing or too-short secret instead of degrading.
+ */
 function verify(token: string): {
   customerId: string;
   category: CustomerNotificationCategory;
 } | null {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [customerId, category, provided] = parts;
-  if (!ALLOWED.includes(category as CustomerNotificationCategory)) return null;
-  const expected = createHmac("sha256", SECRET)
-    .update(`${customerId}.${category}`)
-    .digest("hex");
-  if (expected.length !== provided.length) return null;
-  try {
-    if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"))) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-  return { customerId, category: category as CustomerNotificationCategory };
+  const result = verifyUnsubscribeToken(token, ALLOWED);
+  if (!result) return null;
+  // The helper already rejected anything outside ALLOWED.
+  return {
+    customerId: result.customerId,
+    category: result.category as CustomerNotificationCategory,
+  };
 }
 
 async function flip(

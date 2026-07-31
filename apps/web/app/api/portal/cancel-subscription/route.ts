@@ -2,7 +2,11 @@ import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { subscriptions, customers } from "@paylix/db/schema";
 import { eq } from "drizzle-orm";
-import { verifyPortalToken } from "@/lib/portal-tokens";
+import {
+  requirePortalCustomer,
+  requireOwnedSubscription,
+} from "@/lib/portal-auth";
+import { readPortalSubscriptionId } from "../_shared-body";
 import { createRelayerClient } from "@/lib/relayer";
 import { SUBSCRIPTION_MANAGER_ABI } from "@/lib/contracts";
 import { resolveDeploymentForMode } from "@/lib/deployment";
@@ -14,41 +18,16 @@ import { resolveDeploymentForMode } from "@/lib/deployment";
  * cancelSubscriptionByRelayerForSubscriber. The customer pays no gas.
  */
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const { subscriptionId, customerId, token } = body as {
-    subscriptionId?: string;
-    customerId?: string;
-    token?: string;
-  };
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const portal = await requirePortalCustomer(request, body);
+  if (!portal.ok) return portal.response;
 
-  if (!subscriptionId || !customerId || !token) {
-    return NextResponse.json(
-      { error: { code: "invalid_body", message: "Missing subscriptionId, customerId, or token" } },
-      { status: 400 },
-    );
-  }
-
-  if (!verifyPortalToken(token, customerId)) {
-    return NextResponse.json(
-      { error: { code: "invalid_token", message: "Invalid or expired portal token" } },
-      { status: 401 },
-    );
-  }
-
-  // Look up the subscription and verify ownership
-  const [sub] = await db
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.id, subscriptionId))
-    .limit(1);
-
-  if (!sub) {
-    return NextResponse.json({ error: { code: "not_found", message: "Subscription not found" } }, { status: 404 });
-  }
-
-  if (sub.customerId !== customerId) {
-    return NextResponse.json({ error: { code: "forbidden", message: "Not your subscription" } }, { status: 403 });
-  }
+  // Ownership is enforced in SQL, so a mismatch can't slip past a forgotten
+  // JS comparison, and "exists but isn't yours" answers 404 rather than 403.
+  const subscriptionId = readPortalSubscriptionId(body);
+  const owned = await requireOwnedSubscription(portal.customerId, subscriptionId);
+  if (!owned.ok) return owned.response;
+  const sub = owned.subscription;
 
   if (sub.status !== "active" && sub.status !== "past_due") {
     return NextResponse.json(
@@ -75,7 +54,7 @@ export async function POST(request: Request) {
   const [customer] = await db
     .select()
     .from(customers)
-    .where(eq(customers.id, customerId))
+    .where(eq(customers.id, portal.customerId))
     .limit(1);
 
   if (!customer?.walletAddress) {

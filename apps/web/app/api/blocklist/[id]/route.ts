@@ -6,6 +6,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../_shared/client-ip";
 
 export async function DELETE(
   request: Request,
@@ -35,7 +36,7 @@ export async function DELETE(
     resourceType: "blocklist_entry",
     resourceId: id,
     details: { type: deleted.type, value: deleted.value },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ success: true });

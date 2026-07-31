@@ -7,6 +7,7 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../_shared/client-ip";
 
 export async function GET(
   _request: Request,
@@ -86,7 +87,7 @@ export async function PATCH(
     resourceType: "payment_link",
     resourceId: id,
     details: patch as Record<string, unknown>,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json(updated);
@@ -117,7 +118,7 @@ export async function DELETE(
     action: "payment_link.archived",
     resourceType: "payment_link",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ success: true });

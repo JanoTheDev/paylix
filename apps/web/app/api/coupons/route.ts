@@ -9,6 +9,7 @@ import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { canonicalCouponCode } from "@/lib/coupon-math";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../_shared/client-ip";
 
 const createCouponSchema = z
   .object({
@@ -106,7 +107,7 @@ export async function POST(request: Request) {
     resourceType: "coupon",
     resourceId: row.id,
     details: { code, type: row.type },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
     return NextResponse.json(row, { status: 201 });

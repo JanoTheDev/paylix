@@ -8,6 +8,9 @@ import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
+import { clientIp } from "../../_shared/client-ip";
+import { readJsonBody, parseWith } from "../../_shared/http";
+import { requireRole } from "../../_shared/roles";
 
 const VALID_EVENTS = [
   "payment.confirmed",
@@ -51,8 +54,20 @@ export async function GET(
 
   const { id } = await params;
 
+  // Explicit projection — `.select()` returned `secret`, the HMAC key that
+  // authenticates every webhook Paylix sends. The list endpoint and the
+  // PATCH response already excluded it; this one didn't.
   const [row] = await db
-    .select()
+    .select({
+      id: webhooks.id,
+      organizationId: webhooks.organizationId,
+      url: webhooks.url,
+      events: webhooks.events,
+      isActive: webhooks.isActive,
+      createdAt: webhooks.createdAt,
+      livemode: webhooks.livemode,
+      // secret intentionally excluded.
+    })
     .from(webhooks)
     .where(and(eq(webhooks.id, id), orgScope(webhooks, { organizationId, livemode })));
 
@@ -71,15 +86,17 @@ export async function PATCH(
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
-  const { id } = await params;
-  const body = await request.json();
-  const parsed = updateWebhookSchema.safeParse(body);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => i.message).join("; ");
-    return apiError("validation_failed", issues);
-  }
+  // Repointing an existing endpoint redirects the org's whole event stream.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
 
-  const data = parsed.data;
+  const { id } = await params;
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsedBody = parseWith(updateWebhookSchema, body.data);
+  if (!parsedBody.ok) return parsedBody.response;
+
+  const data = parsedBody.data;
 
   if (data.url) {
     const urlError = await validateWebhookUrl(data.url);
@@ -113,7 +130,7 @@ export async function PATCH(
     action: "webhook.updated",
     resourceType: "webhook",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json(updated);
@@ -126,6 +143,9 @@ export async function DELETE(
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
+
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
 
   const { id } = await params;
 
@@ -144,7 +164,7 @@ export async function DELETE(
     action: "webhook.deleted",
     resourceType: "webhook",
     resourceId: id,
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   return NextResponse.json({ success: true });

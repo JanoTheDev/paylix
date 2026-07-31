@@ -41,6 +41,10 @@ export interface RelayRequestBody {
   intentSignature?: unknown;
   networkKey?: unknown;
   tokenSymbol?: unknown;
+  // NOTE: `maxFeeBps` is deliberately NOT accepted from the client. It is the
+  // buyer's protection against a platform fee raise, so a client-chosen value
+  // is worthless. The relay reads it from `checkout_sessions.max_fee_bps`,
+  // stamped at quote time — the same value the client signed over.
 }
 
 export interface Permit2AllowanceInput {

@@ -13,6 +13,9 @@ import {
   type ApiKeyGrace,
 } from "@/lib/api-key-utils";
 import { withIdempotency } from "@/lib/idempotency";
+import { clientIp } from "../../../_shared/client-ip";
+import { parseJsonBody, parseWith } from "../../../_shared/http";
+import { requireRole } from "../../../_shared/roles";
 
 const rotateSchema = z.object({
   grace: z.enum(["none", "24h", "7d"]),
@@ -26,20 +29,17 @@ export async function POST(
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
+  // Rotating a key invalidates the merchant's existing credential.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
   const { id } = await params;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
-    let body: unknown;
-    try {
-      body = rawBody.length > 0 ? JSON.parse(rawBody) : null;
-    } catch {
-      return apiError("invalid_body", "Request body must be valid JSON.", 400);
-    }
-    const parsed = rotateSchema.safeParse(body);
-    if (!parsed.success) {
-      const issues = parsed.error.issues.map((i) => i.message).join("; ");
-      return apiError("validation_failed", issues);
-    }
+    const body = parseJsonBody(rawBody);
+    if (!body.ok) return body.response;
+    const parsed = parseWith(rotateSchema, body.data);
+    if (!parsed.ok) return parsed.response;
     const grace: ApiKeyGrace = parsed.data.grace;
     const graceSeconds = API_KEY_GRACE_SECONDS[grace];
 
@@ -81,7 +81,7 @@ export async function POST(
       resourceType: "api_key",
       resourceId: id,
       details: { grace, expiresAt: expiresAt.toISOString() },
-      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress: clientIp(request),
     });
 
     return NextResponse.json({

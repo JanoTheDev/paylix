@@ -3,25 +3,31 @@ import { NextResponse } from "next/server";
 import { payments, refunds } from "@paylix/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { createPublicClient, http, parseAbiItem, type Log } from "viem";
+import { createPublicClient, http } from "viem";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { resolveDeploymentForMode } from "@/lib/deployment";
-import { verifyRefund, type Erc20TransferLog } from "@/lib/verify-refund";
+import { verifyRefund } from "@/lib/verify-refund";
 import { withIdempotency } from "@/lib/idempotency";
+import {
+  getToken,
+  resolveTokenAddress,
+  type NetworkKey,
+} from "@paylix/config/networks";
+import { clientIp } from "../../../_shared/client-ip";
+import { decodeTransferLogs } from "../../../_shared/transfer-logs";
+import { parseJsonBody, parseWith } from "../../../_shared/http";
+import { requireRole } from "../../../_shared/roles";
+import { baseUnitsPerCentFor } from "../../../_shared/token-scale";
 
 const refundSchema = z.object({
   amount: z.number().int().min(1),
   reason: z.string().max(500).optional(),
   txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "invalid tx hash"),
 });
-
-const transferEvent = parseAbiItem(
-  "event Transfer(address indexed from, address indexed to, uint256 value)",
-);
 
 export async function POST(
   request: Request,
@@ -30,6 +36,11 @@ export async function POST(
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
+
+  // Recording a refund moves money out of the merchant's wallet and
+  // permanently marks the payment. Members can't do it.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
 
   const { id } = await params;
 
@@ -49,19 +60,10 @@ async function handleRefund(
   },
 ): Promise<Response> {
   const { id, organizationId, userId, livemode, request } = args;
-  let body: unknown;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return apiError("invalid_body", "Request body must be valid JSON.", 400);
-  }
-  const parsed = refundSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiError(
-      "validation_failed",
-      parsed.error.issues.map((i) => i.message).join("; "),
-    );
-  }
+  const body = parseJsonBody(rawBody);
+  if (!body.ok) return body.response;
+  const parsed = parseWith(refundSchema, body.data);
+  if (!parsed.ok) return parsed.response;
 
   const [payment] = await db
     .select()
@@ -84,18 +86,52 @@ async function handleRefund(
     );
   }
 
-  // Dedupe by tx hash before any on-chain work.
+  // Dedupe by tx hash before any on-chain work. Org-scoped: without the
+  // scope, another org's recorded hash returned 409 here, which is a
+  // cross-tenant existence oracle and also blocked legitimate refunds that
+  // happened to collide. The unique index on tx_hash stays as the hard guard.
   const [existing] = await db
-    .select()
+    .select({ id: refunds.id })
     .from(refunds)
-    .where(eq(refunds.txHash, parsed.data.txHash))
+    .where(
+      and(
+        eq(refunds.txHash, parsed.data.txHash),
+        orgScope(refunds, { organizationId, livemode }),
+      ),
+    )
     .limit(1);
   if (existing) {
     return apiError("duplicate", "Refund tx already recorded", 409);
   }
 
   const deployment = resolveDeploymentForMode(livemode);
-  const usdcAddress = deployment.usdcAddress as `0x${string}`;
+
+  // The cents↔base-unit scale is per-token, not a hardcoded 10_000. A
+  // non-USDC refund used to be validated against the USDC magnitude, which
+  // is off by 10^12 for an 18-decimal token.
+  const baseUnitsPerCent = baseUnitsPerCentFor(payment.chain, payment.token);
+  if (baseUnitsPerCent === null) {
+    return apiError(
+      "unsupported_token",
+      `Token ${payment.token} on ${payment.chain} is not registered; cannot verify a refund against it.`,
+      409,
+    );
+  }
+
+  let tokenAddress = deployment.usdcAddress as `0x${string}`;
+  if (payment.token !== "USDC") {
+    try {
+      tokenAddress = resolveTokenAddress(
+        getToken(payment.chain as NetworkKey, payment.token),
+      );
+    } catch {
+      return apiError(
+        "unsupported_token",
+        `Token ${payment.token} on ${payment.chain} has no resolvable address.`,
+        409,
+      );
+    }
+  }
 
   const publicClient = createPublicClient({
     chain: deployment.chain,
@@ -114,24 +150,10 @@ async function handleRefund(
     return apiError("tx_reverted", "Transaction did not succeed", 409);
   }
 
-  // Decode Transfer logs from the receipt. Only logs whose address is a
-  // real ERC20 on this network are considered — the helper filters by
-  // address anyway, but we pre-filter to skip noise.
-  const transferLogs: Erc20TransferLog[] = [];
-  for (const log of receipt.logs as Log[]) {
-    try {
-      const parsedLog = decodeTransfer(log, transferEvent);
-      if (!parsedLog) continue;
-      transferLogs.push({
-        token: log.address,
-        from: parsedLog.from,
-        to: parsedLog.to,
-        value: parsedLog.value,
-      });
-    } catch {
-      // ignore malformed logs
-    }
-  }
+  // Decode Transfer logs. `decodeTransferLogs` matches on the event
+  // signature hash, so USDC's `Approval` — also a 3-topic event on the same
+  // contract — no longer passes as a transfer.
+  const transferLogs = decodeTransferLogs(receipt.logs);
 
   const verdict = verifyRefund({
     transferLogs,
@@ -141,43 +163,49 @@ async function handleRefund(
       refundedCents: payment.refundedCents,
       amountCents: payment.amount,
     },
-    usdcAddress: usdcAddress,
+    usdcAddress: tokenAddress,
     refundCents: parsed.data.amount,
-    baseUnitsPerCent: 10_000n, // USDC 6 decimals
+    baseUnitsPerCent,
   });
   if (!verdict.ok) {
     return apiError("refund_invalid", verdict.reason, 409);
   }
 
-  // Atomic record + increment. On the off chance two merchants hit this
-  // route concurrently with the same tx, the unique index on tx_hash
-  // prevents double-recording.
-  let refundRow: typeof refunds.$inferSelect;
-  try {
-    [refundRow] = await db
-      .insert(refunds)
-      .values({
-        paymentId: payment.id,
-        organizationId,
-        amount: parsed.data.amount,
-        reason: parsed.data.reason ?? null,
-        txHash: parsed.data.txHash,
-        status: "confirmed",
-        createdBy: userId,
-        livemode,
-      })
-      .returning();
-  } catch {
+  // Atomic record + increment, in one transaction. Split across two
+  // statements, a crash between them left the refund recorded but
+  // `payments.refunded_cents` at 0 — so verifyRefund's over-refund guard
+  // passed again and a second full refund could be recorded. The unique
+  // index on tx_hash is the concurrency guard.
+  const refundRow = await db.transaction(async (tx) => {
+    try {
+      const [row] = await tx
+        .insert(refunds)
+        .values({
+          paymentId: payment.id,
+          organizationId,
+          amount: parsed.data.amount,
+          reason: parsed.data.reason ?? null,
+          txHash: parsed.data.txHash,
+          status: "confirmed",
+          createdBy: userId,
+          livemode,
+        })
+        .returning();
+      await tx
+        .update(payments)
+        .set({
+          refundedCents: sql`${payments.refundedCents} + ${parsed.data.amount}`,
+          refundedAt: new Date(),
+        })
+        .where(eq(payments.id, payment.id));
+      return row;
+    } catch {
+      return null;
+    }
+  });
+  if (!refundRow) {
     return apiError("duplicate", "Refund tx already recorded", 409);
   }
-
-  await db
-    .update(payments)
-    .set({
-      refundedCents: sql`${payments.refundedCents} + ${parsed.data.amount}`,
-      refundedAt: new Date(),
-    })
-    .where(eq(payments.id, payment.id));
 
   void recordAudit({
     organizationId,
@@ -190,7 +218,7 @@ async function handleRefund(
       amount: parsed.data.amount,
       txHash: parsed.data.txHash,
     },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   void dispatchWebhooks(organizationId, "payment.refunded", {
@@ -200,27 +228,9 @@ async function handleRefund(
     reason: parsed.data.reason ?? null,
     txHash: parsed.data.txHash,
     metadata: payment.metadata ?? {},
-  }).catch((err) =>
+  }, livemode).catch((err) =>
     console.error("[refund] payment.refunded webhook failed:", err),
   );
 
   return NextResponse.json(refundRow, { status: 201 });
-}
-
-function decodeTransfer(
-  log: Log,
-  event: typeof transferEvent,
-): { from: string; to: string; value: bigint } | null {
-  if (log.topics.length < 3) return null;
-  // Transfer signature hash
-  const sig = event as unknown as { selector?: string };
-  void sig;
-  // viem already provides parseEventLogs / decodeEventLog in higher layers,
-  // but we don't want to pull the whole pipeline. Do it manually: topic[0]
-  // is the event hash, topic[1] = indexed from, topic[2] = indexed to,
-  // data = value (uint256).
-  const from = "0x" + (log.topics[1] as string).slice(26);
-  const to = "0x" + (log.topics[2] as string).slice(26);
-  const value = BigInt(log.data);
-  return { from, to, value };
 }

@@ -2,11 +2,14 @@ import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { webhooks, webhookDeliveries } from "@paylix/db/schema";
 import { and, eq } from "drizzle-orm";
-import { createHmac } from "crypto";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimitAsync } from "@/lib/rate-limit";
 import { withIdempotency } from "@/lib/idempotency";
+import {
+  deliverWebhook,
+  type WebhookEnvelope,
+} from "@/lib/webhook-dispatch";
 
 export async function POST(
   request: Request,
@@ -48,65 +51,36 @@ export async function POST(
     );
   }
 
-  const payload = row.delivery.payload as Record<string, unknown>;
-  const payloadString = JSON.stringify(payload);
-  const ts = Math.floor(Date.now() / 1000);
-  const signature = `t=${ts},v1=${createHmac("sha256", row.webhook.secret)
-    .update(`${ts}.${payloadString}`)
-    .digest("hex")}`;
+  // Replay the original envelope verbatim through the shared sender. It
+  // re-validates the URL immediately before the request and refuses to
+  // follow redirects — a replay is exactly the case where a registered URL
+  // may have started pointing somewhere it shouldn't since it was stored.
+  //
+  // A brand-new delivery row is created; the original is never mutated.
+  const envelope = row.delivery.payload as unknown as WebhookEnvelope;
+  const result = await deliverWebhook({
+    webhook: row.webhook,
+    event: row.delivery.event,
+    envelope,
+    attempt: (row.delivery.attempts ?? 0) + 1,
+  });
 
-  // New delivery row — never mutate the original. Status flips as the
-  // fetch resolves.
-  const [newDelivery] = await db
-    .insert(webhookDeliveries)
-    .values({
-      webhookId: row.webhook.id,
-      event: row.delivery.event,
-      payload,
-      status: "pending",
-      attempts: 0,
-      livemode: row.webhook.livemode,
-    })
-    .returning();
-
-  try {
-    const response = await fetch(row.webhook.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-paylix-signature": signature,
-        "x-paylix-replay": "1",
-        "User-Agent": "Paylix-Webhook/1.0",
-      },
-      body: payloadString,
-      signal: AbortSignal.timeout(10_000),
-    });
-    await db
-      .update(webhookDeliveries)
-      .set({
-        status: response.ok ? "delivered" : "failed",
-        httpStatus: response.status,
-        attempts: 1,
-      })
-      .where(eq(webhookDeliveries.id, newDelivery.id));
-    return NextResponse.json({
-      deliveryId: newDelivery.id,
-      status: response.ok ? "delivered" : "failed",
-      httpStatus: response.status,
-    });
-  } catch (err) {
-    await db
-      .update(webhookDeliveries)
-      .set({ status: "failed", attempts: 1 })
-      .where(eq(webhookDeliveries.id, newDelivery.id));
+  if (!result.ok) {
     return NextResponse.json(
       {
-        deliveryId: newDelivery.id,
+        deliveryId: result.deliveryId,
         status: "failed",
-        error: err instanceof Error ? err.message : "Fetch failed",
+        httpStatus: result.httpStatus,
+        error: result.error,
       },
       { status: 502 },
     );
   }
+
+  return NextResponse.json({
+    deliveryId: result.deliveryId,
+    status: "delivered",
+    httpStatus: result.httpStatus,
+  });
   });
 }

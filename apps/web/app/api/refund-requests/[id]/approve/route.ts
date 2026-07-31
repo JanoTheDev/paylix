@@ -7,14 +7,24 @@ import {
 } from "@paylix/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { createPublicClient, http, type Log } from "viem";
+import { createPublicClient, http } from "viem";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
 import { recordAudit } from "@/lib/audit";
 import { apiError } from "@/lib/api-error";
 import { dispatchWebhooks } from "@/lib/webhook-dispatch";
 import { resolveDeploymentForMode } from "@/lib/deployment";
-import { verifyRefund, type Erc20TransferLog } from "@/lib/verify-refund";
+import { verifyRefund } from "@/lib/verify-refund";
+import {
+  getToken,
+  resolveTokenAddress,
+  type NetworkKey,
+} from "@paylix/config/networks";
+import { clientIp } from "../../../_shared/client-ip";
+import { decodeTransferLogs } from "../../../_shared/transfer-logs";
+import { readJsonBody, parseWith } from "../../../_shared/http";
+import { requireRole } from "../../../_shared/roles";
+import { baseUnitsPerCentFor } from "../../../_shared/token-scale";
 
 const schema = z.object({
   txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "invalid tx hash"),
@@ -33,15 +43,15 @@ export async function POST(
   if (!ctx.ok) return ctx.response;
   const { organizationId, userId, livemode } = ctx;
 
+  // Approving a refund records money leaving the merchant's wallet.
+  const role = await requireRole(ctx);
+  if (!role.ok) return role.response;
+
   const { id } = await params;
-  const body = await request.json().catch(() => null);
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return apiError(
-      "validation_failed",
-      parsed.error.issues.map((i) => i.message).join("; "),
-    );
-  }
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+  const parsed = parseWith(schema, body.data);
+  if (!parsed.ok) return parsed.response;
 
   const [req] = await db
     .select()
@@ -56,17 +66,49 @@ export async function POST(
     .limit(1);
   if (!req) return apiError("not_found", "Pending request not found", 404);
 
+  // Scope the payment lookup too — the refund request is org-scoped, but
+  // reading its payment without a scope would still cross the tenant line
+  // if a request row ever pointed elsewhere.
   const [payment] = await db
     .select()
     .from(payments)
-    .where(eq(payments.id, req.paymentId))
+    .where(
+      and(
+        eq(payments.id, req.paymentId),
+        orgScope(payments, { organizationId, livemode }),
+      ),
+    )
     .limit(1);
   if (!payment?.fromAddress || !payment?.toAddress) {
     return apiError("payment_missing_addresses", "Payment lacks addresses", 409);
   }
 
   const deployment = resolveDeploymentForMode(livemode);
-  const usdcAddress = deployment.usdcAddress as `0x${string}`;
+
+  // Per-token cents scale — see the matching comment in payments/[id]/refund.
+  const baseUnitsPerCent = baseUnitsPerCentFor(payment.chain, payment.token);
+  if (baseUnitsPerCent === null) {
+    return apiError(
+      "unsupported_token",
+      `Token ${payment.token} on ${payment.chain} is not registered; cannot verify a refund against it.`,
+      409,
+    );
+  }
+  let tokenAddress = deployment.usdcAddress as `0x${string}`;
+  if (payment.token !== "USDC") {
+    try {
+      tokenAddress = resolveTokenAddress(
+        getToken(payment.chain as NetworkKey, payment.token),
+      );
+    } catch {
+      return apiError(
+        "unsupported_token",
+        `Token ${payment.token} on ${payment.chain} has no resolvable address.`,
+        409,
+      );
+    }
+  }
+
   const publicClient = createPublicClient({
     chain: deployment.chain,
     transport: http(deployment.rpcUrl),
@@ -84,18 +126,10 @@ export async function POST(
     return apiError("tx_reverted", "Transaction did not succeed", 409);
   }
 
-  const transferLogs: Erc20TransferLog[] = [];
-  for (const log of receipt.logs as Log[]) {
-    if (log.topics.length < 3) continue;
-    try {
-      const from = ("0x" + (log.topics[1] as string).slice(26)) as string;
-      const to = ("0x" + (log.topics[2] as string).slice(26)) as string;
-      const value = BigInt(log.data);
-      transferLogs.push({ token: log.address, from, to, value });
-    } catch {
-      // malformed — skip
-    }
-  }
+  // Signature-checked decode. The hand-rolled version here had no topic[0]
+  // comparison at all, so any 3-topic log (notably USDC `Approval`) was read
+  // as a transfer and satisfied verifyRefund without moving funds.
+  const transferLogs = decodeTransferLogs(receipt.logs);
 
   const verdict = verifyRefund({
     transferLogs,
@@ -105,9 +139,9 @@ export async function POST(
       refundedCents: payment.refundedCents,
       amountCents: payment.amount,
     },
-    usdcAddress,
+    usdcAddress: tokenAddress,
     refundCents: req.amount,
-    baseUnitsPerCent: 10_000n,
+    baseUnitsPerCent,
   });
   if (!verdict.ok) {
     return apiError("refund_invalid", verdict.reason, 409);
@@ -162,7 +196,7 @@ export async function POST(
     resourceType: "refund_request",
     resourceId: id,
     details: { refundId: refundRow.id, amount: req.amount },
-    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+    ipAddress: clientIp(request),
   });
 
   void dispatchWebhooks(organizationId, "refund.approved", {
@@ -172,7 +206,7 @@ export async function POST(
     customerId: req.customerId,
     amount: req.amount,
     txHash: parsed.data.txHash,
-  }).catch((err) => console.error("[refund-request approve] webhook failed:", err));
+  }, livemode).catch((err) => console.error("[refund-request approve] webhook failed:", err));
 
   void dispatchWebhooks(organizationId, "payment.refunded", {
     paymentId: payment.id,
@@ -181,7 +215,7 @@ export async function POST(
     reason: req.reason ?? null,
     txHash: parsed.data.txHash,
     metadata: payment.metadata ?? {},
-  }).catch((err) => console.error("[refund-request approve] payment.refunded webhook failed:", err));
+  }, livemode).catch((err) => console.error("[refund-request approve] payment.refunded webhook failed:", err));
 
   return NextResponse.json({ success: true, refundId: refundRow.id });
 }

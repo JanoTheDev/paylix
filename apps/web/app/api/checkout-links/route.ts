@@ -4,6 +4,8 @@ import { checkoutSessions, products, productPrices } from "@paylix/db/schema";
 import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { resolvePayoutWallet } from "@/lib/payout-wallets";
+import { resolveDeploymentForMode } from "@/lib/deployment";
+import { getPlatformFeeBps } from "../_shared/platform-fee";
 import type { NetworkKey } from "@paylix/config/networks";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
@@ -67,17 +69,22 @@ export async function POST(request: Request) {
 
   const data = parsed.data;
 
+  // Scope the lookup in SQL, on BOTH organization and livemode. Checking the
+  // org in JS afterwards left the mode unchecked, so a test-mode dashboard
+  // could mint a checkout link against a live product — and answered 403
+  // rather than 404 for another org's id, which is an existence oracle.
   const [product] = await db
     .select()
     .from(products)
-    .where(eq(products.id, data.productId));
+    .where(
+      and(
+        eq(products.id, data.productId),
+        orgScope(products, { organizationId, livemode }),
+      ),
+    );
 
   if (!product) {
     return NextResponse.json({ error: { code: "not_found", message: "Product not found" } }, { status: 404 });
-  }
-
-  if (product.organizationId !== organizationId) {
-    return NextResponse.json({ error: { code: "forbidden", message: "Unauthorized" } }, { status: 403 });
   }
 
   const prices = await db
@@ -86,6 +93,9 @@ export async function POST(request: Request) {
     .where(
       and(
         eq(productPrices.productId, product.id),
+        // product_prices has no organization_id; ownership comes from the
+        // product, which is scoped above. Mode still has to be filtered.
+        eq(productPrices.livemode, livemode),
         eq(productPrices.isActive, true),
       ),
     )
@@ -114,6 +124,36 @@ export async function POST(request: Request) {
     );
   }
 
+  // Fee ceiling captured at quote time — see the matching comment in
+  // app/api/checkout/route.ts. Every checkout_sessions insert must stamp it,
+  // or the relay refuses the session with `fee_ceiling_missing`.
+  const deployment = resolveDeploymentForMode(livemode);
+  let maxFeeBps: number;
+  try {
+    maxFeeBps = Number(
+      await getPlatformFeeBps({
+        contractAddress:
+          product.type === "subscription"
+            ? deployment.subscriptionManager
+            : deployment.paymentVault,
+        chain: deployment.chain,
+        chainId: deployment.chainId,
+        rpcUrl: deployment.rpcUrl,
+      }),
+    );
+  } catch (err) {
+    console.error("[checkout-links] platformFee read failed:", err);
+    return NextResponse.json(
+      {
+        error: {
+          code: "fee_unavailable",
+          message: "Could not read the current platform fee. Try again shortly.",
+        },
+      },
+      { status: 503 },
+    );
+  }
+
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   const [checkoutSession] = await db
@@ -125,6 +165,7 @@ export async function POST(request: Request) {
       customerId: data.customerId ?? null,
       merchantWallet,
       amount: defaultPrice.amount,
+      maxFeeBps,
       networkKey: defaultPrice.networkKey,
       tokenSymbol: defaultPrice.tokenSymbol,
       status: "active",

@@ -8,6 +8,9 @@ import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { withIdempotency } from "@/lib/idempotency";
 import { orgScope } from "@/lib/org-scope";
+import { clientIp } from "../_shared/client-ip";
+import { parseJsonBody, parseWith } from "../_shared/http";
+import { productPriceSchema } from "../_shared/price-schema";
 import {
   NETWORKS,
   assertValidNetworkKey,
@@ -32,15 +35,7 @@ const createProductSchema = z
         phone: z.boolean().optional(),
       })
       .optional(),
-    prices: z
-      .array(
-        z.object({
-          networkKey: z.string(),
-          tokenSymbol: z.string(),
-          amount: z.string(),
-        }),
-      )
-      .min(1, "At least one price is required"),
+    prices: z.array(productPriceSchema).min(1, "At least one price is required"),
     taxRateBps: z.number().int().min(0).max(10000).nullable().optional(),
     taxLabel: z.string().max(64).nullable().optional(),
     reverseChargeEligible: z.boolean().optional(),
@@ -52,16 +47,36 @@ const createProductSchema = z
     path: ["billingInterval"],
   });
 
-export async function GET() {
+// List endpoints are bounded so a large catalogue can't load the whole table
+// into memory on every dashboard render. `limit`/`offset` let callers page.
+const MAX_PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 100;
+
+function readPaging(request: Request): { limit: number; offset: number } {
+  const params = new URL(request.url).searchParams;
+  const rawLimit = Number.parseInt(params.get("limit") ?? "", 10);
+  const rawOffset = Number.parseInt(params.get("offset") ?? "", 10);
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(rawLimit, MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+  return { limit, offset };
+}
+
+export async function GET(request: Request) {
   const ctx = await resolveActiveOrg();
   if (!ctx.ok) return ctx.response;
   const { organizationId, livemode } = ctx;
+  const { limit, offset } = readPaging(request);
 
   const rows = await db
     .select()
     .from(products)
     .where(orgScope(products, { organizationId, livemode }))
-    .orderBy(products.createdAt);
+    .orderBy(products.createdAt)
+    .limit(limit)
+    .offset(offset);
 
   const productIds = rows.map((p) => p.id);
   const priceRows =
@@ -72,6 +87,10 @@ export async function GET() {
           .where(
             and(
               inArray(productPrices.productId, productIds),
+              // Ownership comes from the org-scoped products above; mode
+              // still has to be filtered explicitly since product_prices
+              // has no organization_id of its own.
+              eq(productPrices.livemode, livemode),
               eq(productPrices.isActive, true),
             ),
           )
@@ -101,17 +120,10 @@ export async function POST(request: Request) {
   const { organizationId, userId, livemode } = ctx;
 
   return withIdempotency(request, organizationId, async (rawBody) => {
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      return apiError("invalid_body", "Request body must be valid JSON.", 400);
-    }
-    const parsed = createProductSchema.safeParse(body);
-    if (!parsed.success) {
-      const issues = parsed.error.issues.map((i) => i.message).join("; ");
-      return apiError("validation_failed", issues);
-    }
+    const body = parseJsonBody(rawBody);
+    if (!body.ok) return body.response;
+    const parsed = parseWith(createProductSchema, body.data);
+    if (!parsed.ok) return parsed.response;
 
     const data = parsed.data;
 
@@ -162,6 +174,7 @@ export async function POST(request: Request) {
       await tx.insert(productPrices).values(
         data.prices.map((p) => ({
           productId: product.id,
+          livemode,
           networkKey: p.networkKey,
           tokenSymbol: p.tokenSymbol,
           amount: BigInt(p.amount),
@@ -179,7 +192,7 @@ export async function POST(request: Request) {
       resourceType: "product",
       resourceId: created.id,
       details: { name: created.name, type: created.type },
-      ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress: clientIp(request),
     });
 
     return NextResponse.json(created, { status: 201 });

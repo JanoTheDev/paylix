@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   payments,
@@ -9,6 +9,7 @@ import {
   products,
   checkoutSessions,
   webhookDeliveries,
+  webhooks,
 } from "@paylix/db/schema";
 import { resolveActiveOrg } from "@/lib/require-active-org";
 import { orgScope } from "@/lib/org-scope";
@@ -81,10 +82,15 @@ export async function GET(
       .from(checkoutSessions)
       .where(eq(checkoutSessions.paymentId, id))
       .limit(1),
-    // Top 500 recent deliveries, then filter client-side to the event
-    // types that could concern this payment. Good enough for orgs with
-    // moderate webhook traffic; a dedicated payment-id index in the
-    // webhook delivery payload is a follow-up optimisation.
+    // `webhook_deliveries` has no organization_id of its own — ownership
+    // comes from the webhook it belongs to, so the scope has to be an
+    // innerJoin. Without it this query took the top 500 deliveries
+    // PLATFORM-WIDE and leaked other organizations' delivery ids, event
+    // names and HTTP statuses into every merchant's payment-detail pane.
+    //
+    // The event-type filter is also in SQL now, so the limit applies to rows
+    // that can actually concern this payment rather than being eaten by
+    // unrelated traffic before the JS slice.
     db
       .select({
         id: webhookDeliveries.id,
@@ -95,19 +101,23 @@ export async function GET(
         createdAt: webhookDeliveries.createdAt,
       })
       .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.livemode, livemode))
+      .innerJoin(webhooks, eq(webhooks.id, webhookDeliveries.webhookId))
+      .where(
+        and(
+          orgScope(webhooks, { organizationId, livemode }),
+          eq(webhookDeliveries.livemode, livemode),
+          or(
+            like(webhookDeliveries.event, "payment.%"),
+            like(webhookDeliveries.event, "invoice.%"),
+            eq(webhookDeliveries.event, "subscription.charged"),
+          ),
+        ),
+      )
       .orderBy(desc(webhookDeliveries.createdAt))
-      .limit(500),
+      .limit(20),
   ]);
 
-  const trimmedDeliveries = relatedDeliveries
-    .filter(
-      (d) =>
-        d.event.startsWith("payment.") ||
-        d.event.startsWith("invoice.") ||
-        d.event === "subscription.charged",
-    )
-    .slice(0, 20);
+  const trimmedDeliveries = relatedDeliveries;
 
   return NextResponse.json({
     payment: {
